@@ -802,17 +802,15 @@ impl AiClient {
                                         }
                                     }
                                     // 检查 finish_reason：如果是 length/max_tokens 说明被截断了
-                                    if let Some(finish_reason) =
-                                        json.pointer("/choices/0/finish_reason").and_then(|v| {
-                                            v.as_str().map(|s| s.to_lowercase())
-                                        })
+                                    if let Some(finish_reason) = json
+                                        .pointer("/choices/0/finish_reason")
+                                        .and_then(|v| v.as_str().map(|s| s.to_lowercase()))
                                     {
                                         if finish_reason == "length"
                                             || finish_reason == "max_tokens"
                                         {
-                                            let _ = tx.send(AiStreamEvent::Truncated(
-                                                finish_reason,
-                                            ));
+                                            let _ =
+                                                tx.send(AiStreamEvent::Truncated(finish_reason));
                                         }
                                     }
                                 }

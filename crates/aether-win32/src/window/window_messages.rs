@@ -289,7 +289,9 @@ pub(crate) unsafe fn on_wm_app_3(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let st = &mut *state.borrow_mut();
-            if let Some(msg) = st.lsp.handle_event(event.clone(), st.content.file_path.as_ref())
+            if let Some(msg) = st
+                .lsp
+                .handle_event(event.clone(), st.content.file_path.as_ref())
             {
                 st.status_message = msg;
             }

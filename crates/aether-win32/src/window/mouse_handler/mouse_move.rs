@@ -881,7 +881,10 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         let layout = st.layout.clone();
 
         // 1. 对话框/命令面板打开时返回默认箭头
-        if st.remote.ssh_dialog.visible || st.remote.clone_dialog.visible || st.command_palette.visible {
+        if st.remote.ssh_dialog.visible
+            || st.remote.clone_dialog.visible
+            || st.command_palette.visible
+        {
             return CursorType::Arrow;
         }
 

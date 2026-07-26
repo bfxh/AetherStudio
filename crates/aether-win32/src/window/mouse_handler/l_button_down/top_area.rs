@@ -486,7 +486,8 @@ pub(super) unsafe fn lbd_tab_context_menu(
     if let Some(item_idx) = st.context_menus.tab.hit_test(mouse_x, mouse_y) {
         // disabled 项不响应
         let enabled = st
-            .context_menus.tab
+            .context_menus
+            .tab
             .items
             .get(item_idx)
             .map(|i| i.enabled)
@@ -521,14 +522,24 @@ pub(super) unsafe fn lbd_tab_context_menu(
             }
             crate::tab_context_menu::TabContextMenuCommand::CopyPath => {
                 if let Some(idx) = tab_idx {
-                    if let Some(path) = st.tab_bar.tabs.get(idx).and_then(|t| t.file_path().cloned()) {
+                    if let Some(path) = st
+                        .tab_bar
+                        .tabs
+                        .get(idx)
+                        .and_then(|t| t.file_path().cloned())
+                    {
                         st.copy_text_to_clipboard(&path.to_string_lossy());
                     }
                 }
             }
             crate::tab_context_menu::TabContextMenuCommand::RevealInExplorer => {
                 if let Some(idx) = tab_idx {
-                    if let Some(path) = st.tab_bar.tabs.get(idx).and_then(|t| t.file_path().cloned()) {
+                    if let Some(path) = st
+                        .tab_bar
+                        .tabs
+                        .get(idx)
+                        .and_then(|t| t.file_path().cloned())
+                    {
                         let _ = std::process::Command::new("explorer.exe")
                             .args(["/select,", &path.to_string_lossy()])
                             .spawn();
@@ -565,7 +576,8 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
     // 命中菜单项 → 执行动作
     if let Some(item_idx) = st.context_menus.activity_bar.hit_test(mouse_x, mouse_y) {
         let enabled = st
-            .context_menus.activity_bar
+            .context_menus
+            .activity_bar
             .items
             .get(item_idx)
             .map(|i| i.enabled)

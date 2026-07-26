@@ -53,7 +53,12 @@ pub(crate) unsafe fn on_r_button_down(
     if show_tab_bar && tab_region.contains(mouse_x, mouse_y) {
         if let Some(tab_idx) = st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y) {
             // 获取该标签的 file_path（用于判断 has_path 和复制路径）
-            let has_path = st.tab_bar.tabs.get(tab_idx).and_then(|t| t.file_path()).is_some();
+            let has_path = st
+                .tab_bar
+                .tabs
+                .get(tab_idx)
+                .and_then(|t| t.file_path())
+                .is_some();
             let mut menu = TabContextMenuState::build_for_tab(tab_idx, has_path);
             menu.open_at(mouse_x, mouse_y, window_w, window_h);
             st.context_menus.tab = menu;
@@ -183,7 +188,8 @@ pub(crate) unsafe fn on_r_button_down(
         st.selected_file_node = Some(node_idx);
         st.emit_event(crate::events::EditorEvent::SidebarChanged);
         // 弹出文件节点上下文菜单
-        st.context_menus.file_node
+        st.context_menus
+            .file_node
             .open(mouse_x, mouse_y, window_w, window_h, node_idx);
         st.dirty_tracker.mark_full_window();
         drop(st);
@@ -192,7 +198,8 @@ pub(crate) unsafe fn on_r_button_down(
     }
 
     // 空白区域：弹出上下文菜单（菜单内部会做窗口边界校正）
-    st.context_menus.explorer
+    st.context_menus
+        .explorer
         .open(mouse_x, mouse_y, window_w, window_h);
     // 关闭可能打开的其他菜单，避免重叠
     if st.context_menus.file_node.is_open {

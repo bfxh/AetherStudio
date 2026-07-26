@@ -63,7 +63,10 @@ pub(crate) unsafe fn on_l_button_up(
             let tab_handled = if let (Some(drag_idx), Some(drop_idx)) =
                 (st.tab_bar.dragging_tab, st.tab_bar.tab_drop_index)
             {
-                if drag_idx < st.tab_bar.tabs.len() && drop_idx <= st.tab_bar.tabs.len() && drag_idx != drop_idx {
+                if drag_idx < st.tab_bar.tabs.len()
+                    && drop_idx <= st.tab_bar.tabs.len()
+                    && drag_idx != drop_idx
+                {
                     st.reorder_tabs(drag_idx, drop_idx);
                     st.status_message = "标签已重排".to_string();
                 }

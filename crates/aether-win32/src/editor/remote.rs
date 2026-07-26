@@ -240,7 +240,8 @@ impl EditorState {
     pub fn is_ssh_connected(&self, index: usize) -> bool {
         self.remote.active_ssh_index == Some(index)
             && self
-                .remote.session
+                .remote
+                .session
                 .as_ref()
                 .map(|s| s.is_connected())
                 .unwrap_or(false)
@@ -563,7 +564,8 @@ impl EditorState {
     pub fn paste_into_clone_dialog(&mut self) {
         if let Some(text) = Self::get_clipboard_text() {
             // 移除换行/回车
-            self.remote.clone_dialog
+            self.remote
+                .clone_dialog
                 .url
                 .extend(text.chars().filter(|c| *c != '\n' && *c != '\r'));
         }

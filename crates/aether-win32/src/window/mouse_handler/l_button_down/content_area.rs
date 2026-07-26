@@ -1267,9 +1267,15 @@ pub(super) unsafe fn lbd_tab_bar(
                             .unwrap_or_else(|| "未命名".to_string());
                         (dirty, name)
                     } else {
-                        let dirty = st.tab_bar.tabs.get(index).map(|t| t.is_dirty()).unwrap_or(false);
+                        let dirty = st
+                            .tab_bar
+                            .tabs
+                            .get(index)
+                            .map(|t| t.is_dirty())
+                            .unwrap_or(false);
                         let name = st
-                            .tab_bar.tabs
+                            .tab_bar
+                            .tabs
                             .get(index)
                             .and_then(|t| t.file_path())
                             .and_then(|p| p.file_name())

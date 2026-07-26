@@ -371,7 +371,10 @@ impl LspState {
         while let Ok(event) = rx.try_recv() {
             use aether_lsp::client::LspEvent;
             match event {
-                LspEvent::Diagnostics { uri, diagnostics: diags } => {
+                LspEvent::Diagnostics {
+                    uri,
+                    diagnostics: diags,
+                } => {
                     // 同时写入 LspClient 诊断缓存（供其他模块查询）
                     if let Some(client) = self.legacy_lsp_client.as_ref() {
                         client.update_diagnostics(&uri, diags.clone());

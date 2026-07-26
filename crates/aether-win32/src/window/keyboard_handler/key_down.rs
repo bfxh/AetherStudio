@@ -902,7 +902,8 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
-                    st.remote.ssh_manager_panel.focus_field = (st.remote.ssh_manager_panel.focus_field + 1) % 5;
+                    st.remote.ssh_manager_panel.focus_field =
+                        (st.remote.ssh_manager_panel.focus_field + 1) % 5;
                     drop(st);
                     invalidate_window(hwnd);
                 }

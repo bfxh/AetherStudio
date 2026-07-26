@@ -301,7 +301,9 @@ impl EditorState {
             }
 
             // Task 8.5: 拖拽插入指示线（蓝色 2px 垂直线）
-            if let (Some(drag_idx), Some(drop_idx)) = (self.tab_bar.dragging_tab, self.tab_bar.tab_drop_index) {
+            if let (Some(drag_idx), Some(drop_idx)) =
+                (self.tab_bar.dragging_tab, self.tab_bar.tab_drop_index)
+            {
                 if drag_idx < self.tab_bar.tabs.len() && drop_idx <= self.tab_bar.tabs.len() {
                     let drop_line_color = color_f(100.0 / 255.0, 150.0 / 255.0, 1.0, 1.0);
                     let drop_line_brush = self

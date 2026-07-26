@@ -285,7 +285,13 @@ impl EditorState {
                     };
                     target.FillRectangle(&input_rect, &input_bg_brush);
                     // H-22: 使用 char 计数而非字节计数，避免多字节 UTF-8 泄漏长度
-                    let hidden: String = self.remote.ssh_dialog.password.chars().map(|_| '*').collect();
+                    let hidden: String = self
+                        .remote
+                        .ssh_dialog
+                        .password
+                        .chars()
+                        .map(|_| '*')
+                        .collect();
                     let val_text: Vec<u16> = hidden.encode_utf16().chain(Some(0)).collect();
                     let val_rect = D2D_RECT_F {
                         left: x + 84.0,
@@ -344,7 +350,8 @@ impl EditorState {
                     };
                     target.FillRectangle(&input_rect, &input_bg_brush);
                     let val_text: Vec<u16> = self
-                        .remote.ssh_dialog
+                        .remote
+                        .ssh_dialog
                         .key_path
                         .encode_utf16()
                         .chain(Some(0))
@@ -683,7 +690,8 @@ impl EditorState {
             };
             target.FillRectangle(&input_rect, &input_bg_brush);
             let val_text: Vec<u16> = self
-                .remote.clone_dialog
+                .remote
+                .clone_dialog
                 .url
                 .encode_utf16()
                 .chain(Some(0))

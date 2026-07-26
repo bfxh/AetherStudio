@@ -655,7 +655,8 @@ impl EditorState {
             if edit.is_delete() {
                 // 关闭对应 tab（如果有）；用户取消则跳过此文件
                 if let Some(idx) = self
-                    .tab_bar.tabs
+                    .tab_bar
+                    .tabs
                     .iter()
                     .position(|t| t.file_path() == Some(&full_path))
                 {
@@ -675,7 +676,8 @@ impl EditorState {
 
             // 找到或创建对应标签页
             let tab_idx = self
-                .tab_bar.tabs
+                .tab_bar
+                .tabs
                 .iter()
                 .position(|t| t.file_path() == Some(&full_path));
             if let Some(idx) = tab_idx {

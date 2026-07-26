@@ -83,7 +83,11 @@ impl EditorState {
                 )
                 .unwrap();
 
-            let panel_height = if self.find.replace_visible { 72.0 } else { 40.0 };
+            let panel_height = if self.find.replace_visible {
+                72.0
+            } else {
+                40.0
+            };
             let panel_width = width.min(600.0);
             let panel_x = x + width - panel_width - 10.0;
 

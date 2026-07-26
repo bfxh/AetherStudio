@@ -263,8 +263,9 @@ impl EditorState {
             self.layout.bottom_panel_visible != self.prev.bottom_panel_visible;
         let status_changed = self.status_message != self.prev.status_message;
         let active_tab_changed = self.tab_bar.active_tab != self.prev.active_tab;
-        let dialog_visible =
-            self.remote.ssh_dialog.visible || self.remote.clone_dialog.visible || self.command_palette.visible;
+        let dialog_visible = self.remote.ssh_dialog.visible
+            || self.remote.clone_dialog.visible
+            || self.command_palette.visible;
 
         // 标签页切换会改变标签栏高亮、编辑器内容、状态栏等多个区域，
         // 局部裁剪容易遗漏旧像素导致重影，强制全量重绘。
