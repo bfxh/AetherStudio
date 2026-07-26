@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-07-23T17:08:46.953301",
+  "steps": [
+    {
+      "name": "launch",
+      "status": "PASS",
+      "screenshot": "ux_00_launch",
+      "note": ""
+    },
+    {
+      "name": "open_ai_panel",
+      "status": "PASS",
+      "screenshot": "ux_01_ai_panel",
+      "note": ""
+    },
+    {
+      "name": "open_history_panel",
+      "status": "PASS",
+      "screenshot": "ux_02_history_list",
+      "note": ""
+    },
+    {
+      "name": "filter_time_week",
+      "status": "PASS",
+      "screenshot": "ux_03_filter_week",
+      "note": ""
+    },
+    {
+      "name": "filter_type_agent_and_reset",
+      "status": "PASS",
+      "screenshot": "ux_04_filter_reset",
+      "note": ""
+    },
+    {
+      "name": "history_detail_view",
+      "status": "PASS",
+      "screenshot": "ux_05_detail_view",
+      "note": ""
+    },
+    {
+      "name": "history_pagination",
+      "status": "PASS",
+      "screenshot": "ux_06_pagination",
+      "note": ""
+    },
+    {
+      "name": "clear_all_confirm_dialog",
+      "status": "PASS",
+      "screenshot": "ux_07_clear_cancel",
+      "note": ""
+    },
+    {
+      "name": "collapse_history_panel",
+      "status": "PASS",
+      "screenshot": "ux_08_collapsed",
+      "note": ""
+    }
+  ],
+  "passed": 9,
+  "failed": 0
+}
