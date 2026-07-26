@@ -83,7 +83,7 @@ impl EditorState {
                 )
                 .unwrap();
 
-            let panel_height = if self.replace_visible { 72.0 } else { 40.0 };
+            let panel_height = if self.find.replace_visible { 72.0 } else { 40.0 };
             let panel_width = width.min(600.0);
             let panel_x = x + width - panel_width - 10.0;
 
@@ -132,7 +132,7 @@ impl EditorState {
             };
             target.FillRectangle(&find_input_rect, &input_bg_brush);
             // 焦点边框
-            if self.find_focus == crate::editor::FindReplaceFocus::FindQuery {
+            if self.find.focus == crate::editor::FindReplaceFocus::FindQuery {
                 let focus_border = D2D_RECT_F {
                     left: panel_x + 50.0,
                     top: cy,
@@ -148,12 +148,12 @@ impl EditorState {
                 };
                 target.FillRectangle(&focus_border2, &border_brush);
             }
-            let find_text = if self.find_query.is_empty() {
+            let find_text = if self.find.query.is_empty() {
                 "输入查找内容..."
             } else {
-                &self.find_query
+                &self.find.query
             };
-            let find_text_color = if self.find_query.is_empty() {
+            let find_text_color = if self.find.query.is_empty() {
                 &dim_brush
             } else {
                 &text_brush
@@ -175,9 +175,9 @@ impl EditorState {
             );
 
             // 匹配计数
-            let match_text = if !self.find_results.is_empty() {
-                format!("{}/{}", self.find_active_index + 1, self.find_results.len())
-            } else if !self.find_query.is_empty() {
+            let match_text = if !self.find.results.is_empty() {
+                format!("{}/{}", self.find.active_index + 1, self.find.results.len())
+            } else if !self.find.query.is_empty() {
                 "0/0".to_string()
             } else {
                 String::new()
@@ -203,7 +203,7 @@ impl EditorState {
             cy += input_h + 8.0;
 
             // 替换输入框（如果可见）
-            if self.replace_visible {
+            if self.find.replace_visible {
                 let replace_label: Vec<u16> = "替换:".encode_utf16().chain(Some(0)).collect();
                 let replace_label_rect = D2D_RECT_F {
                     left: panel_x + 10.0,
@@ -228,7 +228,7 @@ impl EditorState {
                 };
                 target.FillRectangle(&replace_input_rect, &input_bg_brush);
                 // 焦点边框
-                if self.find_focus == crate::editor::FindReplaceFocus::ReplaceText {
+                if self.find.focus == crate::editor::FindReplaceFocus::ReplaceText {
                     let focus_border = D2D_RECT_F {
                         left: panel_x + 50.0,
                         top: cy,
@@ -244,12 +244,12 @@ impl EditorState {
                     };
                     target.FillRectangle(&focus_border2, &border_brush);
                 }
-                let replace_text = if self.replace_text.is_empty() {
+                let replace_text = if self.find.replace_text.is_empty() {
                     "输入替换内容..."
                 } else {
-                    &self.replace_text
+                    &self.find.replace_text
                 };
-                let replace_text_color = if self.replace_text.is_empty() {
+                let replace_text_color = if self.find.replace_text.is_empty() {
                     &dim_brush
                 } else {
                     &text_brush

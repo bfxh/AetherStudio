@@ -128,7 +128,8 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             // Phase H1: Ctrl+Space 触发 LSP 补全请求
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().request_completion();
+                    let st = &mut *state.borrow_mut();
+                    st.lsp.request_completion(&st.content);
                     // 不立即 render：补全结果到达后由 WM_APP+3 触发重绘
                 }
             });
@@ -361,14 +362,27 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             });
         }
         VK_V => {
-            // 终端聚焦时，从剪贴板粘贴到 ConPTY；否则粘贴到编辑器
-            let term_focused = EDITOR_STATE.with(|s| {
+            // 优先级：AI 面板输入框 → 终端 → 编辑器
+            let (ai_focused, term_focused) = EDITOR_STATE.with(|s| {
                 s.borrow()
                     .as_ref()
-                    .map(|state| state.borrow().terminal_panel.focused)
-                    .unwrap_or(false)
+                    .map(|state| {
+                        let st = state.borrow();
+                        (st.ai_panel.input_focused, st.terminal_panel.focused)
+                    })
+                    .unwrap_or((false, false))
             });
-            if term_focused {
+            if ai_focused {
+                if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().ai_panel.paste_text(&text);
+                            state.borrow_mut().ai_panel.caret_visible = true;
+                            invalidate_window(hwnd);
+                        }
+                    });
+                }
+            } else if term_focused {
                 if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
@@ -394,7 +408,7 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 // Ctrl+Shift+A 切换右侧 AI 面板
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        let mut st = state.borrow_mut();
+                        let st = &mut *state.borrow_mut();
                         st.layout.right_panel_visible = !st.layout.right_panel_visible;
                         if st.layout.right_panel_visible && st.layout.right_panel_width < 1.0 {
                             st.layout.right_panel_width = 320.0;
@@ -427,16 +441,20 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let selected = state.borrow().get_selected_text();
-                    if shift {
-                        state.borrow_mut().toggle_replace();
-                    } else {
-                        state.borrow_mut().toggle_find();
+                    {
+                        let st = &mut *state.borrow_mut();
+                        if shift {
+                            st.find.toggle_replace(&st.content);
+                        } else {
+                            st.find.toggle_find(&st.content);
+                        }
                     }
                     // 如果有选中文本，自动填充到查找框
                     if let Some(text) = selected {
                         if !text.is_empty() && text.len() < 200 {
-                            state.borrow_mut().find_query = text;
-                            state.borrow_mut().find_all();
+                            let st = &mut *state.borrow_mut();
+                            st.find.query = text;
+                            st.find.find_all(&st.content);
                         }
                     }
                     invalidate_window(hwnd);
@@ -446,7 +464,8 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_H => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().toggle_replace();
+                    let st = &mut *state.borrow_mut();
+                    st.find.toggle_replace(&st.content);
                     invalidate_window(hwnd);
                 }
             });

@@ -52,7 +52,7 @@ impl EditorState {
                 .unwrap();
 
             // 标题
-            let title_text = if let Some(session) = &self.remote_session {
+            let title_text = if let Some(session) = &self.remote.session {
                 format!(
                     "远程: {}@{}:{}",
                     session.config.username, session.config.host, session.config.port
@@ -76,11 +76,11 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            if let Some(tree) = &self.remote_file_tree {
+            if let Some(tree) = &self.remote.file_tree {
                 let node_height = 16.0_f32 * s;
-                let mut current_y = y + 40.0 * s - self.remote_scroll_y;
-                let hover = self.hover_remote_node.as_ref();
-                let selected = self.selected_remote_node.as_ref();
+                let mut current_y = y + 40.0 * s - self.remote.scroll_y;
+                let hover = self.remote.hover_node.as_ref();
+                let selected = self.remote.selected_node.as_ref();
                 Self::draw_remote_nodes_recursive(
                     target,
                     &tree.nodes,
@@ -255,16 +255,16 @@ impl EditorState {
         // 先快照所需状态，避免与 panel 的可变借用冲突
         let active_count = self.active_ssh_count();
         let servers: Vec<aether_shared::settings::SshServerConfig> = self.ssh_servers().to_vec();
-        let ssh_connecting = self.ssh_connecting;
+        let ssh_connecting = self.remote.ssh_connecting;
         // 预计算每个服务器的连接状态
         let connected_states: Vec<bool> = (0..servers.len())
             .map(|i| self.is_ssh_connected(i))
             .collect();
         let connecting_states: Vec<bool> = (0..servers.len())
-            .map(|i| self.is_ssh_connecting() && self.active_ssh_index == Some(i))
+            .map(|i| self.is_ssh_connecting() && self.remote.active_ssh_index == Some(i))
             .collect();
 
-        let panel = &mut self.ssh_manager_panel;
+        let panel = &mut self.remote.ssh_manager_panel;
         // 清除上一帧的按钮区域
         panel.item_btn_rects.clear();
 

@@ -45,11 +45,190 @@ pub(crate) use aether_shared::settings::AppSettings;
 pub(crate) use aether_remote::RemoteFs;
 
 /// 查找替换焦点状态
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FindReplaceFocus {
+    #[default]
     None,
     FindQuery,
     ReplaceText,
+}
+
+/// 查找/替换面板状态（从 EditorState 聚类抽取）
+#[derive(Debug, Default)]
+pub struct FindState {
+    pub visible: bool,
+    pub replace_visible: bool,
+    pub query: String,
+    pub replace_text: String,
+    /// (line, col) 匹配位置列表
+    pub results: Vec<(usize, usize)>,
+    pub active_index: usize,
+    /// 查找替换焦点状态
+    pub focus: FindReplaceFocus,
+    /// 查找缓存：避免查询未变时重复全量扫描
+    pub(crate) last_query: String,
+    pub(crate) result_version: u64,
+}
+
+/// LSP 子系统状态（从 EditorState 聚类抽取）
+pub struct LspState {
+    /// LSP 客户端（工作区打开时初始化，旧版 LSP 集成）
+    pub legacy_lsp_client: Option<std::sync::Arc<aether_lsp::client::LspClient>>,
+    /// LSP 事件接收器
+    pub rx: Option<tokio::sync::mpsc::UnboundedReceiver<aether_lsp::client::LspEvent>>,
+    /// Tokio 运行时（用于旧版 LSP 异步操作）
+    pub legacy_runtime: Option<tokio::runtime::Runtime>,
+    /// tokio runtime（驱动 LSP 异步操作）
+    pub(crate) tokio_runtime: tokio::runtime::Runtime,
+    /// LSP 客户端（Arc 共享给 tokio task）
+    pub(crate) client: Arc<LspClient>,
+    /// LSP 诊断表（uri -> diagnostics），由 WM_APP+3 处理更新
+    pub(crate) diagnostics: std::collections::HashMap<Url, Vec<Diagnostic>>,
+    // Phase H: 补全弹窗状态
+    pub(crate) completion_items: Vec<CompletionItem>,
+    pub(crate) completion_visible: bool,
+    pub(crate) completion_selected: usize,
+    pub(crate) completion_trigger_line: usize,
+    pub(crate) completion_trigger_col: usize,
+    // Phase H: 悬停 tooltip 状态
+    pub(crate) hover_content: Option<String>,
+}
+
+/// 远程开发子系统状态（SSH/远程文件树/克隆，从 EditorState 聚类抽取）
+pub struct RemoteState {
+    /// SSH 连接对话框
+    pub ssh_dialog: SshConnectionDialog,
+    /// 远程会话
+    pub session: Option<RemoteSession>,
+    /// 远程文件树
+    pub file_tree: Option<RemoteFileTree>,
+    /// 选中的远程文件节点（P0-1: 改为路径标识，适配递归树）
+    pub selected_node: Option<String>,
+    /// 悬停的远程文件节点（P0-1: 改为路径标识，适配递归树）
+    pub hover_node: Option<String>,
+    /// 远程文件树滚动偏移
+    pub scroll_y: f32,
+    /// 克隆仓库对话框
+    pub clone_dialog: CloneRepoDialog,
+    /// SSH 管理面板（侧边栏服务器管理）
+    pub ssh_manager_panel: SshManagerPanel,
+    /// 当前连接的服务器配置索引（对应 app_settings.remote.ssh_servers）
+    pub active_ssh_index: Option<usize>,
+    /// C-09: SSH 后台连接中（防止重复触发，控制状态栏提示）
+    pub ssh_connecting: bool,
+}
+
+/// 标签栏状态（从 EditorState 聚类抽取）
+#[derive(Default)]
+pub struct TabBarState {
+    /// 标签页系统（后台存储，切换时同步）
+    pub(crate) tabs: Vec<Tab>,
+    pub(crate) active_tab: usize,
+    /// 标签栏布局缓存（用于点击检测）
+    pub(crate) tab_layouts: Vec<TabLayout>,
+    /// 鼠标悬停的标签索引
+    pub(crate) hover_tab: Option<usize>,
+    /// 标签栏滚动偏移
+    pub(crate) tab_scroll_x: f32,
+    /// 标签栏右侧 "+" 新建按钮的命中区域（逻辑像素，相对于窗口左上角）
+    /// 由 `update_tab_layouts` 在每帧渲染前更新；点击检测在 `handle_tab_bar_click` 中使用。
+    pub(crate) plus_button_rect: Option<(f32, f32, f32, f32)>,
+    /// "+" 新建按钮的悬停状态（由 `update_hover_tab` 更新，render 读取以绘制 hover 背景）
+    pub(crate) plus_button_hover: bool,
+    /// Task 8: 正在拖拽的标签索引（拖拽进行中时为 Some）
+    pub(crate) dragging_tab: Option<usize>,
+    /// Task 8: 拖拽放置目标索引（drop_index）
+    pub(crate) tab_drop_index: Option<usize>,
+    /// Task 8: 拖拽起始鼠标位置（用于判断是否进入拖拽模式）
+    pub(crate) tab_drag_start: Option<(i32, i32)>,
+    /// Task 13.3: 最后关闭的标签内容（用于 Ctrl+Shift+T 恢复）
+    pub last_closed_tab: Option<TabContent>,
+}
+
+/// Hover tooltip 状态（P3.4，从 EditorState 聚类抽取）
+#[derive(Debug, Default)]
+pub struct HoverState {
+    /// 当前显示的 hover tooltip（鼠标悬停提示）
+    pub tooltip: Option<HoverTooltip>,
+    /// 上次鼠标位置（用于 hover 防抖判定）
+    pub last_mouse_x: f32,
+    pub last_mouse_y: f32,
+}
+
+/// 鼠标按键/长按检测状态（从 EditorState 聚类抽取）
+#[derive(Default)]
+pub struct MousePressState {
+    /// 长按检测：按下时刻（None 表示当前未进行长按检测）
+    pub lpress_start: Option<std::time::Instant>,
+    /// 长按检测起始 x（逻辑像素）
+    pub lpress_x: f32,
+    /// 长按检测起始 y（逻辑像素）
+    pub lpress_y: f32,
+    /// 长按检测目标（活动栏/菜单栏）
+    pub lpress_target: Option<PressTarget>,
+    /// 长按检测目标索引
+    pub lpress_index: usize,
+    /// 当前鼠标左键是否按下（用于 WM_TIMER 判定）
+    pub lbutton_down: bool,
+}
+
+/// 上一帧快照（脏追踪，从 EditorState 聚类抽取）
+pub struct PrevFrameState {
+    /// 上一帧的光标位置（用于检测光标移动）
+    pub cursor_line: usize,
+    /// 上一帧的光标列（用于检测光标移动）
+    pub cursor_col: usize,
+    /// 上一帧的滚动位置（用于检测滚动变化）
+    pub scroll_y: f32,
+    /// 上一帧的选择状态（用于检测选择变化）
+    pub selection_start: Option<(usize, usize)>,
+    /// 上一帧的选择结束（用于检测选择变化）
+    pub selection_end: Option<(usize, usize)>,
+    /// 上一帧的侧边栏内容类型（用于检测侧边栏变化）
+    pub sidebar_content: crate::layout::SidebarContent,
+    /// 上一帧的侧边栏可见性（用于检测侧边栏显示/隐藏变化）
+    pub sidebar_visible: bool,
+    /// 上一帧的活动栏可见性（用于检测活动栏显示/隐藏变化）
+    pub activity_bar_visible: bool,
+    /// 上一帧的右侧面板可见性（用于检测右侧面板变化）
+    pub right_panel_visible: bool,
+    /// 上一帧的底部面板可见性（用于检测底部面板变化）
+    pub bottom_panel_visible: bool,
+    /// 上一帧的状态消息（用于检测状态栏变化）
+    pub status_message: String,
+    /// 上一帧的活动标签页索引（用于检测标签切换）
+    pub active_tab: usize,
+}
+
+impl Default for PrevFrameState {
+    fn default() -> Self {
+        Self {
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_y: 0.0,
+            selection_start: None,
+            selection_end: None,
+            sidebar_content: crate::layout::SidebarContent::FileTree,
+            sidebar_visible: true,
+            activity_bar_visible: true,
+            right_panel_visible: false,
+            bottom_panel_visible: false,
+            status_message: "就绪".to_string(),
+            active_tab: 0,
+        }
+    }
+}
+
+/// 各处右键上下文菜单状态（从 EditorState 聚类抽取）
+pub struct ContextMenusState {
+    /// 资源管理器空白区域上下文菜单
+    pub explorer: crate::context_menu::ExplorerContextMenu,
+    /// 文件节点右键上下文菜单
+    pub file_node: crate::context_menu::FileNodeContextMenu,
+    /// 标签右键上下文菜单
+    pub tab: crate::tab_context_menu::TabContextMenuState,
+    /// 活动栏右键上下文菜单
+    pub activity_bar: crate::activity_bar_context_menu::ActivityBarContextMenuState,
 }
 
 /// 底部面板当前显示的子面板。
@@ -250,38 +429,10 @@ pub struct EditorState {
     pub is_selecting: bool,
     /// 行号 UTF-16 预缓存（避免每帧 format! + encode_utf16 分配）
     pub(crate) cached_line_numbers: Vec<Vec<u16>>,
-    /// 标签页系统（后台存储，切换时同步）
-    pub(crate) tabs: Vec<Tab>,
-    pub(crate) active_tab: usize,
-    /// 标签栏布局缓存（用于点击检测）
-    pub(crate) tab_layouts: Vec<TabLayout>,
-    /// 鼠标悬停的标签索引
-    pub(crate) hover_tab: Option<usize>,
-    /// 标签栏滚动偏移
-    pub(crate) tab_scroll_x: f32,
-    /// 标签栏右侧 "+" 新建按钮的命中区域（逻辑像素，相对于窗口左上角）
-    /// 由 `update_tab_layouts` 在每帧渲染前更新；点击检测在 `handle_tab_bar_click` 中使用。
-    pub(crate) plus_button_rect: Option<(f32, f32, f32, f32)>,
-    /// "+" 新建按钮的悬停状态（由 `update_hover_tab` 更新，render 读取以绘制 hover 背景）
-    pub(crate) plus_button_hover: bool,
-    /// Task 8: 正在拖拽的标签索引（拖拽进行中时为 Some）
-    pub(crate) dragging_tab: Option<usize>,
-    /// Task 8: 拖拽放置目标索引（drop_index）
-    pub(crate) tab_drop_index: Option<usize>,
-    /// Task 8: 拖拽起始鼠标位置（用于判断是否进入拖拽模式）
-    pub(crate) tab_drag_start: Option<(i32, i32)>,
+    /// 标签栏状态
+    pub tab_bar: TabBarState,
     // 查找与替换状态
-    pub find_visible: bool,
-    pub replace_visible: bool,
-    pub find_query: String,
-    pub replace_text: String,
-    pub find_results: Vec<(usize, usize)>, // (line, col) 匹配位置列表
-    pub find_active_index: usize,
-    /// 查找替换焦点状态
-    pub find_focus: FindReplaceFocus,
-    /// 查找缓存：避免查询未变时重复全量扫描
-    last_find_query: String,
-    find_result_version: u64,
+    pub find: FindState,
     // 全局 UI 状态
     pub file_tree: Option<FileTree>,
     pub current_folder: Option<PathBuf>,
@@ -324,32 +475,12 @@ pub struct EditorState {
     pub bottom_panel_tab: BottomPanelTab,
     /// 当前工作区中各文件的 LSP 诊断（路径字符串 -> 诊断列表）
     pub diagnostics: HashMap<String, Vec<DiagnosticItem>>,
-    /// LSP 客户端（工作区打开时初始化，旧版 LSP 集成）
-    pub legacy_lsp_client: Option<std::sync::Arc<aether_lsp::client::LspClient>>,
-    /// LSP 事件接收器
-    pub lsp_rx: Option<tokio::sync::mpsc::UnboundedReceiver<aether_lsp::client::LspEvent>>,
-    /// Tokio 运行时（用于 LSP 异步操作）
-    pub lsp_runtime: Option<tokio::runtime::Runtime>,
-    /// SSH 连接对话框
-    pub ssh_dialog: SshConnectionDialog,
-    /// 远程会话
-    pub remote_session: Option<RemoteSession>,
-    /// 远程文件树
-    pub remote_file_tree: Option<RemoteFileTree>,
-    /// 选中的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub selected_remote_node: Option<String>,
-    /// 悬停的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub hover_remote_node: Option<String>,
-    /// 远程文件树滚动偏移
-    pub remote_scroll_y: f32,
-    /// 克隆仓库对话框
-    pub clone_dialog: CloneRepoDialog,
+    /// LSP 子系统状态
+    pub lsp: LspState,
+    /// 远程开发子系统状态
+    pub remote: RemoteState,
     /// 新建项目对话框
     pub new_project_dialog: crate::new_project_dialog::NewProjectDialog,
-    /// SSH 管理面板（侧边栏服务器管理）
-    pub ssh_manager_panel: SshManagerPanel,
-    /// 当前连接的服务器配置索引（对应 app_settings.remote.ssh_servers）
-    pub active_ssh_index: Option<usize>,
     /// 窗口是否最大化
     pub is_maximized: bool,
     /// P0.2c: 是否为主窗口(无 owner)。仅主窗口在退出时持久化窗口状态。
@@ -381,8 +512,6 @@ pub struct EditorState {
     pub fs_watch_until: Option<std::time::Instant>,
     /// 上一次记录的工作区根目录签名（用于变化检测，避免无谓刷新）
     pub fs_last_root_sig: u64,
-    /// C-09: SSH 后台连接中（防止重复触发，控制状态栏提示）
-    pub ssh_connecting: bool,
     /// C-09: Git 后台克隆中（防止重复触发，控制状态栏提示）
     pub git_cloning: bool,
     /// 侧边栏滚动偏移（用于文件树虚拟滚动）
@@ -403,81 +532,24 @@ pub struct EditorState {
     pub event_queue: crate::events::EventQueue,
     /// P3.1: 内联补全服务（占位）
     pub inline_completion_service: crate::inline_completion::InlineCompletionService,
-    /// P3.4: 当前显示的 hover tooltip（鼠标悬停提示）
-    pub hover_tooltip: Option<HoverTooltip>,
-    /// P3.4: 上次鼠标位置（用于 hover 防抖判定）
-    pub hover_last_mouse_x: f32,
-    pub hover_last_mouse_y: f32,
-    /// 上一帧的光标位置（用于检测光标移动）
-    pub last_cursor_line: usize,
-    /// 上一帧的光标列（用于检测光标移动）
-    pub last_cursor_col: usize,
-    /// 上一帧的滚动位置（用于检测滚动变化）
-    pub last_scroll_y: f32,
-    /// 上一帧的选择状态（用于检测选择变化）
-    pub last_selection_start: Option<(usize, usize)>,
-    /// 上一帧的选择结束（用于检测选择变化）
-    pub last_selection_end: Option<(usize, usize)>,
-    /// 上一帧的侧边栏内容类型（用于检测侧边栏变化）
-    pub last_sidebar_content: crate::layout::SidebarContent,
-    /// 上一帧的侧边栏可见性（用于检测侧边栏显示/隐藏变化）
-    pub last_sidebar_visible: bool,
-    /// 上一帧的活动栏可见性（用于检测活动栏显示/隐藏变化）
-    pub last_activity_bar_visible: bool,
-    /// 上一帧的右侧面板可见性（用于检测右侧面板变化）
-    pub last_right_panel_visible: bool,
-    /// 上一帧的底部面板可见性（用于检测底部面板变化）
-    pub last_bottom_panel_visible: bool,
-    /// 上一帧的状态消息（用于检测状态栏变化）
-    pub last_status_message: String,
-    /// 上一帧的活动标签页索引（用于检测标签切换）
-    pub last_active_tab: usize,
+    /// P3.4: hover tooltip 状态（鼠标悬停提示）
+    pub hover: HoverState,
+    /// 上一帧快照（脏追踪，用于检测各类 UI 变化）
+    pub prev: PrevFrameState,
     /// 用户菜单
     pub user_menu: crate::user_menu::UserMenu,
-    /// 资源管理器空白区域上下文菜单
-    pub explorer_context_menu: crate::context_menu::ExplorerContextMenu,
-    /// 文件节点右键上下文菜单
-    pub file_node_context_menu: crate::context_menu::FileNodeContextMenu,
-    /// 标签右键上下文菜单
-    pub tab_context_menu: crate::tab_context_menu::TabContextMenuState,
-    /// 活动栏右键上下文菜单
-    pub activity_bar_context_menu: crate::activity_bar_context_menu::ActivityBarContextMenuState,
-    /// 长按检测：按下时刻（None 表示当前未进行长按检测）
-    pub lpress_start: Option<std::time::Instant>,
-    /// 长按检测起始 x（逻辑像素）
-    pub lpress_x: f32,
-    /// 长按检测起始 y（逻辑像素）
-    pub lpress_y: f32,
-    /// 长按检测目标（活动栏/菜单栏）
-    pub lpress_target: Option<PressTarget>,
-    /// 长按检测目标索引
-    pub lpress_index: usize,
-    /// 当前鼠标左键是否按下（用于 WM_TIMER 判定）
-    pub lbutton_down: bool,
+    /// 各处右键上下文菜单状态
+    pub context_menus: ContextMenusState,
+    /// 鼠标按键/长按检测状态
+    pub mouse_press: MousePressState,
     /// P0-2: IME 合成串（pre-edit text），中文/日文输入过程中显示在光标处
     pub composition: Option<String>,
     /// 后台语法高亮器（独立线程，避免阻塞 UI 输入）
     pub(crate) bg_highlighter: aether_tree_sitter::BackgroundHighlighter,
     /// 已发送后台高亮请求对应的 buffer_version（变化时触发新请求）
     pub(crate) hl_request_version: u64,
-    /// tokio runtime（驱动 LSP 异步操作）
-    pub(crate) tokio_runtime: tokio::runtime::Runtime,
-    /// LSP 客户端（Arc 共享给 tokio task）
-    pub(crate) lsp_client: Arc<LspClient>,
-    /// LSP 诊断表（uri -> diagnostics），由 WM_APP+3 处理更新
-    pub(crate) lsp_diagnostics: std::collections::HashMap<Url, Vec<Diagnostic>>,
-    // Phase H: 补全弹窗状态
-    pub(crate) completion_items: Vec<CompletionItem>,
-    pub(crate) completion_visible: bool,
-    pub(crate) completion_selected: usize,
-    pub(crate) completion_trigger_line: usize,
-    pub(crate) completion_trigger_col: usize,
-    // Phase H: 悬停 tooltip 状态
-    pub(crate) hover_content: Option<String>,
     /// UI Tooltip 状态（500ms 延迟显示、4px 移动容差的悬停提示）
     pub tooltip_state: crate::tooltip::TooltipState,
-    /// Task 13.3: 最后关闭的标签内容（用于 Ctrl+Shift+T 恢复）
-    pub last_closed_tab: Option<TabContent>,
     /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
     pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
 }
@@ -627,25 +699,8 @@ impl EditorState {
             content: TabContent::new(),
             is_selecting: false,
             cached_line_numbers: Vec::new(),
-            tabs: Vec::new(),
-            active_tab: 0,
-            tab_layouts: Vec::new(),
-            hover_tab: None,
-            tab_scroll_x: 0.0,
-            plus_button_rect: None,
-            plus_button_hover: false,
-            dragging_tab: None,
-            tab_drop_index: None,
-            tab_drag_start: None,
-            find_visible: false,
-            replace_visible: false,
-            find_query: String::new(),
-            replace_text: String::new(),
-            find_results: Vec::new(),
-            find_active_index: 0,
-            find_focus: FindReplaceFocus::None,
-            last_find_query: String::new(),
-            find_result_version: 0,
+            tab_bar: TabBarState::default(),
+            find: FindState::default(),
             file_tree: None,
             current_folder: None,
             folder_generation: 0,
@@ -672,22 +727,36 @@ impl EditorState {
             search_panel: crate::search_panel::SearchPanel::new(),
             bottom_panel_tab: BottomPanelTab::default(),
             diagnostics: HashMap::new(),
-            legacy_lsp_client: None,
-            lsp_rx: None,
-            lsp_runtime: None,
+            lsp: LspState {
+                legacy_lsp_client: None,
+                rx: None,
+                legacy_runtime: None,
+                tokio_runtime,
+                client: lsp_client,
+                diagnostics: lsp_diagnostics,
+                completion_items,
+                completion_visible: false,
+                completion_selected: 0,
+                completion_trigger_line: 0,
+                completion_trigger_col: 0,
+                hover_content,
+            },
             settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
             tabs_panel: crate::open_tabs::TabsPanel::new(),
             app_settings,
-            ssh_dialog: SshConnectionDialog::new(),
-            remote_session: None,
-            remote_file_tree: None,
-            selected_remote_node: None,
-            hover_remote_node: None,
-            remote_scroll_y: 0.0,
-            clone_dialog: CloneRepoDialog::new(),
+            remote: RemoteState {
+                ssh_dialog: SshConnectionDialog::new(),
+                session: None,
+                file_tree: None,
+                selected_node: None,
+                hover_node: None,
+                scroll_y: 0.0,
+                clone_dialog: CloneRepoDialog::new(),
+                ssh_manager_panel: SshManagerPanel::new(),
+                active_ssh_index: None,
+                ssh_connecting: false,
+            },
             new_project_dialog: crate::new_project_dialog::NewProjectDialog::new(),
-            ssh_manager_panel: SshManagerPanel::new(),
-            active_ssh_index: None,
             is_maximized: false,
             is_main_window,
             titlebar_hover_button: None,
@@ -704,7 +773,6 @@ impl EditorState {
             is_loading_folder: false,
             fs_watch_until: None,
             fs_last_root_sig: 0,
-            ssh_connecting: false,
             git_cloning: false,
             sidebar_scroll_y: 0.0,
             git_panel: crate::git::GitIntegration::new(),
@@ -712,47 +780,21 @@ impl EditorState {
             focus_manager: FocusManager::new(),
             event_queue: crate::events::EventQueue::new(),
             inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
-            hover_tooltip: None,
-            hover_last_mouse_x: 0.0,
-            hover_last_mouse_y: 0.0,
-            last_cursor_line: 0,
-            last_cursor_col: 0,
-            last_scroll_y: 0.0,
-            last_selection_start: None,
-            last_selection_end: None,
-            last_sidebar_content: crate::layout::SidebarContent::FileTree,
-            last_sidebar_visible: true,
-            last_activity_bar_visible: true,
-            last_right_panel_visible: false,
-            last_bottom_panel_visible: false,
-            last_status_message: "就绪".to_string(),
-            last_active_tab: 0,
+            hover: HoverState::default(),
+            prev: PrevFrameState::default(),
             user_menu: crate::user_menu::UserMenu::new(),
-            explorer_context_menu: crate::context_menu::ExplorerContextMenu::new(),
-            file_node_context_menu: crate::context_menu::FileNodeContextMenu::new(),
-            tab_context_menu: crate::tab_context_menu::TabContextMenuState::default(),
-            activity_bar_context_menu:
-                crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
-            lpress_start: None,
-            lpress_x: 0.0,
-            lpress_y: 0.0,
-            lpress_target: None,
-            lpress_index: 0,
-            lbutton_down: false,
+            context_menus: ContextMenusState {
+                explorer: crate::context_menu::ExplorerContextMenu::new(),
+                file_node: crate::context_menu::FileNodeContextMenu::new(),
+                tab: crate::tab_context_menu::TabContextMenuState::default(),
+                activity_bar:
+                    crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
+            },
+            mouse_press: MousePressState::default(),
             composition: None,
             bg_highlighter: aether_tree_sitter::BackgroundHighlighter::new(),
             hl_request_version: 0,
-            tokio_runtime,
-            lsp_client,
-            lsp_diagnostics,
-            completion_items,
-            completion_visible: false,
-            completion_selected: 0,
-            completion_trigger_line: 0,
-            completion_trigger_col: 0,
-            hover_content,
             tooltip_state: crate::tooltip::TooltipState::default(),
-            last_closed_tab: None,
             logo_bitmap: None,
         };
         // 加载 logo 位图（aether-512.png）
@@ -771,7 +813,7 @@ impl EditorState {
         }
         // 启动时 tabs 为空，由渲染层根据 show_welcome()/show_empty_placeholder() 显示欢迎页
         // 不再创建 Tab::Welcome 作为显式标签页，避免标签栏出现"欢迎"tab
-        state.active_tab = 0;
+        state.tab_bar.active_tab = 0;
 
         // P0.2c: 主窗口启动时自动恢复上次打开的工作区。
         // 仅在路径仍然存在时打开,避免引用已删除/移动的目录。
@@ -983,7 +1025,7 @@ impl EditorState {
                 }
             }
             crate::layout::SidebarContent::RemoteFileTree => {
-                self.hover_remote_node.clone().filter(|s| !s.is_empty())
+                self.remote.hover_node.clone().filter(|s| !s.is_empty())
             }
             _ => None,
         }
@@ -991,7 +1033,7 @@ impl EditorState {
 
     /// P3.4: 清除当前 hover tooltip
     pub fn clear_hover_tooltip(&mut self) {
-        self.hover_tooltip = None;
+        self.hover.tooltip = None;
     }
 }
 

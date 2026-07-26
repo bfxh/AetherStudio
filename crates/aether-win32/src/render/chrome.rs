@@ -255,7 +255,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
-            let active_color = color_f(0.0, 0.47, 0.83, 1.0);
+            let active_color = color_f(0.16, 0.30, 0.46, 1.0);
             let active_brush = self
                 .render_ctx
                 .brush_cache
@@ -281,6 +281,13 @@ impl EditorState {
                 )
                 .unwrap();
 
+            // 悬停/激活态文字提亮画刷
+            let bright_text_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.97, 0.97, 0.97, 1.0))
+                .unwrap();
+
             for (i, item) in self.menu_bar.items.iter().enumerate() {
                 let item_x_pos = item_x_positions[i];
                 let item_width = item_widths[i];
@@ -288,18 +295,24 @@ impl EditorState {
                 let is_active = self.menu_bar.active_index == Some(i);
 
                 if is_active || is_hover {
+                    // 圆角高亮块：激活为蓝调选中色，悬停为中性灰
                     let hover_rect = D2D_RECT_F {
-                        left: item_x_pos,
-                        top: y + 2.0,
-                        right: item_x_pos + item_width,
-                        bottom: y + height - 2.0,
+                        left: item_x_pos + 2.0,
+                        top: y + 3.0,
+                        right: item_x_pos + item_width - 2.0,
+                        bottom: y + height - 3.0,
+                    };
+                    let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: hover_rect,
+                        radiusX: 4.0,
+                        radiusY: 4.0,
                     };
                     let brush = if is_active {
                         &active_brush
                     } else {
                         &hover_brush
                     };
-                    target.FillRectangle(&hover_rect, brush);
+                    target.FillRoundedRectangle(&rounded, brush);
                 }
 
                 let wide: Vec<u16> = item.label.encode_utf16().chain(Some(0)).collect();
@@ -309,11 +322,16 @@ impl EditorState {
                     right: item_x_pos + item_width,
                     bottom: y + height,
                 };
+                let label_brush = if is_active || is_hover {
+                    &bright_text_brush
+                } else {
+                    &text_brush
+                };
                 target.DrawText(
                     &wide,
                     &text_format,
                     &text_rect,
-                    &text_brush,
+                    label_brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
@@ -507,7 +525,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
-            let active_color = color_f(0.0, 0.47, 0.83, 1.0);
+            let active_color = color_f(0.16, 0.30, 0.46, 1.0);
             let active_brush = self
                 .render_ctx
                 .brush_cache
@@ -525,6 +543,13 @@ impl EditorState {
                 )
                 .unwrap();
 
+            // 悬停/激活态文字提亮画刷
+            let bright_text_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.97, 0.97, 0.97, 1.0))
+                .unwrap();
+
             for (i, item) in self.menu_bar.items.iter().enumerate() {
                 let item_x_pos = self.menu_bar.item_x_positions[i];
                 let item_width = self.menu_bar.item_widths[i];
@@ -532,18 +557,24 @@ impl EditorState {
                 let is_active = self.menu_bar.active_index == Some(i);
 
                 if is_active || is_hover {
+                    // 圆角高亮块：激活为蓝调选中色，悬停为中性灰
                     let hover_rect = D2D_RECT_F {
-                        left: item_x_pos,
-                        top: y + 2.0,
-                        right: item_x_pos + item_width,
-                        bottom: y + height - 2.0,
+                        left: item_x_pos + 2.0,
+                        top: y + 3.0,
+                        right: item_x_pos + item_width - 2.0,
+                        bottom: y + height - 3.0,
+                    };
+                    let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: hover_rect,
+                        radiusX: 4.0,
+                        radiusY: 4.0,
                     };
                     let brush = if is_active {
                         &active_brush
                     } else {
                         &hover_brush
                     };
-                    target.FillRectangle(&hover_rect, brush);
+                    target.FillRoundedRectangle(&rounded, brush);
                 }
 
                 // 自定义模式：拖拽中项的半透明高亮覆盖
@@ -570,11 +601,16 @@ impl EditorState {
                     right: item_x_pos + item_width,
                     bottom: y + height,
                 };
+                let label_brush = if is_active || is_hover {
+                    &bright_text_brush
+                } else {
+                    &text_brush
+                };
                 target.DrawText(
                     &wide,
                     &text_format,
                     &text_rect,
-                    &text_brush,
+                    label_brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );

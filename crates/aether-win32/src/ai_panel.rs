@@ -104,6 +104,12 @@ pub struct AiMessage {
     /// 思考块是否折叠（默认展开，生成完成后自动折叠；用户可点击标题切换）
     #[serde(default)]
     pub reasoning_collapsed: bool,
+    /// 思考耗时（毫秒）；None 表示无思考或仍在思考中（旧持久化数据也为 None）
+    #[serde(default)]
+    pub reasoning_ms: Option<u64>,
+    /// 思考开始时刻（Unix 毫秒），仅运行期计时用，不持久化
+    #[serde(skip)]
+    pub reasoning_started_ms: Option<u64>,
 }
 
 impl AiMessage {
@@ -113,7 +119,33 @@ impl AiMessage {
             content,
             reasoning: None,
             reasoning_collapsed: false,
+            reasoning_ms: None,
+            reasoning_started_ms: None,
         }
+    }
+
+    /// 思考计时启动：首次收到 reasoning 增量时调用（重复调用无副作用）
+    pub fn start_reasoning_timer(&mut self) {
+        if self.reasoning_started_ms.is_none() && self.reasoning_ms.is_none() {
+            self.reasoning_started_ms = Some(now_millis());
+        }
+    }
+
+    /// 思考计时结束：回答开始 / 流结束 / 出错时调用，结算耗时（未启动则无操作）
+    pub fn stop_reasoning_timer(&mut self) {
+        if let Some(start) = self.reasoning_started_ms.take() {
+            self.reasoning_ms = Some(now_millis().saturating_sub(start));
+        }
+    }
+}
+
+/// 思考耗时的展示文本（"17s" / "1m05s"），毫秒四舍五入到秒
+pub fn format_reasoning_duration(ms: u64) -> String {
+    let secs = (ms + 500) / 1000;
+    if secs < 60 {
+        format!("{}s", secs)
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
     }
 }
 
@@ -136,6 +168,21 @@ pub struct AiStreamState {
     pub done: bool,
     /// 流式过程中发生的错误
     pub error: Option<String>,
+    /// 输出被截断的原因（如达到 max_tokens 限制），Some 表示被截断
+    pub truncated: Option<String>,
+}
+
+/// 后台流式轮询的边沿结果
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DrainEdge {
+    /// 仍在生成中（或本无生成），无结束边沿
+    Pending,
+    /// 本帧正常完成：调用方应处理 Agent 动作（文件/命令）
+    Completed,
+    /// 本帧因错误中断：部分内容已落入消息，调用方可抢救已接收的文件块
+    Interrupted,
+    /// 输出因达到 max_tokens 被截断：用户可点击"继续生成"
+    Truncated,
 }
 
 /// AI 助手欢迎语（新对话初始系统消息）
@@ -146,6 +193,14 @@ pub fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 当前 Unix 毫秒级时间戳（思考耗时计时）
+pub fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -235,26 +290,27 @@ impl AiConversation {
             .map(|m| m.content.clone())
     }
 
-    /// 后台（非活动）会话的流式轮询：把新 token 追加到消息，返回本帧是否刚完成。
+    /// 后台（非活动）会话的流式轮询：把新 token 追加到消息，返回结束边沿。
     /// 与 `AiPanel::check_background_result` 逻辑一致，但作用于本会话，支持并发。
-    pub fn drain_background(&mut self) -> bool {
+    pub fn drain_background(&mut self) -> DrainEdge {
         if !self.is_generating {
-            return false;
+            return DrainEdge::Pending;
         }
         let delta = if let Ok(mut s) = self.stream_state.lock() {
             let partial = std::mem::take(&mut s.partial);
             let reasoning = std::mem::take(&mut s.reasoning);
             let done = s.done;
             let error = s.error.take();
+            let truncated = s.truncated.take();
             if done {
                 s.done = false;
             }
-            Some((partial, reasoning, done, error))
+            Some((partial, reasoning, done, error, truncated))
         } else {
             None
         };
-        let mut just_completed = false;
-        if let Some((partial, reasoning, done, error)) = delta {
+        let mut edge = DrainEdge::Pending;
+        if let Some((partial, reasoning, done, error, truncated)) = delta {
             // 深度思考通常先于回答到达：确保有一条助手消息承载 reasoning
             if !reasoning.is_empty() {
                 if !matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
@@ -262,6 +318,7 @@ impl AiConversation {
                         .push(AiMessage::new(AiRole::Assistant, String::new()));
                 }
                 if let Some(last) = self.messages.last_mut() {
+                    last.start_reasoning_timer();
                     last.reasoning
                         .get_or_insert_with(String::new)
                         .push_str(&reasoning);
@@ -276,27 +333,44 @@ impl AiConversation {
                         .push(AiMessage::new(AiRole::Assistant, String::new()));
                 }
                 if let Some(last) = self.messages.last_mut() {
+                    // 回答开始到达 = 思考阶段结束，结算思考耗时
+                    last.stop_reasoning_timer();
                     last.content.push_str(&partial);
                 }
                 self.updated_at = now_secs();
             }
             if let Some(err) = error {
+                // 出错中断：结算已进行的思考耗时，避免显示永远的"思考中"
+                if let Some(last) = self.messages.last_mut() {
+                    last.stop_reasoning_timer();
+                }
                 self.add_assistant_message(err);
                 self.is_generating = false;
-                return false;
+                // 中断边沿：已接收的部分内容（含完整文件块）仍值得抢救
+                return DrainEdge::Interrupted;
             }
             if done {
                 self.is_generating = false;
                 // 生成完成：自动折叠思考块，保持界面整洁
                 if let Some(last) = self.messages.last_mut() {
+                    last.stop_reasoning_timer();
                     if last.role == AiRole::Assistant && last.reasoning.is_some() {
                         last.reasoning_collapsed = true;
                     }
                 }
-                just_completed = true;
+                if truncated.is_some() {
+                    // 被截断：提示用户，后台会话无"继续"按钮，只显示消息
+                    self.add_assistant_message(format!(
+                        "⚠️ 输出已被截断（原因：{}）。发送\"继续\"以继续生成。",
+                        truncated.unwrap_or_else(|| "max_tokens".to_string())
+                    ));
+                    edge = DrainEdge::Truncated;
+                } else {
+                    edge = DrainEdge::Completed;
+                }
             }
         }
-        just_completed
+        edge
     }
 }
 
@@ -378,6 +452,20 @@ pub fn relative_time(updated_at: u64, now: u64) -> String {
     }
 }
 
+/// 多任务编排流水线状态（CoT 任务分解：规划器 → 逐任务独立 AI 调用）。
+///
+/// 由规划器产出 tasks 后创建；每个 FILE 任务发起一次聚焦 worker 调用生成，
+/// RUN 任务直接执行。cursor 指向当前任务，created_files 供后续 worker 参考已建文件。
+#[derive(Clone, Debug)]
+pub struct AgentPipeline {
+    pub goal: String,
+    pub tasks: Vec<crate::ai_agent::PlannedTask>,
+    pub cursor: usize,
+    pub created_files: Vec<String>,
+    /// 未成功写入的文件任务（worker 输出未闭合/应用失败），收尾时如实汇报
+    pub failed_files: Vec<String>,
+}
+
 /// AI 助手面板状态
 #[derive(Debug)]
 pub struct AiPanel {
@@ -440,6 +528,14 @@ pub struct AiPanel {
     pub hover_tab: Option<usize>,
     /// 是否展开历史记录列表
     pub history_open: bool,
+    /// 历史下拉面板展开动画进度（0.0 = 收起，1.0 = 完全展开）
+    pub history_anim: f32,
+    /// 历史下拉面板内部滚动偏移（内容超高时滚动）
+    pub history_scroll: f32,
+    /// 历史下拉面板最大滚动量（渲染时计算，供滚轮钳制）
+    pub history_max_scroll: f32,
+    /// 历史下拉面板整体命中区（渲染时注册，供滚轮路由）
+    pub history_panel_region: Option<(f32, f32, f32, f32)>,
     /// 历史记录条目命中区 (history_index, x, y, w, h)
     pub history_item_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 历史索引（懒加载：仅元数据，点击时才读取完整会话）
@@ -490,6 +586,86 @@ pub struct AiPanel {
     pub history_detail_restore_region: Option<(f32, f32, f32, f32)>,
     /// Agent 自动续跑轮次计数（用户手动发消息时重置；防止工具回环无限迭代）
     pub agent_iter_count: u32,
+    /// 最后一次生成是否被截断（达到 max_tokens）
+    pub last_truncated: bool,
+    /// "继续生成"按钮命中区 (x, y, w, h)
+    pub continue_button_region: Option<(f32, f32, f32, f32)>,
+    /// 当前多任务编排流水线（None 表示无）
+    pub agent_pipeline: Option<AgentPipeline>,
+    /// 已展开预览的文件卡片集合，key = (消息下标, 该消息内 File 卡序号)
+    pub expanded_file_cards: std::collections::HashSet<(usize, usize)>,
+    /// 文件卡片命中区域 (msg_idx, block_seq, x, y, w, h)，渲染每帧更新
+    pub file_card_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
+}
+
+/// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
+/// `send_message_internal`（普通对话/规划器调度）与 `stream_focused`（逐任务 worker）共用。
+fn spawn_ai_stream(
+    settings: AiSettings,
+    messages: Vec<ChatMessage>,
+    stream_state: Arc<Mutex<AiStreamState>>,
+    should_stop: Arc<AtomicBool>,
+) {
+    std::thread::spawn(move || {
+        let client = AiClient::new(&settings);
+        match client.chat_completion_stream(&messages) {
+            Ok(rx) => {
+                while let Ok(event) = rx.recv() {
+                    if should_stop.load(Ordering::SeqCst) {
+                        if let Ok(mut s) = stream_state.lock() {
+                            s.done = true;
+                        }
+                        break;
+                    }
+                    match event {
+                        AiStreamEvent::Token(token) => {
+                            if let Ok(mut s) = stream_state.lock() {
+                                s.partial.push_str(&token);
+                            }
+                        }
+                        AiStreamEvent::Reasoning(r) => {
+                            if let Ok(mut s) = stream_state.lock() {
+                                s.reasoning.push_str(&r);
+                            }
+                        }
+                        AiStreamEvent::Done => {
+                            if let Ok(mut s) = stream_state.lock() {
+                                s.done = true;
+                            }
+                            break;
+                        }
+                        AiStreamEvent::Truncated(reason) => {
+                            if let Ok(mut s) = stream_state.lock() {
+                                s.truncated = Some(reason);
+                            }
+                            // 不 break：继续接收 Done（SSE 会先发 finish_reason 再发 [DONE]）
+                        }
+                        AiStreamEvent::Error(err) => {
+                            if let Ok(mut s) = stream_state.lock() {
+                                s.error = Some(format!("请求失败: {}", sanitize_error(&err)));
+                                s.done = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if let Ok(mut s) = stream_state.lock() {
+                    let error_msg = e.safe_display();
+                    let hint = if e.is_retryable() {
+                        "\n（暂时性错误，系统稍后可能自动重试，或请稍候重试）"
+                    } else if e.is_permanent() {
+                        "\n（请检查 API 设置，此错误通常无需重试）"
+                    } else {
+                        ""
+                    };
+                    s.error = Some(format!("请求失败: {}{}", error_msg, hint));
+                    s.done = true;
+                }
+            }
+        }
+    });
 }
 
 impl AiPanel {
@@ -527,6 +703,10 @@ impl AiPanel {
             history_button_region: None,
             hover_tab: None,
             history_open: false,
+            history_anim: 0.0,
+            history_scroll: 0.0,
+            history_max_scroll: 0.0,
+            history_panel_region: None,
             history_item_regions: Vec::new(),
             history: Vec::new(),
             reasoning_toggle_regions: Vec::new(),
@@ -552,6 +732,11 @@ impl AiPanel {
             history_detail_back_region: None,
             history_detail_restore_region: None,
             agent_iter_count: 0,
+            last_truncated: false,
+            continue_button_region: None,
+            agent_pipeline: None,
+            expanded_file_cards: std::collections::HashSet::new(),
+            file_card_regions: Vec::new(),
         };
         panel.restore_latest_conversation();
         panel
@@ -631,6 +816,10 @@ impl AiPanel {
             history_button_region: self.history_button_region,
             hover_tab: self.hover_tab,
             history_open: self.history_open,
+            history_anim: self.history_anim,
+            history_scroll: self.history_scroll,
+            history_max_scroll: self.history_max_scroll,
+            history_panel_region: self.history_panel_region,
             history_item_regions: self.history_item_regions.clone(),
             history: self.history.clone(),
             reasoning_toggle_regions: self.reasoning_toggle_regions.clone(),
@@ -656,6 +845,11 @@ impl AiPanel {
             history_detail_back_region: None,
             history_detail_restore_region: None,
             agent_iter_count: 0,
+            last_truncated: false,
+            continue_button_region: None,
+            agent_pipeline: None,
+            expanded_file_cards: std::collections::HashSet::new(),
+            file_card_regions: Vec::new(),
         }
     }
 
@@ -813,7 +1007,7 @@ impl AiPanel {
         self.snapshot_active_into_slot();
         self.load_slot_into_active(idx);
         self.model_menu_open = false;
-        self.history_open = false;
+        self.dismiss_history_dropdown();
     }
 
     /// 新建一个空对话并激活
@@ -825,7 +1019,7 @@ impl AiPanel {
         self.load_slot_into_active(idx);
         self.input_focused = true;
         self.model_menu_open = false;
-        self.history_open = false;
+        self.dismiss_history_dropdown();
     }
 
     /// 关闭指定会话标签（正在生成的后台线程会被请求停止）
@@ -898,7 +1092,7 @@ impl AiPanel {
             }
         }
         self.model_menu_open = false;
-        self.history_open = false;
+        self.dismiss_history_dropdown();
     }
 
     /// 从历史记录中恢复指定会话为新的活动标签页
@@ -913,7 +1107,7 @@ impl AiPanel {
         // 若该会话仍在 conversations 中（未真正关闭），直接切换
         if let Some(pos) = self.conversations.iter().position(|c| c.id == id) {
             self.switch_to(pos);
-            self.history_open = false;
+            self.dismiss_history_dropdown();
             return;
         }
         // 否则尝试从 SQLite 加载完整会话，失败则创建占位会话
@@ -930,7 +1124,7 @@ impl AiPanel {
         self.conversations.push(conv);
         let new_idx = self.conversations.len() - 1;
         self.load_slot_into_active(new_idx);
-        self.history_open = false;
+        self.dismiss_history_dropdown();
     }
 
     /// 用首条用户消息自动生成活动会话标题（仍为默认标题时）
@@ -954,22 +1148,30 @@ impl AiPanel {
     }
 
     /// 并发轮询所有会话：活动会话走扁平逻辑，其余走后台 drain。
-    /// 返回本帧"刚完成"的会话下标列表，供调用方逐个处理 Agent 动作。
-    pub fn poll_all_background(&mut self) -> Vec<usize> {
+    /// 返回 `(刚正常完成, 刚中断)` 两个会话下标列表：
+    /// 前者应处理 Agent 动作（文件/命令），后者可抢救已接收的文件块。
+    pub fn poll_all_background(&mut self) -> (Vec<usize>, Vec<usize>) {
         let mut completed = Vec::new();
-        if self.check_background_result() {
-            completed.push(self.active);
+        let mut interrupted = Vec::new();
+        match self.check_background_result() {
+            DrainEdge::Completed => completed.push(self.active),
+            DrainEdge::Interrupted => interrupted.push(self.active),
+            DrainEdge::Truncated => {} // 截断：UI 显示"继续生成"按钮，不自动处理文件/命令
+            DrainEdge::Pending => {}
         }
         let active = self.active;
         for i in 0..self.conversations.len() {
             if i == active {
                 continue;
             }
-            if self.conversations[i].drain_background() {
-                completed.push(i);
+            match self.conversations[i].drain_background() {
+                DrainEdge::Completed => completed.push(i),
+                DrainEdge::Interrupted => interrupted.push(i),
+                DrainEdge::Truncated => {} // 后台会话截断：仅显示消息，无按钮
+                DrainEdge::Pending => {}
             }
         }
-        completed
+        (completed, interrupted)
     }
 
     /// 是否存在任一会话正在生成（用于维持定时重绘）
@@ -1005,6 +1207,24 @@ impl AiPanel {
         }
     }
 
+    /// 指定会话中从后往前第一条满足谓词的助手消息文本。
+    /// 用于生成中断后的抢救：跳过末尾的错误提示消息，定位携带文件块的内容消息。
+    pub fn last_assistant_text_matching_of(
+        &self,
+        conv_idx: usize,
+        pred: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let msgs = if conv_idx == self.active {
+            &self.messages
+        } else {
+            &self.conversations.get(conv_idx)?.messages
+        };
+        msgs.iter()
+            .rev()
+            .find(|m| m.role == AiRole::Assistant && pred(&m.content))
+            .map(|m| m.content.clone())
+    }
+
     /// 向指定会话追加一条助手消息（用于会话作用域的 Agent 动作反馈）
     pub fn add_assistant_message_to(&mut self, conv_idx: usize, content: String) {
         if conv_idx == self.active {
@@ -1034,6 +1254,7 @@ impl AiPanel {
     /// 发送消息（AI-H01: 非阻塞 — HTTP 调用在后台线程执行，结果通过 stream_state 流式返回）
     pub fn send_message(&mut self, settings: &AiSettings) -> Result<String, String> {
         self.agent_iter_count = 0;
+        self.agent_pipeline = None;
         self.send_message_internal(settings, self.input.clone(), AiMode::Ask, None)
     }
 
@@ -1045,6 +1266,7 @@ impl AiPanel {
         mode: AiMode,
     ) -> Result<String, String> {
         self.agent_iter_count = 0;
+        self.agent_pipeline = None;
         let context = editor.gather_context(&self.attachments);
         self.send_message_internal(settings, self.input.clone(), mode, Some(context))
     }
@@ -1057,6 +1279,7 @@ impl AiPanel {
         mode: AiMode,
     ) -> Result<String, String> {
         self.agent_iter_count = 0;
+        self.agent_pipeline = None;
         self.send_message_internal(settings, self.input.clone(), mode, Some(context))
     }
 
@@ -1076,6 +1299,67 @@ impl AiPanel {
         self.send_message_internal(settings, feedback, mode, None)
     }
 
+    /// 逐任务 worker 调用：以给定的 system/user 两条消息发起**聚焦**流式请求，
+    /// **不含**累积对话历史（因此上下文窗口占用极小）。生成内容流入新的助手消息，
+    /// 完成后由编排器（editor::advance_agent_pipeline）落盘并推进下一任务。
+    pub fn stream_focused(&mut self, settings: &AiSettings, system: String, user: String) {
+        self.is_generating = true;
+        self.should_stop.store(false, Ordering::SeqCst);
+        if let Ok(mut s) = self.stream_state.lock() {
+            *s = AiStreamState::default();
+        }
+        // worker 输出必须流入独立的新助手消息：若续写在上一条消息（如执行计划清单）末尾，
+        // 首个 FILE 标记会粘在清单行后失去行锚定，导致既不渲染卡片也无法解析落盘。
+        self.add_assistant_message(String::new());
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: user,
+            },
+        ];
+        spawn_ai_stream(
+            settings.clone(),
+            messages,
+            Arc::clone(&self.stream_state),
+            Arc::clone(&self.should_stop),
+        );
+    }
+
+    /// 用给定内容替换最后一条助手消息（无则追加）；用于把规划器原始清单块替换为可读的执行计划。
+    pub fn rewrite_last_assistant(&mut self, content: String) {
+        if let Some(last) = self.messages.last_mut() {
+            if last.role == AiRole::Assistant {
+                last.content = content;
+                last.reasoning = None;
+                last.reasoning_collapsed = false;
+                self.stick_to_bottom = true;
+                self.sync_hot_data();
+                return;
+            }
+        }
+        self.add_assistant_message(content);
+    }
+
+    /// 切换文件卡片的展开/折叠状态（P0 可展开预览）
+    pub fn toggle_file_card_expand(&mut self, msg_idx: usize, block_seq: usize) {
+        let key = (msg_idx, block_seq);
+        if !self.expanded_file_cards.remove(&key) {
+            self.expanded_file_cards.insert(key);
+        }
+    }
+
+    /// 命中测试文件卡片，返回 (msg_idx, block_seq)
+    pub fn hit_test_file_card(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+        self.file_card_regions
+            .iter()
+            .find(|(_, _, rx, ry, rw, rh)| x >= *rx && x <= rx + rw && y >= *ry && y <= ry + rh)
+            .map(|(mi, bi, ..)| (*mi, *bi))
+    }
+
     fn send_message_internal(
         &mut self,
         settings: &AiSettings,
@@ -1091,6 +1375,9 @@ impl AiPanel {
         if self.is_generating {
             return Err("正在等待上一次回复，请稍后再试".to_string());
         }
+
+        // 用户手动发送消息（或点击"继续"）时，重置截断标记
+        self.last_truncated = false;
 
         // 限制输入长度（M-03）
         const MAX_INPUT_LEN: usize = 10000;
@@ -1158,58 +1445,16 @@ impl AiPanel {
                 slot.used_bullet_ids = used_bullet_ids;
             }
         }
-        messages.extend(Self::history_to_chat_messages(&self.messages));
+        // 最大输入 Token（上下文预算）：按激活模型配置切片历史，None 时用内置默认
+        let input_budget = settings
+            .max_input_tokens
+            .map(|v| v as usize)
+            .unwrap_or(24000);
+        messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
         let stream_state = Arc::clone(&self.stream_state);
         let should_stop = Arc::clone(&self.should_stop);
 
-        std::thread::spawn(move || {
-            let client = AiClient::new(&settings);
-            match client.chat_completion_stream(&messages) {
-                Ok(rx) => {
-                    while let Ok(event) = rx.recv() {
-                        if should_stop.load(Ordering::SeqCst) {
-                            if let Ok(mut s) = stream_state.lock() {
-                                s.done = true;
-                            }
-                            break;
-                        }
-                        match event {
-                            AiStreamEvent::Token(token) => {
-                                if let Ok(mut s) = stream_state.lock() {
-                                    s.partial.push_str(&token);
-                                }
-                            }
-                            AiStreamEvent::Reasoning(r) => {
-                                if let Ok(mut s) = stream_state.lock() {
-                                    s.reasoning.push_str(&r);
-                                }
-                            }
-                            AiStreamEvent::Done => {
-                                if let Ok(mut s) = stream_state.lock() {
-                                    s.done = true;
-                                }
-                                break;
-                            }
-                            AiStreamEvent::Error(err) => {
-                                if let Ok(mut s) = stream_state.lock() {
-                                    s.error = Some(format!("请求失败: {}", sanitize_error(&err)));
-                                    s.done = true;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                // H-21: 使用 safe_display() 替代 sanitize_error(&Display)，
-                // 不包含已截断但仍可能有敏感信息的 API 响应体
-                Err(e) => {
-                    if let Ok(mut s) = stream_state.lock() {
-                        s.error = Some(format!("请求失败: {}", e.safe_display()));
-                        s.done = true;
-                    }
-                }
-            }
-        });
+        spawn_ai_stream(settings, messages, stream_state, should_stop);
 
         Ok("请求已提交".to_string())
     }
@@ -1225,9 +1470,13 @@ impl AiPanel {
     /// - 始终至少包含最后一条（当前用户输入）。
     ///
     /// 历史取自各会话自身的 messages，因此不同标签页/对话轮次天然隔离、互不串扰。
-    fn history_to_chat_messages(messages: &[AiMessage]) -> Vec<ChatMessage> {
-        const MAX_MSGS: usize = 30;
-        const MAX_TOKENS: usize = 6000;
+    fn history_to_chat_messages(
+        messages: &[AiMessage],
+        max_input_tokens: usize,
+    ) -> Vec<ChatMessage> {
+        const MAX_MSGS: usize = 40;
+        // 下限保护：预算过小会几乎丢光上下文，至少保留约 2000 字符
+        let budget = max_input_tokens.max(2000);
         let eligible: Vec<&AiMessage> = messages
             .iter()
             .filter(|m| m.role != AiRole::System)
@@ -1236,7 +1485,7 @@ impl AiPanel {
         let mut tokens = 0usize;
         for m in eligible.iter().rev() {
             let t = Self::estimate_tokens(&m.content);
-            if !selected.is_empty() && (selected.len() >= MAX_MSGS || tokens + t > MAX_TOKENS) {
+            if !selected.is_empty() && (selected.len() >= MAX_MSGS || tokens + t > budget) {
                 break;
             }
             tokens += t;
@@ -1288,6 +1537,12 @@ impl AiPanel {
             let next_pos = self.next_char_boundary();
             self.input.drain(self.caret_pos..next_pos);
         }
+    }
+
+    /// 粘贴文本到光标位置
+    pub fn paste_text(&mut self, text: &str) {
+        self.input.insert_str(self.caret_pos, text);
+        self.caret_pos += text.len();
     }
 
     /// 光标左移
@@ -1348,6 +1603,10 @@ impl AiPanel {
     pub fn stop_generation(&mut self) {
         self.should_stop.store(true, Ordering::SeqCst);
         self.is_generating = false;
+        // 手动停止后 drain 不再走 done 分支，思考计时在此结算
+        if let Some(last) = self.messages.last_mut() {
+            last.stop_reasoning_timer();
+        }
         if let Ok(mut s) = self.stream_state.lock() {
             s.done = true;
         }
@@ -1391,11 +1650,12 @@ impl AiPanel {
 
     /// AI-H01: 轮询后台线程结果，应在渲染循环中调用
     ///
-    /// 返回 `true` 表示本帧生成刚刚完成（done 边沿），调用方应在此时处理 Agent 动作
-    /// （创建/修改文件、执行终端命令）。
-    pub fn check_background_result(&mut self) -> bool {
+    /// 返回结束边沿：`Completed` 表示本帧正常完成（处理 Agent 动作：文件/命令）；
+    /// `Interrupted` 表示本帧因错误中断（可抢救已接收的文件块）；
+    /// `Truncated` 表示输出因 max_tokens 被截断（用户可点击"继续生成"）。
+    pub fn check_background_result(&mut self) -> DrainEdge {
         if !self.is_generating {
-            return false;
+            return DrainEdge::Pending;
         }
         let delta = {
             if let Ok(mut s) = self.stream_state.lock() {
@@ -1403,16 +1663,17 @@ impl AiPanel {
                 let reasoning = std::mem::take(&mut s.reasoning);
                 let done = s.done;
                 let error = s.error.take();
+                let truncated = s.truncated.take();
                 if done {
                     s.done = false;
                 }
-                Some((partial, reasoning, done, error))
+                Some((partial, reasoning, done, error, truncated))
             } else {
                 None
             }
         };
-        let mut just_completed = false;
-        if let Some((partial, reasoning, done, error)) = delta {
+        let mut edge = DrainEdge::Pending;
+        if let Some((partial, reasoning, done, error, truncated)) = delta {
             // 深度思考（DeepSeek reasoning_content）先于回答到达：单独承载于助手消息的 reasoning
             if !reasoning.is_empty() {
                 if !matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
@@ -1420,6 +1681,7 @@ impl AiPanel {
                         .push(AiMessage::new(AiRole::Assistant, String::new()));
                 }
                 if let Some(last) = self.messages.last_mut() {
+                    last.start_reasoning_timer();
                     last.reasoning
                         .get_or_insert_with(String::new)
                         .push_str(&reasoning);
@@ -1433,28 +1695,69 @@ impl AiPanel {
                         .push(AiMessage::new(AiRole::Assistant, String::new()));
                 }
                 if let Some(last) = self.messages.last_mut() {
+                    // 回答开始到达 = 思考阶段结束，结算思考耗时
+                    last.stop_reasoning_timer();
                     last.content.push_str(&partial);
                 }
             }
             if let Some(err) = error {
+                // 出错中断：结算已进行的思考耗时，避免显示永远的"思考中"
+                if let Some(last) = self.messages.last_mut() {
+                    last.stop_reasoning_timer();
+                }
                 self.add_assistant_message(err);
                 self.is_generating = false;
-                return false;
+                // 同步热数据（消息已最终确定），并上报中断边沿供抢救文件块
+                self.sync_hot_data();
+                return DrainEdge::Interrupted;
             }
             if done {
                 self.is_generating = false;
                 // 生成完成：自动折叠思考块，保持界面整洁
                 if let Some(last) = self.messages.last_mut() {
+                    last.stop_reasoning_timer();
                     if last.role == AiRole::Assistant && last.reasoning.is_some() {
                         last.reasoning_collapsed = true;
                     }
                 }
-                just_completed = true;
+                if truncated.is_some() {
+                    // 被截断：显示消息并设置标记，UI 会渲染"继续生成"按钮
+                    self.add_assistant_message(format!(
+                        "⚠️ 输出已被截断（原因：{}）。点击下方按钮继续生成。",
+                        truncated.unwrap_or_else(|| "max_tokens".to_string())
+                    ));
+                    self.last_truncated = true;
+                    edge = DrainEdge::Truncated;
+                } else {
+                    edge = DrainEdge::Completed;
+                    self.last_truncated = false;
+                }
                 // 同步热数据（生成完成，消息已最终确定）
                 self.sync_hot_data();
             }
         }
-        just_completed
+        edge
+    }
+
+    /// 继续被截断的输出：把当前最后一条助手消息作为上下文，重新发起请求"继续生成"
+    pub fn continue_truncated_generation(&mut self, settings: &AiSettings) -> Result<(), String> {
+        if self.is_generating {
+            return Err("正在生成中，无法继续".to_string());
+        }
+        // 移除最后一条"被截断"提示消息（如果有）
+        if let Some(last) = self.messages.last() {
+            if last.role == AiRole::Assistant && last.content.contains("输出已被截断") {
+                self.messages.pop();
+            }
+        }
+        // 重置截断标记，发送明确的"续写"指令（而非裸"继续"），避免模型在 Agent 模式下
+        // 重新规划/列目录/读文件，而是直接接着上次断点补全。
+        self.last_truncated = false;
+        let resume_prompt = "请从上次被截断的位置继续输出剩余内容：直接接着写，\
+不要重复已经输出的部分，不要重新开始或重新解释，也不要重新列目录/读取文件。\
+如果上次正在写某个文件，请继续用同一个 FILE 标记补全剩余内容，直到文件完整。";
+        self.send_message_internal(settings, resume_prompt.to_string(), self.mode, None)?;
+        Ok(())
     }
 
     /// 从最后一条助手消息中提取代码块
@@ -1648,6 +1951,30 @@ impl AiPanel {
         self.history_clear_all_region = None;
         self.history_detail_back_region = None;
         self.history_detail_restore_region = None;
+        self.history_panel_region = None;
+    }
+
+    /// 历史下拉面板动画步进：向目标状态（展开 1.0 / 收起 0.0）推进。
+    /// 返回 true 表示动画尚未结束（调用方应继续重绘并保留定时器）。
+    pub fn tick_history_anim(&mut self) -> bool {
+        const STEP: f32 = 0.14; // 16ms 定时器下约 7 帧完成
+        let target = if self.history_open { 1.0 } else { 0.0 };
+        if (self.history_anim - target).abs() < f32::EPSILON {
+            return false;
+        }
+        if self.history_anim < target {
+            self.history_anim = (self.history_anim + STEP).min(target);
+        } else {
+            self.history_anim = (self.history_anim - STEP).max(target);
+        }
+        (self.history_anim - target).abs() > f32::EPSILON
+    }
+
+    /// 立即关闭历史下拉面板（跳过收起动画，用于标签切换/关闭等场景）
+    pub fn dismiss_history_dropdown(&mut self) {
+        self.history_open = false;
+        self.history_anim = 0.0;
+        self.history_scroll = 0.0;
     }
 
     // ===== Playbook 管理面板 =====
@@ -1927,7 +2254,7 @@ mod tests {
             msg(AiRole::Assistant, "你好！我是助手"),
             msg(AiRole::User, "我刚刚问了什么"),
         ];
-        let out = AiPanel::history_to_chat_messages(&history);
+        let out = AiPanel::history_to_chat_messages(&history, 24000);
         // System 欢迎语被跳过，其余按序映射
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].role, "user");
@@ -1940,32 +2267,36 @@ mod tests {
     #[test]
     fn history_window_always_includes_last_even_if_huge() {
         // 单条超预算也必须包含（保证当前输入不被丢弃）
-        let big = "字".repeat(20_000);
+        let big = "字".repeat(30_000);
         let history = vec![msg(AiRole::User, &big)];
-        let out = AiPanel::history_to_chat_messages(&history);
+        let out = AiPanel::history_to_chat_messages(&history, 24000);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].role, "user");
     }
 
     #[test]
     fn history_window_drops_oldest_when_over_budget() {
-        // 构造多条大消息，超出 token 预算时应丢弃较早的，保留最近的
+        // 构造多条大消息（每条约 3000 字符 × 20 对，远超 24000 预算），
+        // 超出 token 预算时应丢弃较早的，保留最近的。
         let mut history = Vec::new();
-        for i in 0..10 {
-            history.push(msg(AiRole::User, &"x".repeat(1000)));
+        for i in 0..20 {
+            history.push(msg(AiRole::User, &"x".repeat(3000)));
             history.push(msg(AiRole::Assistant, &format!("回复{}", i)));
         }
-        let out = AiPanel::history_to_chat_messages(&history);
-        // 至少保留最近若干条，且不超过消息数上限
+        let out = AiPanel::history_to_chat_messages(&history, 24000);
         assert!(!out.is_empty());
-        assert!(out.len() <= 30);
-        // 最后一条应为最近的助手回复（保留最近）
-        assert_eq!(out.last().unwrap().content, "回复9");
+        // 不超过消息数上限 MAX_MSGS；超预算应丢弃最早的消息、保留最近的
+        assert!(out.len() <= 40);
+        assert!(
+            !out.iter().any(|m| m.content == "回复0"),
+            "最早的消息应被丢弃"
+        );
+        assert_eq!(out.last().unwrap().content, "回复19", "应保留最近的消息");
     }
 
     #[test]
     fn empty_history_yields_empty() {
-        let out = AiPanel::history_to_chat_messages(&[]);
+        let out = AiPanel::history_to_chat_messages(&[], 24000);
         assert!(out.is_empty());
     }
 
@@ -2126,5 +2457,72 @@ mod tests {
         assert_eq!(relative_time(now - 60 * 86400, now), "2 个月前");
         // 未来时间戳不回绕
         assert_eq!(relative_time(now + 100, now), "刚刚");
+    }
+
+    // ===== 流式中断：drain_background 中断边沿（文件块抢救的前提）=====
+
+    #[test]
+    fn drain_background_error_yields_interrupted_and_keeps_partial() {
+        let mut conv = AiConversation::new("c1".into(), "t".into());
+        conv.is_generating = true;
+        {
+            let mut s = conv.stream_state.lock().unwrap();
+            s.partial =
+                "前言\n<<<<<<< AETHER_FILE index.html\n======= AETHER_SEP\n<html>".to_string();
+            s.error = Some("请求失败: 连接断开".to_string());
+        }
+        let edge = conv.drain_background();
+        assert_eq!(edge, DrainEdge::Interrupted);
+        assert!(!conv.is_generating);
+        // 部分内容已落入消息，错误提示追加在后（抢救时按谓词跳过它）
+        let last = conv.messages.last().unwrap();
+        assert!(last.content.contains("请求失败"));
+        let content_msg = conv
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == AiRole::Assistant && m.content.contains("<<<<<<< AETHER_FILE"));
+        assert!(content_msg.is_some(), "部分内容应保留在消息中供抢救");
+    }
+
+    #[test]
+    fn drain_background_done_yields_completed() {
+        let mut conv = AiConversation::new("c1".into(), "t".into());
+        conv.is_generating = true;
+        {
+            let mut s = conv.stream_state.lock().unwrap();
+            s.partial = "完成内容".to_string();
+            s.done = true;
+        }
+        assert_eq!(conv.drain_background(), DrainEdge::Completed);
+        assert!(!conv.is_generating);
+    }
+
+    #[test]
+    fn drain_background_pending_when_idle() {
+        let mut conv = AiConversation::new("c1".into(), "t".into());
+        assert_eq!(conv.drain_background(), DrainEdge::Pending);
+    }
+
+    #[test]
+    fn matching_text_skips_trailing_error_message() {
+        let mut p = test_panel();
+        // 隔离：清空 new() 从磁盘恢复的真实会话消息，谓词断言只作用于本测试数据
+        p.messages.clear();
+        p.messages.push(AiMessage::new(
+            AiRole::Assistant,
+            "<<<<<<< AETHER_FILE a.txt".into(),
+        ));
+        p.messages.push(AiMessage::new(
+            AiRole::Assistant,
+            "请求失败: 连接断开".into(),
+        ));
+        let hit =
+            p.last_assistant_text_matching_of(p.active, |t| t.contains("<<<<<<< AETHER_FILE"));
+        assert_eq!(hit.as_deref(), Some("<<<<<<< AETHER_FILE a.txt"));
+        // 谓词不匹配时返回 None
+        assert!(p
+            .last_assistant_text_matching_of(p.active, |t| t.contains("不存在"))
+            .is_none());
     }
 }

@@ -40,9 +40,9 @@ pub(crate) unsafe fn on_l_button_up(
             st.layout.sidebar_resizing = false;
             st.settings_panel.temp_slider_dragging = false;
             // 长按检测状态清理
-            st.lbutton_down = false;
-            st.lpress_target = None;
-            st.lpress_start = None;
+            st.mouse_press.lbutton_down = false;
+            st.mouse_press.lpress_target = None;
+            st.mouse_press.lpress_start = None;
             // 自定义模式下：完成拖拽重排 + 持久化
             let persist_activity =
                 st.activity_bar.customize_mode && st.activity_bar.drag_index.is_some();
@@ -61,19 +61,19 @@ pub(crate) unsafe fn on_l_button_up(
             }
             // Task 8.4: 标签拖拽重排或延迟切换
             let tab_handled = if let (Some(drag_idx), Some(drop_idx)) =
-                (st.dragging_tab, st.tab_drop_index)
+                (st.tab_bar.dragging_tab, st.tab_bar.tab_drop_index)
             {
-                if drag_idx < st.tabs.len() && drop_idx <= st.tabs.len() && drag_idx != drop_idx {
+                if drag_idx < st.tab_bar.tabs.len() && drop_idx <= st.tab_bar.tabs.len() && drag_idx != drop_idx {
                     st.reorder_tabs(drag_idx, drop_idx);
                     st.status_message = "标签已重排".to_string();
                 }
-                st.dragging_tab = None;
-                st.tab_drop_index = None;
-                st.tab_drag_start = None;
+                st.tab_bar.dragging_tab = None;
+                st.tab_bar.tab_drop_index = None;
+                st.tab_bar.tab_drag_start = None;
                 true
-            } else if st.tab_drag_start.is_some() {
+            } else if st.tab_bar.tab_drag_start.is_some() {
                 // 未进入拖拽模式 → 视为普通点击切换标签
-                st.tab_drag_start = None;
+                st.tab_bar.tab_drag_start = None;
                 let dpi_scale = st.dpi_scale;
                 let mouse_x = raw_x / dpi_scale;
                 let mouse_y = raw_y / dpi_scale;
@@ -112,8 +112,8 @@ pub(crate) unsafe fn on_l_button_dblclk(
         let mut st = state.borrow_mut();
         // 仅在非对话框、非命令面板、非欢迎页时处理编辑器区域双击
         // （settings_panel 在侧边栏，editor_region.contains 已排除）
-        if st.ssh_dialog.visible
-            || st.clone_dialog.visible
+        if st.remote.ssh_dialog.visible
+            || st.remote.clone_dialog.visible
             || st.command_palette.visible
             || st.show_welcome()
         {
@@ -210,6 +210,23 @@ pub(crate) unsafe fn on_mouse_wheel(
             if state.layout.right_panel_visible {
                 let right_panel = state.layout.right_panel_region();
                 if right_panel.contains(cursor_x, cursor_y) {
+                    // 历史记录下拉面板展开时：光标在面板内 → 滚动下拉面板而非聊天区
+                    if state.ai_panel.history_open {
+                        if let Some((px, py, pw, ph)) = state.ai_panel.history_panel_region {
+                            if cursor_x >= px
+                                && cursor_x < px + pw
+                                && cursor_y >= py
+                                && cursor_y < py + ph
+                            {
+                                let scroll_amount = delta * 2.0;
+                                state.ai_panel.history_scroll = (state.ai_panel.history_scroll
+                                    - scroll_amount)
+                                    .clamp(0.0, state.ai_panel.history_max_scroll.max(0.0));
+                                invalidate_window(hwnd);
+                                return;
+                            }
+                        }
+                    }
                     let chat_top = 52.0f32;
                     let chat_bottom = right_panel.height - 80.0f32;
                     // 只有当光标在聊天消息区域（非输入框）时才滚动

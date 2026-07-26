@@ -164,8 +164,8 @@ unsafe fn okd_edit_return(hwnd: HWND) {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find_visible
-                    && state.borrow().find_focus != crate::editor::FindReplaceFocus::None
+                state.borrow().find.visible
+                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
@@ -209,14 +209,16 @@ unsafe fn okd_edit_return(hwnd: HWND) {
 unsafe fn okd_edit_return_find(hwnd: HWND) {
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            let focus = state.borrow().find_focus;
+            let focus = state.borrow().find.focus;
             match focus {
                 crate::editor::FindReplaceFocus::FindQuery => {
-                    state.borrow_mut().find_next();
+                    let st = &mut *state.borrow_mut();
+                    st.find.find_next(&mut st.content);
                 }
                 crate::editor::FindReplaceFocus::ReplaceText => {
-                    state.borrow_mut().replace_current();
-                    state.borrow_mut().find_next();
+                    let st = &mut *state.borrow_mut();
+                    st.find.replace_current(&mut st.content);
+                    st.find.find_next(&mut st.content);
                 }
                 _ => {}
             }
@@ -243,8 +245,8 @@ unsafe fn okd_edit_back(hwnd: HWND) {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find_visible
-                    && state.borrow().find_focus != crate::editor::FindReplaceFocus::None
+                state.borrow().find.visible
+                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
@@ -279,14 +281,15 @@ unsafe fn okd_edit_back(hwnd: HWND) {
 unsafe fn okd_edit_back_find(hwnd: HWND) {
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            let focus = state.borrow().find_focus;
+            let focus = state.borrow().find.focus;
             match focus {
                 crate::editor::FindReplaceFocus::FindQuery => {
-                    state.borrow_mut().find_query.pop();
-                    state.borrow_mut().find_all();
+                    let st = &mut *state.borrow_mut();
+                    st.find.query.pop();
+                    st.find.find_all(&st.content);
                 }
                 crate::editor::FindReplaceFocus::ReplaceText => {
-                    state.borrow_mut().replace_text.pop();
+                    state.borrow_mut().find.replace_text.pop();
                 }
                 _ => {}
             }
@@ -315,9 +318,11 @@ unsafe fn okd_edit_delete_misc(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     if shift {
-                        state.borrow_mut().find_prev();
+                        let st = &mut *state.borrow_mut();
+                        st.find.find_prev(&mut st.content);
                     } else {
-                        state.borrow_mut().find_next();
+                        let st = &mut *state.borrow_mut();
+                        st.find.find_next(&mut st.content);
                     }
                     invalidate_window(hwnd);
                 }
@@ -326,7 +331,7 @@ unsafe fn okd_edit_delete_misc(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().close_find_replace();
+                    state.borrow_mut().find.close_find_replace();
                     invalidate_window(hwnd);
                 }
             });
@@ -527,16 +532,16 @@ unsafe fn okd_edit_tab(hwnd: HWND) {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find_visible
-                    && state.borrow().find_focus != crate::editor::FindReplaceFocus::None
+                state.borrow().find.visible
+                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
     if find_active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                let focus = state.borrow().find_focus;
-                let replace_visible = state.borrow().replace_visible;
+                let focus = state.borrow().find.focus;
+                let replace_visible = state.borrow().find.replace_visible;
                 let new_focus = match focus {
                     crate::editor::FindReplaceFocus::FindQuery => {
                         if replace_visible {
@@ -550,7 +555,7 @@ unsafe fn okd_edit_tab(hwnd: HWND) {
                     }
                     _ => crate::editor::FindReplaceFocus::FindQuery,
                 };
-                state.borrow_mut().find_focus = new_focus;
+                state.borrow_mut().find.focus = new_focus;
                 invalidate_window(hwnd);
             }
         });
@@ -559,7 +564,7 @@ unsafe fn okd_edit_tab(hwnd: HWND) {
             if let Some(state) = s.borrow().as_ref() {
                 // P3.3: 若有内联补全建议，Tab 接受建议；否则插入制表符
                 let accepted = {
-                    let mut st = state.borrow_mut();
+                    let st = &mut *state.borrow_mut();
                     st.accept_inline_completion()
                 };
                 if accepted {

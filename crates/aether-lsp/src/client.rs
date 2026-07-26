@@ -61,6 +61,8 @@ pub enum LspEvent {
     InlayHints { uri: Url, hints: Vec<InlayHint> },
     /// 服务器已就绪
     ServerReady { language_id: String },
+    /// 服务器进程已退出（stdout EOF，通常为异常终止）
+    ServerExited { language_id: String },
     /// 服务器日志
     Log {
         language_id: String,
@@ -585,6 +587,19 @@ impl LspClient {
     pub async fn is_server_ready(&self, language_id: &str) -> bool {
         let servers = self.servers.read().await;
         servers.contains_key(language_id)
+    }
+
+    /// 移除已死亡的服务器实例（收到 ServerExited 事件后调用）。
+    /// 移除后 is_server_ready 返回 false，后续 open_document 可按需重新启动。
+    pub async fn remove_server(&self, language_id: &str) {
+        let removed = {
+            let mut servers = self.servers.write().await;
+            servers.remove(language_id)
+        };
+        if removed.is_some() {
+            // 服务器已死，清空诊断缓存避免显示过期诊断
+            self.clear_diagnostics();
+        }
     }
 
     /// 获取某语言服务器的能力

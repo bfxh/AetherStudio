@@ -3,74 +3,74 @@ use super::*;
 impl EditorState {
     /// REQ-P1-09: 交换活动标签页内容（替代原 sync_to_tab/sync_from_tab 的字段逐个同步）
     ///
-    /// 将 `self.content` 与 `self.tabs[index].content` 原子交换，
+    /// 将 `self.content` 与 `self.tab_bar.tabs[index].content` 原子交换，
     /// 消除手动字段同步，保证状态归属单一。
     pub(super) fn swap_tab_content(&mut self, index: usize) {
-        if let Some(crate::tabs::Tab::File(content)) = self.tabs.get_mut(index) {
+        if let Some(crate::tabs::Tab::File(content)) = self.tab_bar.tabs.get_mut(index) {
             std::mem::swap(&mut self.content, content);
         }
     }
     /// 获取当前活动标签页（只读）
     pub fn current_tab(&self) -> &Tab {
-        &self.tabs[self.active_tab]
+        &self.tab_bar.tabs[self.tab_bar.active_tab]
     }
     /// 获取当前标签页数量
     pub fn tab_count(&self) -> usize {
-        self.tabs.len()
+        self.tab_bar.tabs.len()
     }
     /// 是否显示标签栏：只要有标签页就显示（仅欢迎页例外）。
     /// 修复：原先单个未关联文件的 File tab 会导致标签栏消失，用户误以为"全关了"，
     /// 但 self.content 仍持有内容可编辑。现在保证空 File tab 也显示标签栏。
     pub fn show_tab_bar(&self) -> bool {
-        !self.tabs.is_empty() && !self.active_tab_is_welcome()
+        !self.tab_bar.tabs.is_empty() && !self.active_tab_is_welcome()
     }
     /// 是否显示空占位页（tabs 为空时的默认状态）
     pub fn show_empty_placeholder(&self) -> bool {
-        self.tabs.is_empty()
+        self.tab_bar.tabs.is_empty()
     }
     /// 当前活动标签页是否是文件 tab
     pub fn active_tab_is_file(&self) -> bool {
-        self.tabs
-            .get(self.active_tab)
+        self.tab_bar.tabs
+            .get(self.tab_bar.active_tab)
             .map(|t| t.is_file())
             .unwrap_or(false)
     }
     /// 当前活动标签页是否是设置 tab
     pub fn active_tab_is_settings(&self) -> bool {
-        self.tabs
-            .get(self.active_tab)
+        self.tab_bar.tabs
+            .get(self.tab_bar.active_tab)
             .map(|t| t.is_settings())
             .unwrap_or(false)
     }
     /// 当前活动标签页是否是欢迎 tab
     pub fn active_tab_is_welcome(&self) -> bool {
-        self.tabs
-            .get(self.active_tab)
+        self.tab_bar.tabs
+            .get(self.tab_bar.active_tab)
             .map(|t| t.is_welcome())
             .unwrap_or(false)
     }
     /// 当前活动文件标签页的文件路径
     pub fn active_file_path(&self) -> Option<&std::path::PathBuf> {
-        self.tabs.get(self.active_tab).and_then(|t| t.file_path())
+        self.tab_bar.tabs.get(self.tab_bar.active_tab).and_then(|t| t.file_path())
     }
     /// 查找设置 tab 的索引
     pub fn find_settings_tab(&self) -> Option<usize> {
-        self.tabs.iter().position(|t| t.is_settings())
+        self.tab_bar.tabs.iter().position(|t| t.is_settings())
     }
     /// 查找欢迎 tab 的索引
     pub fn find_welcome_tab(&self) -> Option<usize> {
-        self.tabs.iter().position(|t| t.is_welcome())
+        self.tab_bar.tabs.iter().position(|t| t.is_welcome())
     }
     /// 切换到指定标签页
     pub fn switch_tab(&mut self, index: usize) {
-        if index < self.tabs.len() && index != self.active_tab {
+        if index < self.tab_bar.tabs.len() && index != self.tab_bar.active_tab {
             // REQ-P1-09: 仅文件 tab 需要 swap content；设置/欢迎等通用 tab 无 content
-            self.swap_tab_content(self.active_tab);
-            self.active_tab = index;
-            self.swap_tab_content(self.active_tab);
+            self.swap_tab_content(self.tab_bar.active_tab);
+            self.tab_bar.active_tab = index;
+            self.swap_tab_content(self.tab_bar.active_tab);
             self.is_selecting = false;
             self.sync_file_tree_selection();
-            let title = self.tabs[self.active_tab].title();
+            let title = self.tab_bar.tabs[self.tab_bar.active_tab].title();
             self.status_message = format!("切换到: {}", title);
             self.emit_event(crate::events::EditorEvent::TabChanged);
             // 显式标记局部脏区域，避免标签切换触发全窗口重绘导致卡顿
@@ -112,34 +112,34 @@ impl EditorState {
     }
     /// 关闭当前标签页，返回是否还有标签页
     pub fn close_current_tab(&mut self) -> bool {
-        if self.tabs.len() <= 1 {
+        if self.tab_bar.tabs.len() <= 1 {
             // 最后一个标签页：保存内容并清空 tabs（渲染层根据 tabs.is_empty() 显示欢迎页/空占位页）
             // 文件 tab 才需要保存 last_closed_tab；设置/欢迎等不保存
             if self.active_tab_is_file() {
-                self.last_closed_tab =
+                self.tab_bar.last_closed_tab =
                     Some(std::mem::replace(&mut self.content, TabContent::new()));
             }
-            self.tabs.clear();
-            self.active_tab = 0;
+            self.tab_bar.tabs.clear();
+            self.tab_bar.active_tab = 0;
             self.is_selecting = false;
             self.status_message = "已关闭".to_string();
             return true;
         }
         // 保存 self.content 中的最新内容到 last_closed_tab（文件 tab 才需要）
         if self.active_tab_is_file() {
-            self.last_closed_tab = Some(std::mem::replace(&mut self.content, TabContent::new()));
+            self.tab_bar.last_closed_tab = Some(std::mem::replace(&mut self.content, TabContent::new()));
         }
         // 从 tabs 中移除活动标签页
-        let _removed = self.tabs.remove(self.active_tab);
-        if self.active_tab >= self.tabs.len() {
-            self.active_tab = self.tabs.len() - 1;
+        let _removed = self.tab_bar.tabs.remove(self.tab_bar.active_tab);
+        if self.tab_bar.active_tab >= self.tab_bar.tabs.len() {
+            self.tab_bar.active_tab = self.tab_bar.tabs.len() - 1;
         }
         // 将新活动标签页的内容交换到 self.content
         // swap 后文件 tabs[active_tab].content 持有空 TabContent（安全，不会被误匹配路径）
-        self.swap_tab_content(self.active_tab);
+        self.swap_tab_content(self.tab_bar.active_tab);
         self.is_selecting = false;
-        self.status_message = format!("已关闭，剩余 {} 个标签页", self.tabs.len());
-        !self.tabs.is_empty()
+        self.status_message = format!("已关闭，剩余 {} 个标签页", self.tab_bar.tabs.len());
+        !self.tab_bar.tabs.is_empty()
     }
     /// P2-8: 带保存确认的关闭标签页。
     /// 返回值：true 表示已关闭（用户确认或无需保存），false 表示用户取消。
@@ -172,17 +172,17 @@ impl EditorState {
     /// SubTask 7.1: 中键关闭指定索引的标签页（带 dirty 检查，与关闭按钮行为一致）。
     /// 返回 true 表示已关闭，false 表示用户取消或索引越界。
     pub fn close_tab(&mut self, index: usize) -> bool {
-        if index >= self.tabs.len() {
+        if index >= self.tab_bar.tabs.len() {
             return false;
         }
-        if index == self.active_tab {
+        if index == self.tab_bar.active_tab {
             return self.close_current_tab_checked();
         }
         // 非活动标签页：检查 is_dirty（与 handle_tab_bar_click 中关闭按钮逻辑一致）
-        let tab_dirty = self.tabs.get(index).map(|t| t.is_dirty()).unwrap_or(false);
+        let tab_dirty = self.tab_bar.tabs.get(index).map(|t| t.is_dirty()).unwrap_or(false);
         if tab_dirty {
             let tab_name = self
-                .tabs
+                .tab_bar.tabs
                 .get(index)
                 .and_then(|t| t.file_path())
                 .and_then(|p| p.file_name())
@@ -195,11 +195,11 @@ impl EditorState {
             }
         }
         // Task 13.3: 保存关闭的标签内容以支持 Ctrl+Shift+T 恢复
-        remove_tab_saving_content(&mut self.tabs, index, &mut self.last_closed_tab);
-        if index < self.active_tab {
-            self.active_tab -= 1;
+        remove_tab_saving_content(&mut self.tab_bar.tabs, index, &mut self.tab_bar.last_closed_tab);
+        if index < self.tab_bar.active_tab {
+            self.tab_bar.active_tab -= 1;
         }
-        self.status_message = format!("已关闭，剩余 {} 个标签页", self.tabs.len());
+        self.status_message = format!("已关闭，剩余 {} 个标签页", self.tab_bar.tabs.len());
         true
     }
     /// SubTask 9.4: 关闭除指定索引外的所有标签页。
@@ -207,24 +207,24 @@ impl EditorState {
     /// 保留 `keep_idx`，移除其他所有标签页。若保留的标签页不是当前活动标签页，
     /// 切换到保留的标签页。索引越界时返回 false。
     pub fn close_other_tabs(&mut self, keep_idx: usize) -> bool {
-        if keep_idx >= self.tabs.len() {
+        if keep_idx >= self.tab_bar.tabs.len() {
             return false;
         }
-        if self.tabs.len() == 1 {
+        if self.tab_bar.tabs.len() == 1 {
             return true;
         }
         // 取出保留标签，剩余标签中最后一个是 last_closed 候选
-        let kept = self.tabs.remove(keep_idx);
-        let last_closed = self.tabs.pop();
-        self.tabs.clear();
+        let kept = self.tab_bar.tabs.remove(keep_idx);
+        let last_closed = self.tab_bar.tabs.pop();
+        self.tab_bar.tabs.clear();
         if let Some(crate::tabs::Tab::File(content)) = last_closed {
-            self.last_closed_tab = Some(content);
+            self.tab_bar.last_closed_tab = Some(content);
         }
-        self.tabs.push(kept);
-        self.active_tab = 0;
+        self.tab_bar.tabs.push(kept);
+        self.tab_bar.active_tab = 0;
         // 让 self.content 反映保留标签
-        if self.tabs[0].is_file() {
-            if let crate::tabs::Tab::File(content) = &mut self.tabs[0] {
+        if self.tab_bar.tabs[0].is_file() {
+            if let crate::tabs::Tab::File(content) = &mut self.tab_bar.tabs[0] {
                 self.content = std::mem::replace(content, TabContent::new());
             }
         } else {
@@ -239,47 +239,47 @@ impl EditorState {
     /// 保留 `idx` 及其左侧的标签页，移除 `idx+1..` 的所有标签页。
     /// 索引越界时返回 false。
     pub fn close_tabs_to_the_right(&mut self, idx: usize) -> bool {
-        if idx >= self.tabs.len() {
+        if idx >= self.tab_bar.tabs.len() {
             return false;
         }
-        if self.tabs.len() <= idx + 1 {
+        if self.tab_bar.tabs.len() <= idx + 1 {
             return true;
         }
-        let active_in_closed = self.active_tab > idx;
+        let active_in_closed = self.tab_bar.active_tab > idx;
         if active_in_closed {
             // 活动标签页在被关闭的右侧：保存 self.content 中的最新内容（文件 tab 才需要）
             if self.active_tab_is_file() {
-                self.last_closed_tab =
+                self.tab_bar.last_closed_tab =
                     Some(std::mem::replace(&mut self.content, TabContent::new()));
             }
         } else {
             // 活动标签页不在右侧：保存最后一个被关闭标签的内容
-            let last_closed = self.tabs.pop();
+            let last_closed = self.tab_bar.tabs.pop();
             if let Some(crate::tabs::Tab::File(content)) = last_closed {
-                self.last_closed_tab = Some(content);
+                self.tab_bar.last_closed_tab = Some(content);
             }
         }
-        self.tabs.truncate(idx + 1);
+        self.tab_bar.tabs.truncate(idx + 1);
         if active_in_closed {
-            self.active_tab = idx;
+            self.tab_bar.active_tab = idx;
             // 将保留标签内容加载到 self.content
-            self.swap_tab_content(self.active_tab);
+            self.swap_tab_content(self.tab_bar.active_tab);
             self.is_selecting = false;
         }
-        self.status_message = format!("已关闭右侧标签页，剩余 {} 个标签页", self.tabs.len());
+        self.status_message = format!("已关闭右侧标签页，剩余 {} 个标签页", self.tab_bar.tabs.len());
         true
     }
     /// SubTask 9.4: 关闭所有标签页，并创建一个新的空标签页。
     pub fn close_all_tabs(&mut self) {
         // 保存 self.content 中的最新内容（文件 tab 才需要）以支持 Ctrl+Shift+T 恢复
         if self.active_tab_is_file() {
-            self.last_closed_tab = Some(std::mem::replace(&mut self.content, TabContent::new()));
+            self.tab_bar.last_closed_tab = Some(std::mem::replace(&mut self.content, TabContent::new()));
         }
-        self.tabs.clear();
-        self.tabs.push(Tab::new());
-        self.active_tab = 0;
+        self.tab_bar.tabs.clear();
+        self.tab_bar.tabs.push(Tab::new());
+        self.tab_bar.active_tab = 0;
         // self.content 已空，tabs[0] 也是空，swap 保持架构一致
-        self.swap_tab_content(self.active_tab);
+        self.swap_tab_content(self.tab_bar.active_tab);
         self.is_selecting = false;
         self.status_message = "已关闭所有标签页".to_string();
     }
@@ -287,15 +287,15 @@ impl EditorState {
     /// 如果存在 `last_closed_tab`，则将其作为新标签页恢复并切换为活动标签页。
     /// 返回 true 表示已恢复，false 表示没有可恢复的标签。
     pub fn reopen_last_closed_tab(&mut self) -> bool {
-        let Some(content) = self.last_closed_tab.take() else {
+        let Some(content) = self.tab_bar.last_closed_tab.take() else {
             self.status_message = "没有可恢复的标签".to_string();
             return false;
         };
         // 将当前 self.content swap 回当前活动标签，再 push 新文件标签并切换
-        self.swap_tab_content(self.active_tab);
-        self.tabs.push(crate::tabs::Tab::File(content));
-        self.active_tab = self.tabs.len() - 1;
-        self.swap_tab_content(self.active_tab);
+        self.swap_tab_content(self.tab_bar.active_tab);
+        self.tab_bar.tabs.push(crate::tabs::Tab::File(content));
+        self.tab_bar.active_tab = self.tab_bar.tabs.len() - 1;
+        self.swap_tab_content(self.tab_bar.active_tab);
         self.is_selecting = false;
         self.status_message = "已恢复最后关闭的标签".to_string();
         true
@@ -303,31 +303,31 @@ impl EditorState {
     /// 新建标签页
     pub fn new_tab(&mut self) -> usize {
         // REQ-P1-09: save current state to old tab, push new (empty) tab, swap it in
-        self.swap_tab_content(self.active_tab);
+        self.swap_tab_content(self.tab_bar.active_tab);
         let tab = Tab::new();
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
-        self.swap_tab_content(self.active_tab);
+        self.tab_bar.tabs.push(tab);
+        self.tab_bar.active_tab = self.tab_bar.tabs.len() - 1;
+        self.swap_tab_content(self.tab_bar.active_tab);
         self.is_selecting = false;
-        self.active_tab
+        self.tab_bar.active_tab
     }
     /// 切换到下一个标签页
     pub fn next_tab(&mut self) {
-        if self.tabs.len() > 1 {
-            let next = (self.active_tab + 1) % self.tabs.len();
+        if self.tab_bar.tabs.len() > 1 {
+            let next = (self.tab_bar.active_tab + 1) % self.tab_bar.tabs.len();
             self.switch_tab(next);
         }
     }
     /// 切换到上一个标签页
     pub fn prev_tab(&mut self) {
-        if self.tabs.len() > 1 {
-            let prev = (self.active_tab + self.tabs.len() - 1) % self.tabs.len();
+        if self.tab_bar.tabs.len() > 1 {
+            let prev = (self.tab_bar.active_tab + self.tab_bar.tabs.len() - 1) % self.tab_bar.tabs.len();
             self.switch_tab(prev);
         }
     }
     /// 跳转到指定标签页（1-based index）
     pub fn goto_tab(&mut self, index: usize) {
-        if index > 0 && index <= self.tabs.len() {
+        if index > 0 && index <= self.tab_bar.tabs.len() {
             self.switch_tab(index - 1);
         }
     }
@@ -348,15 +348,15 @@ impl EditorState {
             return false;
         }
         // SubTask 7.2: 检测 "+" 新建按钮点击
-        if let Some((pl, pt, pr, pb)) = self.plus_button_rect {
+        if let Some((pl, pt, pr, pb)) = self.tab_bar.plus_button_rect {
             if mouse_x >= pl && mouse_x < pr && _mouse_y >= pt && _mouse_y < pb {
                 self.new_tab();
                 self.status_message = "已新建标签页".to_string();
                 return true;
             }
         }
-        let rel_x = mouse_x - editor_x + self.tab_scroll_x;
-        for layout in &self.tab_layouts {
+        let rel_x = mouse_x - editor_x + self.tab_bar.tab_scroll_x;
+        for layout in &self.tab_bar.tab_layouts {
             if rel_x >= layout.x && rel_x < layout.x + layout.width {
                 // 检测关闭按钮点击
                 if rel_x >= layout.close_x && rel_x < layout.close_x + layout.close_width {
@@ -382,23 +382,23 @@ impl EditorState {
         };
         // SubTask 7.2: 更新 "+" 按钮悬停状态（独立于下方 y 检查，确保按钮响应）
         let mut on_plus = false;
-        if let Some((pl, pt, pr, pb)) = self.plus_button_rect {
+        if let Some((pl, pt, pr, pb)) = self.tab_bar.plus_button_rect {
             on_plus = mouse_x >= pl && mouse_x < pr && mouse_y >= pt && mouse_y < pb;
         }
-        self.plus_button_hover = on_plus;
+        self.tab_bar.plus_button_hover = on_plus;
         if tab_bar_height == 0.0 || mouse_y < 0.0 || mouse_y > tab_bar_height || mouse_x < editor_x
         {
-            self.hover_tab = None;
+            self.tab_bar.hover_tab = None;
             return;
         }
-        let rel_x = mouse_x - editor_x + self.tab_scroll_x;
-        for layout in &self.tab_layouts {
+        let rel_x = mouse_x - editor_x + self.tab_bar.tab_scroll_x;
+        for layout in &self.tab_bar.tab_layouts {
             if rel_x >= layout.x && rel_x < layout.x + layout.width {
-                self.hover_tab = Some(layout.index);
+                self.tab_bar.hover_tab = Some(layout.index);
                 return;
             }
         }
-        self.hover_tab = None;
+        self.tab_bar.hover_tab = None;
     }
     /// Task 8.2: 命中检测——返回鼠标所在标签体的索引。
     ///
@@ -428,13 +428,13 @@ impl EditorState {
             return None;
         }
         // "+" 按钮区域不算标签体
-        if let Some((pl, pt, pr, pb)) = self.plus_button_rect {
+        if let Some((pl, pt, pr, pb)) = self.tab_bar.plus_button_rect {
             if mouse_x >= pl && mouse_x < pr && mouse_y >= pt && mouse_y < pb {
                 return None;
             }
         }
-        let rel_x = mouse_x - editor_x + self.tab_scroll_x;
-        for layout in &self.tab_layouts {
+        let rel_x = mouse_x - editor_x + self.tab_bar.tab_scroll_x;
+        for layout in &self.tab_bar.tab_layouts {
             if rel_x >= layout.x && rel_x < layout.x + layout.width {
                 // 关闭按钮区域不算标签体
                 if rel_x >= layout.close_x && rel_x < layout.close_x + layout.close_width {
@@ -450,21 +450,21 @@ impl EditorState {
     /// 基于标签中点：鼠标在标签左半部分 → 插入到该标签前；
     /// 右半部分 → 插入到该标签后。超出范围则 clamp 到 0 或 tabs.len()。
     pub(crate) fn tab_drop_index_at(&self, mouse_x: f32, editor_x: f32) -> usize {
-        let rel_x = mouse_x - editor_x + self.tab_scroll_x;
-        for layout in &self.tab_layouts {
+        let rel_x = mouse_x - editor_x + self.tab_bar.tab_scroll_x;
+        for layout in &self.tab_bar.tab_layouts {
             let mid = layout.x + layout.width / 2.0;
             if rel_x < mid {
                 return layout.index;
             }
         }
-        self.tabs.len()
+        self.tab_bar.tabs.len()
     }
     /// Task 8.4: 执行标签重排——将 drag_idx 处的标签移动到 drop_idx 位置。
     ///
     /// `drop_idx` 语义：插入到该索引之前（与 `tab_drop_index_at` 一致）。
     /// 自动调整 `active_tab` 索引以跟随移动的标签。
     pub fn reorder_tabs(&mut self, drag_idx: usize, drop_idx: usize) {
-        reorder_tabs_with_active(&mut self.tabs, &mut self.active_tab, drag_idx, drop_idx);
+        reorder_tabs_with_active(&mut self.tab_bar.tabs, &mut self.tab_bar.active_tab, drag_idx, drop_idx);
     }
     /// SubTask 7.5: 计算标签栏最大水平滚动偏移。
     ///
@@ -476,7 +476,7 @@ impl EditorState {
         // "+" 按钮区域（8px gap + 28px 按钮）也需预留可见空间
         let plus_area = 8.0 + 28.0;
         let total_tabs_width = self
-            .tab_layouts
+            .tab_bar.tab_layouts
             .last()
             .map(|l| l.x + l.width + gap)
             .unwrap_or(0.0);
@@ -488,10 +488,10 @@ impl EditorState {
     /// `delta` 为原始滚轮 delta（通常 ±120），内部按 `delta * 8.0` 转换为像素增量，
     /// 然后 clamp 到 `[0, max_scroll]`。
     pub(crate) fn scroll_tab_bar(&mut self, delta: f32, tab_bar_width: f32) -> bool {
-        let old = self.tab_scroll_x;
+        let old = self.tab_bar.tab_scroll_x;
         let max_scroll = self.tab_bar_max_scroll(tab_bar_width);
-        self.tab_scroll_x = (self.tab_scroll_x + delta * 8.0).clamp(0.0, max_scroll);
-        (self.tab_scroll_x - old).abs() > 0.01
+        self.tab_bar.tab_scroll_x = (self.tab_bar.tab_scroll_x + delta * 8.0).clamp(0.0, max_scroll);
+        (self.tab_bar.tab_scroll_x - old).abs() > 0.01
     }
     /// 打开设置标签页（作为通用 tab 插入到标签栏）
     pub fn open_settings_tab(&mut self) {
@@ -500,9 +500,9 @@ impl EditorState {
             self.switch_tab(idx);
         } else {
             // 保存当前文件 tab 的内容到 tabs[active_tab]（如果是文件 tab）
-            self.swap_tab_content(self.active_tab);
-            self.tabs.push(crate::tabs::Tab::Settings);
-            self.active_tab = self.tabs.len() - 1;
+            self.swap_tab_content(self.tab_bar.active_tab);
+            self.tab_bar.tabs.push(crate::tabs::Tab::Settings);
+            self.tab_bar.active_tab = self.tab_bar.tabs.len() - 1;
             // 设置 tab 无 content，self.content 保持空即可
             self.content = crate::tabs::TabContent::new();
             self.ai_panel.input_focused = false;
@@ -513,14 +513,14 @@ impl EditorState {
     /// 关闭设置标签页
     pub fn close_settings_tab(&mut self) {
         if let Some(idx) = self.find_settings_tab() {
-            if idx == self.active_tab {
+            if idx == self.tab_bar.active_tab {
                 // 关闭活动设置 tab，切换到最近的文件 tab
                 self.close_current_tab();
             } else {
                 // 非活动设置 tab 直接移除
-                self.tabs.remove(idx);
-                if self.active_tab > idx {
-                    self.active_tab -= 1;
+                self.tab_bar.tabs.remove(idx);
+                if self.tab_bar.active_tab > idx {
+                    self.tab_bar.active_tab -= 1;
                 }
                 self.status_message = "已关闭设置标签页".to_string();
             }

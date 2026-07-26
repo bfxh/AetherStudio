@@ -172,7 +172,7 @@ unsafe fn oc_ssh_dialog(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().ssh_dialog.visible)
+            .map(|state| state.borrow().remote.ssh_dialog.visible)
             .unwrap_or(false)
     });
     if active {
@@ -193,7 +193,7 @@ unsafe fn oc_clone_dialog(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().clone_dialog.visible)
+            .map(|state| state.borrow().remote.clone_dialog.visible)
             .unwrap_or(false)
     });
     if active {
@@ -238,7 +238,7 @@ unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
             .as_ref()
             .map(|state| {
                 state.borrow().sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
-                    && state.borrow().ssh_manager_panel.editing
+                    && state.borrow().remote.ssh_manager_panel.editing
             })
             .unwrap_or(false)
     });
@@ -246,14 +246,14 @@ unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 let mut st = state.borrow_mut();
-                let field = st.ssh_manager_panel.focus_field;
+                let field = st.remote.ssh_manager_panel.focus_field;
                 let field_str = match field {
-                    0 => &mut st.ssh_manager_panel.form_name,
-                    1 => &mut st.ssh_manager_panel.form_host,
-                    2 => &mut st.ssh_manager_panel.form_port,
-                    3 => &mut st.ssh_manager_panel.form_username,
-                    4 => &mut st.ssh_manager_panel.form_key_path,
-                    _ => &mut st.ssh_manager_panel.form_name,
+                    0 => &mut st.remote.ssh_manager_panel.form_name,
+                    1 => &mut st.remote.ssh_manager_panel.form_host,
+                    2 => &mut st.remote.ssh_manager_panel.form_port,
+                    3 => &mut st.remote.ssh_manager_panel.form_username,
+                    4 => &mut st.remote.ssh_manager_panel.form_key_path,
+                    _ => &mut st.remote.ssh_manager_panel.form_name,
                 };
                 field_str.push(c);
                 drop(st);
@@ -293,31 +293,34 @@ unsafe fn oc_find_replace(hwnd: HWND, c: char) -> Option<LRESULT> {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find_visible
-                    && state.borrow().find_focus != crate::editor::FindReplaceFocus::None
+                state.borrow().find.visible
+                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                let focus = state.borrow().find_focus;
+                let focus = state.borrow().find.focus;
                 match focus {
                     crate::editor::FindReplaceFocus::FindQuery => {
-                        state.borrow_mut().find_query.push(c);
-                        state.borrow_mut().find_all();
-                        state.borrow_mut().find_active_index = 0;
-                        if !state.borrow().find_results.is_empty() {
-                            let (line, col) = state.borrow().find_results[0];
+                        {
+                            let st = &mut *state.borrow_mut();
+                            st.find.query.push(c);
+                            st.find.find_all(&st.content);
+                            st.find.active_index = 0;
+                        }
+                        if !state.borrow().find.results.is_empty() {
+                            let (line, col) = state.borrow().find.results[0];
                             state.borrow_mut().content.cursor_line = line;
                             state.borrow_mut().content.cursor_col = col;
                             state.borrow_mut().content.selection_start = Some((line, col));
                             state.borrow_mut().content.selection_end =
-                                Some((line, col + state.borrow().find_query.len()));
+                                Some((line, col + state.borrow().find.query.len()));
                         }
                     }
                     crate::editor::FindReplaceFocus::ReplaceText => {
-                        state.borrow_mut().replace_text.push(c);
+                        state.borrow_mut().find.replace_text.push(c);
                     }
                     _ => {}
                 }
