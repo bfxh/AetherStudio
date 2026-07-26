@@ -10,6 +10,7 @@ pub enum SettingsField {
     Model,
     Temperature,
     MaxTokens,
+    MaxInputTokens,
     SystemPrompt,
 }
 
@@ -111,7 +112,10 @@ pub struct ModelConfig {
     pub base_url: String,
     pub temperature: String,
     pub max_tokens: String,
+    pub max_input_tokens: String,
     pub system_prompt: String,
+    /// 深度思考开关（仅 DeepSeek 生效），默认开启
+    pub thinking: bool,
 }
 
 impl ModelConfig {
@@ -130,12 +134,14 @@ impl ModelConfig {
             model: self.name.clone(),
             temperature: self.temperature.trim().parse().ok(),
             max_tokens: self.max_tokens.trim().parse().ok(),
+            max_input_tokens: self.max_input_tokens.trim().parse().ok(),
             system_prompt: if self.system_prompt.is_empty() {
                 None
             } else {
                 Some(self.system_prompt.clone())
             },
             enabled: self.enabled,
+            thinking: Some(self.thinking),
         }
     }
 
@@ -161,8 +167,13 @@ impl ModelConfig {
             max_tokens: p
                 .max_tokens
                 .map(|m| m.to_string())
-                .unwrap_or_else(|| "2048".to_string()),
+                .unwrap_or_else(|| "8192".to_string()),
+            max_input_tokens: p
+                .max_input_tokens
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "24000".to_string()),
             system_prompt: p.system_prompt.clone().unwrap_or_default(),
+            thinking: p.thinking.unwrap_or(true),
         }
     }
 }
@@ -176,6 +187,7 @@ pub struct SettingsPanel {
     pub model: String,
     pub temperature: String,
     pub max_tokens: String,
+    pub max_input_tokens: String,
     pub system_prompt: String,
     pub active_field: Option<SettingsField>,
     pub hover_button: Option<SettingsButton>,
@@ -185,6 +197,16 @@ pub struct SettingsPanel {
     pub test_result: Arc<Mutex<Option<Result<String, String>>>>,
     /// 测试通过后是否自动保存设置
     pub pending_save: bool,
+    /// 从 /models 拉取到的模型 ID 列表（对应 fetched_models_key 的配置）
+    pub fetched_models: Vec<String>,
+    /// fetched_models 对应的配置指纹（provider|base|key），用于判断是否需重新拉取
+    pub fetched_models_key: String,
+    /// 是否正在后台拉取模型列表
+    pub is_fetching_models: bool,
+    /// 后台拉取模型结果槽位（Some(Ok)=成功，Some(Err)=失败，None=未完成）
+    pub models_fetch_result: Arc<Mutex<Option<Result<Vec<String>, String>>>>,
+    /// 拉取状态提示（供模型下拉展示，如"获取中…"/"获取失败"）
+    pub models_fetch_status: String,
     // Cached layout for hit testing
     pub field_regions: Vec<(SettingsField, f32, f32, f32, f32)>,
     pub button_regions: Vec<(SettingsButton, f32, f32, f32, f32)>,
@@ -228,6 +250,12 @@ pub struct SettingsPanel {
     pub temp_slider_region: Option<(f32, f32, f32, f32)>,
     /// 温度滑块是否处于拖拽中
     pub temp_slider_dragging: bool,
+    /// 深度思考开关状态（仅 DeepSeek 显示），默认开启
+    pub thinking: bool,
+    /// 深度思考开关命中区
+    pub thinking_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// 深度思考开关悬停态
+    pub hover_thinking_toggle: bool,
     /// 打开设置面板时的 AI 配置快照，用于"未保存更改"检测
     pub baseline_ai: Option<AiSettings>,
 }
@@ -240,7 +268,8 @@ impl SettingsPanel {
             base_url: "https://api.deepseek.com/v1".to_string(),
             model: "deepseek-v4-pro".to_string(),
             temperature: "0.7".to_string(),
-            max_tokens: "2048".to_string(),
+            max_tokens: "8192".to_string(),
+            max_input_tokens: "24000".to_string(),
             system_prompt: String::new(),
             active_field: None,
             hover_button: None,
@@ -248,6 +277,11 @@ impl SettingsPanel {
             is_testing: false,
             pending_save: false,
             test_result: Arc::new(Mutex::new(None)),
+            fetched_models: Vec::new(),
+            fetched_models_key: String::new(),
+            is_fetching_models: false,
+            models_fetch_result: Arc::new(Mutex::new(None)),
+            models_fetch_status: String::new(),
             field_regions: Vec::new(),
             button_regions: Vec::new(),
             active_tab: SettingsTab::Models,
@@ -277,6 +311,9 @@ impl SettingsPanel {
             api_key_toggle_region: None,
             temp_slider_region: None,
             temp_slider_dragging: false,
+            thinking: true,
+            thinking_toggle_region: None,
+            hover_thinking_toggle: false,
             baseline_ai: None,
         }
     }
@@ -296,7 +333,12 @@ impl SettingsPanel {
                 .ai
                 .max_tokens
                 .map(|m| m.to_string())
-                .unwrap_or_else(|| "2048".to_string()),
+                .unwrap_or_else(|| "8192".to_string()),
+            max_input_tokens: settings
+                .ai
+                .max_input_tokens
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "24000".to_string()),
             system_prompt: settings.ai.system_prompt.clone().unwrap_or_default(),
             active_field: None,
             hover_button: None,
@@ -304,6 +346,11 @@ impl SettingsPanel {
             is_testing: false,
             pending_save: false,
             test_result: Arc::new(Mutex::new(None)),
+            fetched_models: Vec::new(),
+            fetched_models_key: String::new(),
+            is_fetching_models: false,
+            models_fetch_result: Arc::new(Mutex::new(None)),
+            models_fetch_status: String::new(),
             field_regions: Vec::new(),
             button_regions: Vec::new(),
             active_tab: SettingsTab::Models,
@@ -333,6 +380,9 @@ impl SettingsPanel {
             api_key_toggle_region: None,
             temp_slider_region: None,
             temp_slider_dragging: false,
+            thinking: settings.ai.thinking.unwrap_or(true),
+            thinking_toggle_region: None,
+            hover_thinking_toggle: false,
             baseline_ai: None,
         }
     }
@@ -349,11 +399,13 @@ impl SettingsPanel {
             model: self.model.clone(),
             temperature: self.temperature.parse().ok(),
             max_tokens: self.max_tokens.parse().ok(),
+            max_input_tokens: self.max_input_tokens.parse().ok(),
             system_prompt: if self.system_prompt.is_empty() {
                 None
             } else {
                 Some(self.system_prompt.clone())
             },
+            thinking: Some(self.thinking),
         }
     }
 
@@ -391,7 +443,9 @@ impl SettingsPanel {
             self.model = m.name;
             self.temperature = m.temperature;
             self.max_tokens = m.max_tokens;
+            self.max_input_tokens = m.max_input_tokens;
             self.system_prompt = m.system_prompt;
+            self.thinking = m.thinking;
         } else {
             self.provider = fallback_ai.provider.clone();
             self.api_key = fallback_ai.api_key.clone();
@@ -404,8 +458,13 @@ impl SettingsPanel {
             self.max_tokens = fallback_ai
                 .max_tokens
                 .map(|m| m.to_string())
-                .unwrap_or_else(|| "2048".to_string());
+                .unwrap_or_else(|| "8192".to_string());
+            self.max_input_tokens = fallback_ai
+                .max_input_tokens
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "24000".to_string());
             self.system_prompt = fallback_ai.system_prompt.clone().unwrap_or_default();
+            self.thinking = fallback_ai.thinking.unwrap_or(true);
         }
     }
 
@@ -437,8 +496,10 @@ impl SettingsPanel {
                 api_key: String::new(),
                 base_url: String::new(),
                 temperature: "0.7".to_string(),
-                max_tokens: "2048".to_string(),
+                max_tokens: "8192".to_string(),
+                max_input_tokens: "24000".to_string(),
                 system_prompt: String::new(),
+                thinking: true,
             });
             self.active_model_id = Some(new_id);
         }
@@ -448,7 +509,9 @@ impl SettingsPanel {
         let model = self.model.clone();
         let temperature = self.temperature.clone();
         let max_tokens = self.max_tokens.clone();
+        let max_input_tokens = self.max_input_tokens.clone();
         let system_prompt = self.system_prompt.clone();
+        let thinking = self.thinking;
         if let Some(id) = self.active_model_id.clone() {
             if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
                 m.provider = provider;
@@ -457,7 +520,9 @@ impl SettingsPanel {
                 m.name = model.clone();
                 m.temperature = temperature;
                 m.max_tokens = max_tokens;
+                m.max_input_tokens = max_input_tokens;
                 m.system_prompt = system_prompt;
+                m.thinking = thinking;
                 if m.display_name.is_empty() && !model.is_empty() {
                     m.display_name = model;
                 }
@@ -490,8 +555,10 @@ impl SettingsPanel {
             api_key: String::new(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             temperature: "0.7".to_string(),
-            max_tokens: "2048".to_string(),
+            max_tokens: "8192".to_string(),
+            max_input_tokens: "24000".to_string(),
             system_prompt: String::new(),
+            thinking: true,
         });
         self.active_model_id = Some(id.clone());
         self.provider = "deepseek".to_string();
@@ -499,8 +566,10 @@ impl SettingsPanel {
         self.base_url = "https://api.deepseek.com/v1".to_string();
         self.model = String::new();
         self.temperature = "0.7".to_string();
-        self.max_tokens = "2048".to_string();
+        self.max_tokens = "8192".to_string();
+        self.max_input_tokens = "24000".to_string();
         self.system_prompt = String::new();
+        self.thinking = true;
         id
     }
 
@@ -514,8 +583,10 @@ impl SettingsPanel {
         self.base_url = "https://api.deepseek.com/v1".to_string();
         self.model = String::new();
         self.temperature = "0.7".to_string();
-        self.max_tokens = "2048".to_string();
+        self.max_tokens = "8192".to_string();
+        self.max_input_tokens = "24000".to_string();
         self.system_prompt = String::new();
+        self.thinking = true;
         self.test_status.clear();
         self.active_field = None;
     }
@@ -551,6 +622,7 @@ impl SettingsPanel {
         self.model_item_regions.clear();
         self.dropdown_trigger_regions.clear();
         self.dropdown_item_regions.clear();
+        self.thinking_toggle_region = None;
     }
 
     pub fn add_field_region(&mut self, field: SettingsField, x: f32, y: f32, w: f32, h: f32) {
@@ -602,6 +674,7 @@ impl SettingsPanel {
                 SettingsField::Model => self.model.push(ch),
                 SettingsField::Temperature => self.temperature.push(ch),
                 SettingsField::MaxTokens => self.max_tokens.push(ch),
+                SettingsField::MaxInputTokens => self.max_input_tokens.push(ch),
                 SettingsField::SystemPrompt => self.system_prompt.push(ch),
             }
         }
@@ -617,6 +690,7 @@ impl SettingsPanel {
                 SettingsField::Model => self.model.push_str(text),
                 SettingsField::Temperature => self.temperature.push_str(text),
                 SettingsField::MaxTokens => self.max_tokens.push_str(text),
+                SettingsField::MaxInputTokens => self.max_input_tokens.push_str(text),
                 SettingsField::SystemPrompt => self.system_prompt.push_str(text),
             }
         }
@@ -644,6 +718,9 @@ impl SettingsPanel {
                 SettingsField::MaxTokens => {
                     self.max_tokens.pop();
                 }
+                SettingsField::MaxInputTokens => {
+                    self.max_input_tokens.pop();
+                }
                 SettingsField::SystemPrompt => {
                     self.system_prompt.pop();
                 }
@@ -661,6 +738,7 @@ impl SettingsPanel {
                 SettingsField::Model => self.model.clear(),
                 SettingsField::Temperature => self.temperature.clear(),
                 SettingsField::MaxTokens => self.max_tokens.clear(),
+                SettingsField::MaxInputTokens => self.max_input_tokens.clear(),
                 SettingsField::SystemPrompt => self.system_prompt.clear(),
             }
         }
@@ -675,6 +753,7 @@ impl SettingsPanel {
             fields.push(SettingsField::BaseUrl);
         }
         // 温度已改为滑块交互，不参与键盘 Tab 循环
+        fields.push(SettingsField::MaxInputTokens);
         fields.push(SettingsField::MaxTokens);
         fields.push(SettingsField::SystemPrompt);
         fields
@@ -702,16 +781,9 @@ impl SettingsPanel {
         };
     }
 
-    /// Mask API key for display (show last 4 chars, rest as dots)
+    /// 掩码 API 密钥用于显示：隐藏态下全部字符都以圆点遮盖，不泄露任何明文字符。
     pub fn masked_api_key(&self) -> String {
-        let chars: Vec<char> = self.api_key.chars().collect();
-        if chars.len() <= 4 {
-            "•".repeat(chars.len())
-        } else {
-            let dots = "•".repeat(chars.len().saturating_sub(4));
-            let last_four: String = chars.iter().rev().take(4).rev().collect();
-            format!("{}{}", dots, last_four)
-        }
+        "•".repeat(self.api_key.chars().count())
     }
 
     /// 显示用的 API 密钥文本：显隐开关打开时明文，否则掩码
@@ -738,6 +810,11 @@ impl SettingsPanel {
         matches!(self.max_tokens.trim().parse::<u32>(), Ok(v) if (1..=1_000_000).contains(&v))
     }
 
+    /// 最大输入 Token 是否合法（1..=2_000_000 的正整数，容纳大上下文模型）
+    pub fn max_input_tokens_valid(&self) -> bool {
+        matches!(self.max_input_tokens.trim().parse::<u32>(), Ok(v) if (1..=2_000_000).contains(&v))
+    }
+
     /// 滚动内容（delta>0 向下），并夹紧到有效范围
     pub fn scroll_by(&mut self, delta: f32) {
         self.scroll_offset = (self.scroll_offset + delta).clamp(0.0, self.content_height.max(0.0));
@@ -755,6 +832,20 @@ impl SettingsPanel {
         } else {
             false
         }
+    }
+
+    /// 命中：深度思考开关
+    pub fn hit_test_thinking_toggle(&self, x: f32, y: f32) -> bool {
+        if let Some((rx, ry, rw, rh)) = self.thinking_toggle_region {
+            x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        } else {
+            false
+        }
+    }
+
+    /// 切换深度思考开关
+    pub fn toggle_thinking(&mut self) {
+        self.thinking = !self.thinking;
     }
 
     /// 命中：温度滑块轨道，返回点击位置对应的温度（0.0-2.0，步进 0.1）
@@ -798,6 +889,68 @@ impl SettingsPanel {
         self.baseline_ai = Some(self.to_ai_settings());
     }
 
+    /// 若当前配置（provider|base|key）尚未拉取过模型列表，则后台异步拉取一次。
+    /// 用于打开模型下拉时"自动搜索"厂商当前可用模型；失败/无 key 时静默回退预置清单。
+    pub fn ensure_models_fetched(&mut self) {
+        if self.is_fetching_models {
+            return;
+        }
+        if self.api_key.trim().is_empty() {
+            return; // 无密钥无法查询，静默用预置
+        }
+        let key = self.models_cache_key();
+        // 已拉取过（成功且列表非空，或已尝试过同一配置）则不重复请求
+        if self.fetched_models_key == key {
+            return;
+        }
+        let ai = self.to_ai_settings();
+        self.is_fetching_models = true;
+        self.fetched_models_key = key; // 标记"已针对此配置发起过"，避免重复请求
+        self.models_fetch_status = "正在获取模型列表…".to_string();
+        if let Ok(mut slot) = self.models_fetch_result.lock() {
+            *slot = None;
+        }
+        let result = Arc::clone(&self.models_fetch_result);
+        std::thread::spawn(move || {
+            let client = aether_ai::AiClient::new(&ai);
+            let r = client.list_models_safe();
+            if let Ok(mut slot) = result.lock() {
+                *slot = Some(r);
+            }
+        });
+    }
+
+    /// 轮询后台模型拉取结果（渲染循环每帧调用）。返回是否发生了状态变化（用于触发重绘）。
+    pub fn poll_models_fetch(&mut self) -> bool {
+        if !self.is_fetching_models {
+            return false;
+        }
+        let outcome = self
+            .models_fetch_result
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        match outcome {
+            Some(Ok(models)) => {
+                self.is_fetching_models = false;
+                if models.is_empty() {
+                    self.models_fetch_status = "该服务商未返回模型".to_string();
+                } else {
+                    self.fetched_models = models;
+                    self.models_fetch_status.clear();
+                }
+                true
+            }
+            Some(Err(e)) => {
+                self.is_fetching_models = false;
+                self.models_fetch_status = format!("获取模型失败：{}", e);
+                // 保留 fetched_models_key 以免立即重试；用户改配置后 key 变化会重新拉取
+                true
+            }
+            None => false,
+        }
+    }
+
     // 模型管理方法
 
     pub fn provider_display_label(&self) -> String {
@@ -817,12 +970,29 @@ impl SettingsPanel {
     }
 
     pub fn model_dropdown_options(&self) -> Vec<(String, String)> {
-        // 返回当前服务商的模型列表
-        match self.provider.as_str() {
-            "kimi" => vec![("kimi-code".to_string(), "kimi-code".to_string())],
-            "deepseek" => vec![("deepseek-v4-pro".to_string(), "deepseek-v4-pro".to_string())],
-            _ => vec![(self.model.clone(), self.model.clone())],
+        // 优先使用从 /models 拉取到的实时模型清单（仅当对应当前配置指纹时）；
+        // 未拉取/失败时回退到核心层 preset_models；Custom 无预置则回退为当前已填模型。
+        if !self.fetched_models.is_empty() && self.fetched_models_key == self.models_cache_key() {
+            return self
+                .fetched_models
+                .iter()
+                .map(|m| (m.clone(), m.clone()))
+                .collect();
         }
+        let presets = aether_ai::AiProvider::from_str(&self.provider).preset_models();
+        if presets.is_empty() {
+            vec![(self.model.clone(), self.model.clone())]
+        } else {
+            presets
+                .iter()
+                .map(|m| (m.to_string(), m.to_string()))
+                .collect()
+        }
+    }
+
+    /// 当前配置指纹（provider|base|key），用于判断已拉取的模型清单是否仍适用。
+    pub fn models_cache_key(&self) -> String {
+        format!("{}|{}|{}", self.provider, self.base_url, self.api_key)
     }
 
     pub fn poll_test_result(&mut self) -> TestPollResult {

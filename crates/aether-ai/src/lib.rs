@@ -16,20 +16,16 @@ use url::Url;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum AiProvider {
-    OpenAi,
-    Claude,
+    DeepSeek,
     Kimi,
-    Azure,
     Custom,
 }
 
 impl std::fmt::Debug for AiProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::OpenAi => write!(f, "OpenAi"),
-            Self::Claude => write!(f, "Claude"),
+            Self::DeepSeek => write!(f, "DeepSeek"),
             Self::Kimi => write!(f, "Kimi"),
-            Self::Azure => write!(f, "Azure"),
             Self::Custom => write!(f, "Custom"),
         }
     }
@@ -39,40 +35,47 @@ impl AiProvider {
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "openai" | "gpt" | "gpt-4" | "gpt-3.5-turbo" => Self::OpenAi,
-            "claude" | "anthropic" => Self::Claude,
+            "deepseek" => Self::DeepSeek,
             "kimi" | "moonshot" => Self::Kimi,
-            "azure" | "azure_openai" | "azure-openai" => Self::Azure,
             _ => Self::Custom,
         }
     }
 
     pub fn default_base_url(&self) -> &'static str {
         match self {
-            Self::OpenAi => "https://api.openai.com/v1",
-            Self::Claude => "https://api.anthropic.com/v1",
+            Self::DeepSeek => "https://api.deepseek.com/v1",
             Self::Kimi => "https://api.moonshot.cn/v1",
-            Self::Azure => "",
             Self::Custom => "",
         }
     }
 
     pub fn default_model(&self) -> &'static str {
         match self {
-            Self::OpenAi => "gpt-4",
-            Self::Claude => "claude-3-sonnet-20240229",
+            Self::DeepSeek => "deepseek-v4-pro",
             Self::Kimi => "moonshot-v1-8k",
-            Self::Azure => "gpt-4",
             Self::Custom => "",
+        }
+    }
+
+    /// 该服务商的预置模型清单（真实模型名）。Custom 无预置，返回空切片。
+    /// 作为 UI 模型下拉的唯一数据源，避免核心层与 UI 清单漂移。
+    pub fn preset_models(&self) -> &'static [&'static str] {
+        match self {
+            Self::DeepSeek => &["deepseek-v4-pro", "deepseek-v4-flash"],
+            Self::Kimi => &[
+                "moonshot-v1-8k",
+                "moonshot-v1-32k",
+                "moonshot-v1-128k",
+                "kimi-latest",
+            ],
+            Self::Custom => &[],
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::OpenAi => "openai",
-            Self::Claude => "claude",
+            Self::DeepSeek => "deepseek",
             Self::Kimi => "kimi",
-            Self::Azure => "azure",
             Self::Custom => "custom",
         }
     }
@@ -109,6 +112,15 @@ impl AiError {
     ///
     /// `Display` 实现包含完整（已截断）的 API 响应体，可能含 API Key 等敏感信息，
     /// 仅供日志使用。展示给用户时应调用此方法，仅返回 HTTP 状态码和通用描述。
+    ///
+    /// 错误码对应解决建议：
+    /// - 400 格式错误 → 请求体参数不符合 API 要求，请检查模型名/参数
+    /// - 401 认证失败 → API Key 错误或已过期，请到设置页重新填写
+    /// - 402 余额不足 → 账户余额不足，请到提供商官网充值
+    /// - 422 参数错误 → 请求体参数格式错误（如 temperature 超出范围）
+    /// - 429 速率上限 → 请求过于频繁，请稍后重试
+    /// - 500 服务器故障 → API 提供商内部错误，请稍后重试
+    /// - 503 服务器繁忙 → 服务器负载过高，请稍后重试
     pub fn safe_display(&self) -> String {
         match self {
             AiError::Http(_) => "网络请求失败，请检查网络连接".to_string(),
@@ -116,15 +128,36 @@ impl AiError {
             AiError::Config(e) => e.clone(),
             AiError::Api { code, .. } => {
                 let desc = match *code {
-                    401 => "API Key 无效或已过期",
-                    403 => "API Key 权限不足",
-                    404 => "请求的资源不存在（请检查 Base URL 和模型名）",
-                    429 => "请求频率超限，请稍后重试",
-                    500..=599 => "API 服务器内部错误，请稍后重试",
+                    400 => "请求体格式错误，请检查模型名和参数设置",
+                    401 => "API Key 无效或已过期，请到设置页重新填写",
+                    402 => "账户余额不足，请到提供商官网充值",
+                    403 => "API Key 权限不足，请检查模型访问权限",
+                    404 => "请求的资源不存在，请检查 Base URL 和模型名",
+                    422 => "参数错误，请检查 temperature/max_tokens 等参数范围",
+                    429 => "请求速率超限（TPM/RPM 达到上限），请稍后重试",
+                    500 => "API 服务器内部故障，请稍后重试",
+                    503 => "API 服务器负载过高（服务器繁忙），请稍后重试",
                     _ => "API 请求失败",
                 };
                 format!("HTTP {}: {}", code, desc)
             }
+        }
+    }
+
+    /// 返回是否可自动重试的错误（暂时性错误）
+    /// 用于 429/503 的自动重试策略（指数退避）
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            AiError::Api { code, .. } => matches!(*code, 429 | 500 | 503),
+            _ => false,
+        }
+    }
+
+    /// 返回是否为永久错误（无需重试，提示用户检查配置）
+    pub fn is_permanent(&self) -> bool {
+        match self {
+            AiError::Api { code, .. } => matches!(*code, 400 | 401 | 402 | 403 | 404 | 422),
+            _ => false,
         }
     }
 }
@@ -138,6 +171,8 @@ pub struct AiConfig {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub system_prompt: Option<String>,
+    /// 深度思考开关（仅 DeepSeek 生效），None 表示不下发该参数
+    pub thinking: Option<bool>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -153,6 +188,7 @@ impl std::fmt::Debug for AiConfig {
                 "system_prompt",
                 &self.system_prompt.as_deref().map(|_| "[PRESENT]"),
             )
+            .field("thinking", &self.thinking)
             .finish()
     }
 }
@@ -181,6 +217,7 @@ impl AiConfig {
             temperature: settings.temperature,
             max_tokens: settings.max_tokens,
             system_prompt: settings.system_prompt.clone(),
+            thinking: settings.thinking,
         }
     }
 }
@@ -219,8 +256,10 @@ pub enum AiStreamEvent {
     Token(String),
     /// 一个新的"深度思考"token（如 DeepSeek reasoner 的 reasoning_content）
     Reasoning(String),
-    /// 流结束
+    /// 流结束（正常完成，finish_reason = "stop"）
     Done,
+    /// 输出被截断（达到 max_tokens 限制，finish_reason = "length" / "max_tokens"）
+    Truncated(String),
     /// 流式过程中出现错误
     Error(String),
 }
@@ -232,38 +271,15 @@ struct ResolvedEndpoint {
     port: u16,
 }
 
-/// 将消息列表拆分为 Claude 格式：system 消息合并为顶层 system 文本，
-/// 其余消息（user/assistant）原样保留。
-///
-/// Anthropic /messages 接口的 messages 数组只允许 user/assistant 角色，
-/// system 内容必须放在请求的顶层 system 字段，否则接口返回 400。
-fn split_claude_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<serde_json::Value>) {
-    let mut system_parts: Vec<&str> = Vec::new();
-    let mut msgs: Vec<serde_json::Value> = Vec::new();
-    for m in messages {
-        if m.role == "system" {
-            system_parts.push(&m.content);
-        } else {
-            msgs.push(serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            }));
-        }
-    }
-    let system = if system_parts.is_empty() {
-        None
-    } else {
-        Some(system_parts.join("\n\n"))
-    };
-    (system, msgs)
-}
-
 impl AiClient {
     pub fn new(config: &AiSettings) -> Self {
         let config = AiConfig::from_settings(config);
         // SEC-C02: 禁用自动重定向，防止 SSRF 通过 302 跳转到内网地址
+        // 超时策略：流式生成总时长不可预估，禁止设置整体 timeout（会把长生成中途掐断）；
+        // 改为分离配置——连接阶段 15s + 读空闲 300s（DeepSeek 会持续发 keep-alive，正常流不会触发）。
         let http = ureq::AgentBuilder::new()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_read(std::time::Duration::from_secs(300))
             .redirects(0)
             .build();
         Self { config, http }
@@ -277,6 +293,65 @@ impl AiClient {
     /// 可直接用于 UI 展示。调用方无需再单独 sanitize。
     pub fn test_connection_safe(&self) -> Result<String, String> {
         self.test_connection().map_err(|e| e.safe_display())
+    }
+
+    /// 拉取该服务商当前可用的模型 ID 列表（OpenAI 兼容 `GET {base_url}/models`）。
+    ///
+    /// DeepSeek/Kimi/自定义（OpenAI 兼容）均支持；返回 data[].id 列表（保持接口原始顺序）。
+    pub fn list_models(&self) -> Result<Vec<String>, AiError> {
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.deepseek.com/v1");
+        Self::validate_https(base_url)?;
+        Self::validate_not_private_ip(base_url)?;
+
+        if self.config.api_key.is_empty() {
+            return Err(AiError::Config("API Key 未设置".to_string()));
+        }
+
+        Self::validate_tcp_connect_target(base_url)?;
+        let url = format!("{}/models", base_url);
+
+        let response = self
+            .http
+            .get(&url)
+            .set("Authorization", &format!("Bearer {}", self.config.api_key))
+            .call()
+            .map_err(|e| AiError::Http(e.to_string()))?;
+
+        let status = response.status();
+        if status != 200 {
+            let text = Self::read_limited_response(response)?;
+            return Err(AiError::Api {
+                code: status,
+                message: Self::truncate_error_message(&text),
+            });
+        }
+
+        let text = Self::read_limited_response(response)?;
+        Self::parse_model_ids(&text)
+    }
+
+    /// 从 `/models` 响应文本解析出模型 ID 列表（`data[].id`）。
+    fn parse_model_ids(text: &str) -> Result<Vec<String>, AiError> {
+        let json: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| AiError::Parse(e.to_string()))?;
+        let arr = json["data"]
+            .as_array()
+            .ok_or_else(|| AiError::Parse("模型列表响应缺少 data 数组".to_string()))?;
+        let ids: Vec<String> = arr
+            .iter()
+            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(ids)
+    }
+
+    /// list_models 的安全版本，错误信息脱敏，可直接用于 UI 展示。
+    pub fn list_models_safe(&self) -> Result<Vec<String>, String> {
+        self.list_models().map_err(|e| e.safe_display())
     }
 
     fn validate_https(url: &str) -> Result<(), AiError> {
@@ -458,21 +533,12 @@ impl AiClient {
     }
 
     pub fn complete(&self, prompt: &str) -> Result<String, AiError> {
-        match self.config.provider {
-            AiProvider::OpenAi | AiProvider::Kimi | AiProvider::Azure | AiProvider::Custom => {
-                self.complete_openai_compatible(prompt)
-            }
-            AiProvider::Claude => self.complete_claude(prompt),
-        }
+        // DeepSeek / Kimi / Custom 均为 OpenAI 兼容接口，统一走同一路径
+        self.complete_openai_compatible(prompt)
     }
 
     pub fn chat_completion(&self, messages: &[ChatMessage]) -> Result<String, AiError> {
-        match self.config.provider {
-            AiProvider::OpenAi | AiProvider::Kimi | AiProvider::Azure | AiProvider::Custom => {
-                self.chat_openai_compatible(messages)
-            }
-            AiProvider::Claude => self.chat_claude(messages),
-        }
+        self.chat_openai_compatible(messages)
     }
 
     fn complete_openai_compatible(&self, prompt: &str) -> Result<String, AiError> {
@@ -480,7 +546,7 @@ impl AiClient {
             .config
             .base_url
             .as_deref()
-            .unwrap_or("https://api.openai.com/v1");
+            .unwrap_or("https://api.deepseek.com/v1");
         Self::validate_https(base_url)?;
         Self::validate_not_private_ip(base_url)?;
 
@@ -531,69 +597,12 @@ impl AiClient {
         Ok(content)
     }
 
-    fn complete_claude(&self, prompt: &str) -> Result<String, AiError> {
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com/v1");
-        Self::validate_https(base_url)?;
-        Self::validate_not_private_ip(base_url)?;
-
-        // AI-M01: 空 API Key 前置检查
-        if self.config.api_key.is_empty() {
-            return Err(AiError::Config("API Key 未设置".to_string()));
-        }
-
-        // SEC-C03: TOCTOU 二次 DNS 校验，仅在请求前做 SSRF 校验，
-        // 不再用解析到的 IP 直连，以保留 TLS 主机名证书校验
-        Self::validate_tcp_connect_target(base_url)?;
-        // 始终使用原始 base_url（含域名），TLS 证书验证才能匹配域名
-        let url = format!("{}/messages", base_url);
-
-        let body = serde_json::json!({
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100,
-        });
-
-        let response = self
-            .http
-            .post(&url)
-            .set("x-api-key", &self.config.api_key)
-            .set("anthropic-version", "2023-06-01")
-            .set("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| AiError::Http(e.to_string()))?;
-
-        let status = response.status();
-        if status != 200 {
-            let text = Self::read_limited_response(response)?;
-            return Err(AiError::Api {
-                code: status,
-                // H-21: 截断 API 错误响应体至 200 字符
-                message: Self::truncate_error_message(&text),
-            });
-        }
-
-        let text = Self::read_limited_response(response)?;
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| AiError::Parse(e.to_string()))?;
-
-        let content = json["content"][0]["text"]
-            .as_str()
-            .ok_or_else(|| AiError::Parse("Unexpected API response structure".to_string()))?
-            .to_string();
-
-        Ok(content)
-    }
-
     fn chat_openai_compatible(&self, messages: &[ChatMessage]) -> Result<String, AiError> {
         let base_url = self
             .config
             .base_url
             .as_deref()
-            .unwrap_or("https://api.openai.com/v1");
+            .unwrap_or("https://api.deepseek.com/v1");
         Self::validate_https(base_url)?;
         Self::validate_not_private_ip(base_url)?;
 
@@ -654,68 +663,6 @@ impl AiClient {
         Ok(content)
     }
 
-    fn chat_claude(&self, messages: &[ChatMessage]) -> Result<String, AiError> {
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com/v1");
-        Self::validate_https(base_url)?;
-        Self::validate_not_private_ip(base_url)?;
-
-        // AI-M01: 空 API Key 前置检查
-        if self.config.api_key.is_empty() {
-            return Err(AiError::Config("API Key 未设置".to_string()));
-        }
-
-        // SEC-C03: TOCTOU 二次 DNS 校验，仅在请求前做 SSRF 校验，
-        // 不再用解析到的 IP 直连，以保留 TLS 主机名证书校验
-        Self::validate_tcp_connect_target(base_url)?;
-        // 始终使用原始 base_url（含域名），TLS 证书验证才能匹配域名
-        let url = format!("{}/messages", base_url);
-
-        let (system, msgs) = split_claude_messages(messages);
-
-        let mut body = serde_json::json!({
-            "model": self.config.model,
-            "messages": msgs,
-            "max_tokens": 2048,
-        });
-        if let Some(system) = system {
-            body["system"] = serde_json::json!(system);
-        }
-
-        let response = self
-            .http
-            .post(&url)
-            .set("x-api-key", &self.config.api_key)
-            .set("anthropic-version", "2023-06-01")
-            .set("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| AiError::Http(e.to_string()))?;
-
-        let status = response.status();
-        if status != 200 {
-            let text = Self::read_limited_response(response)?;
-            return Err(AiError::Api {
-                code: status,
-                // H-21: 截断 API 错误响应体至 200 字符
-                message: Self::truncate_error_message(&text),
-            });
-        }
-
-        let text = Self::read_limited_response(response)?;
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| AiError::Parse(e.to_string()))?;
-
-        let content = json["content"][0]["text"]
-            .as_str()
-            .ok_or_else(|| AiError::Parse("Unexpected API response structure".to_string()))?
-            .to_string();
-
-        Ok(content)
-    }
-
     /// 流式聊天补全。
     ///
     /// 返回一个 Receiver，后台线程会在每次收到 token 时发送 `AiStreamEvent::Token`，
@@ -724,9 +671,21 @@ impl AiClient {
         &self,
         messages: &[ChatMessage],
     ) -> Result<mpsc::Receiver<AiStreamEvent>, AiError> {
-        match self.config.provider {
-            AiProvider::Claude => self.stream_claude(messages),
-            _ => self.stream_openai_compatible(messages),
+        // DeepSeek / Kimi / Custom 均走 OpenAI 兼容的 SSE 流式接口
+        self.stream_openai_compatible(messages)
+    }
+
+    /// 为 DeepSeek 请求体注入 thinking 参数（深度思考开关）。
+    ///
+    /// DeepSeek V4 用 `thinking: {"type":"enabled"|"disabled"}` 控制思考/非思考模式，
+    /// 是 DeepSeek 专属参数；其它服务商不下发。None 表示不下发（用服务端默认=开启）。
+    fn apply_thinking_param(&self, body: &mut serde_json::Value) {
+        if !matches!(self.config.provider, AiProvider::DeepSeek) {
+            return;
+        }
+        if let Some(enabled) = self.config.thinking {
+            let mode = if enabled { "enabled" } else { "disabled" };
+            body["thinking"] = serde_json::json!({ "type": mode });
         }
     }
 
@@ -738,7 +697,7 @@ impl AiClient {
             .config
             .base_url
             .as_deref()
-            .unwrap_or("https://api.openai.com/v1");
+            .unwrap_or("https://api.deepseek.com/v1");
         Self::validate_https(base_url)?;
         Self::validate_not_private_ip(base_url)?;
         Self::validate_tcp_connect_target(base_url)?;
@@ -765,9 +724,12 @@ impl AiClient {
             "messages": body_messages,
             "stream": true,
         });
+        // 厂商差异：DeepSeek reasoner 早已并入 V4，V4 支持 temperature，故按配置正常发送
         if let Some(t) = self.config.temperature {
             body["temperature"] = serde_json::json!(t);
         }
+        // 厂商差异：DeepSeek V4 用 thinking 参数控制深度思考（其它服务商不下发）
+        self.apply_thinking_param(&mut body);
         if let Some(m) = self.config.max_tokens {
             body["max_tokens"] = serde_json::json!(m);
         }
@@ -776,52 +738,6 @@ impl AiClient {
             .http
             .post(&url)
             .set("Authorization", &format!("Bearer {}", self.config.api_key))
-            .set("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| AiError::Http(e.to_string()))?;
-
-        Self::stream_response(response)
-    }
-
-    fn stream_claude(
-        &self,
-        messages: &[ChatMessage],
-    ) -> Result<mpsc::Receiver<AiStreamEvent>, AiError> {
-        let base_url = self
-            .config
-            .base_url
-            .as_deref()
-            .unwrap_or("https://api.anthropic.com/v1");
-        Self::validate_https(base_url)?;
-        Self::validate_not_private_ip(base_url)?;
-        Self::validate_tcp_connect_target(base_url)?;
-
-        if self.config.api_key.is_empty() {
-            return Err(AiError::Config("API Key 未设置".to_string()));
-        }
-
-        let url = format!("{}/messages", base_url);
-        let (system, msgs) = split_claude_messages(messages);
-        let max_tokens = self.config.max_tokens.unwrap_or(2048);
-
-        let mut body = serde_json::json!({
-            "model": self.config.model,
-            "messages": msgs,
-            "max_tokens": max_tokens,
-            "stream": true,
-        });
-        if let Some(system) = system {
-            body["system"] = serde_json::json!(system);
-        }
-        if let Some(t) = self.config.temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
-
-        let response = self
-            .http
-            .post(&url)
-            .set("x-api-key", &self.config.api_key)
-            .set("anthropic-version", "2023-06-01")
             .set("Content-Type", "application/json")
             .send_json(body)
             .map_err(|e| AiError::Http(e.to_string()))?;
@@ -845,7 +761,6 @@ impl AiClient {
             let mut buf = BufReader::new(reader);
             let mut data_buf = String::new();
             let mut line = String::new();
-            let done = false;
 
             loop {
                 line.clear();
@@ -874,10 +789,7 @@ impl AiClient {
                                         )));
                                         break;
                                     }
-                                    if let Some(reasoning) = json
-                                        .pointer("/choices/0/delta/reasoning_content")
-                                        .and_then(|v| v.as_str())
-                                    {
+                                    if let Some(reasoning) = Self::extract_stream_reasoning(&json) {
                                         if !reasoning.is_empty() {
                                             let _ = tx.send(AiStreamEvent::Reasoning(
                                                 reasoning.to_string(),
@@ -887,6 +799,18 @@ impl AiClient {
                                     if let Some(token) = Self::extract_stream_token(&json) {
                                         if !token.is_empty() {
                                             let _ = tx.send(AiStreamEvent::Token(token));
+                                        }
+                                    }
+                                    // 检查 finish_reason：如果是 length/max_tokens 说明被截断了
+                                    if let Some(finish_reason) = json
+                                        .pointer("/choices/0/finish_reason")
+                                        .and_then(|v| v.as_str().map(|s| s.to_lowercase()))
+                                    {
+                                        if finish_reason == "length"
+                                            || finish_reason == "max_tokens"
+                                        {
+                                            let _ =
+                                                tx.send(AiStreamEvent::Truncated(finish_reason));
                                         }
                                     }
                                 }
@@ -907,10 +831,6 @@ impl AiClient {
                     data_buf.push_str(data.trim_start());
                 }
             }
-
-            if !done {
-                let _ = tx.send(AiStreamEvent::Done);
-            }
         });
 
         Ok(rx)
@@ -924,9 +844,33 @@ impl AiClient {
         {
             return Some(content.to_string());
         }
-        // Anthropic content_block_delta: delta.text
+        // Anthropic content_block_delta: delta.text（仅 text_delta 带此字段，
+        // thinking_delta/signature_delta 不带，天然与思维链分流）
         if let Some(text) = json.pointer("/delta/text").and_then(|v| v.as_str()) {
             return Some(text.to_string());
+        }
+        None
+    }
+
+    /// 从 SSE JSON 分片提取"深度思考"内容（思维链），与最终回答 token 分流。
+    ///
+    /// 兼容两种主流格式：
+    /// - OpenAI / DeepSeek reasoner：`choices[0].delta.reasoning_content`
+    /// - Anthropic 扩展思考：`content_block_delta` 中 `delta.type == "thinking_delta"`
+    ///   时取 `delta.thinking`（`signature_delta` 等其它块不含 thinking，返回 None）
+    fn extract_stream_reasoning(json: &serde_json::Value) -> Option<String> {
+        // OpenAI / DeepSeek：choices[0].delta.reasoning_content
+        if let Some(reasoning) = json
+            .pointer("/choices/0/delta/reasoning_content")
+            .and_then(|v| v.as_str())
+        {
+            return Some(reasoning.to_string());
+        }
+        // Anthropic 扩展思考：仅当 delta.type 为 thinking_delta 时取 delta.thinking
+        if json.pointer("/delta/type").and_then(|v| v.as_str()) == Some("thinking_delta") {
+            if let Some(thinking) = json.pointer("/delta/thinking").and_then(|v| v.as_str()) {
+                return Some(thinking.to_string());
+            }
         }
         None
     }
@@ -939,23 +883,11 @@ mod tests {
     // ==================== AiProvider ====================
 
     #[test]
-    fn provider_from_str_openai_variants() {
-        for s in ["openai", "gpt", "gpt-4", "gpt-3.5-turbo", "OPENAI", "Gpt"] {
+    fn provider_from_str_deepseek_variants() {
+        for s in ["deepseek", "DeepSeek", "DEEPSEEK"] {
             assert_eq!(
                 AiProvider::from_str(s),
-                AiProvider::OpenAi,
-                "failed for {}",
-                s
-            );
-        }
-    }
-
-    #[test]
-    fn provider_from_str_claude_variants() {
-        for s in ["claude", "anthropic", "Claude", "ANTHROPIC"] {
-            assert_eq!(
-                AiProvider::from_str(s),
-                AiProvider::Claude,
+                AiProvider::DeepSeek,
                 "failed for {}",
                 s
             );
@@ -975,20 +907,19 @@ mod tests {
     }
 
     #[test]
-    fn provider_from_str_azure_variants() {
-        for s in ["azure", "azure_openai", "azure-openai", "Azure"] {
-            assert_eq!(
-                AiProvider::from_str(s),
-                AiProvider::Azure,
-                "failed for {}",
-                s
-            );
-        }
-    }
-
-    #[test]
     fn provider_from_str_custom_and_unknown() {
-        for s in ["custom", "foo", "", "llama", "unknown"] {
+        // 已移除的旧服务商（openai/claude/azure）以及未知串一律回退为 Custom
+        for s in [
+            "custom",
+            "foo",
+            "",
+            "llama",
+            "unknown",
+            "openai",
+            "claude",
+            "anthropic",
+            "azure",
+        ] {
             assert_eq!(
                 AiProvider::from_str(s),
                 AiProvider::Custom,
@@ -1001,39 +932,44 @@ mod tests {
     #[test]
     fn provider_default_base_url() {
         assert_eq!(
-            AiProvider::OpenAi.default_base_url(),
-            "https://api.openai.com/v1"
-        );
-        assert_eq!(
-            AiProvider::Claude.default_base_url(),
-            "https://api.anthropic.com/v1"
+            AiProvider::DeepSeek.default_base_url(),
+            "https://api.deepseek.com/v1"
         );
         assert_eq!(
             AiProvider::Kimi.default_base_url(),
             "https://api.moonshot.cn/v1"
         );
-        assert_eq!(AiProvider::Azure.default_base_url(), "");
         assert_eq!(AiProvider::Custom.default_base_url(), "");
     }
 
     #[test]
     fn provider_default_model() {
-        assert_eq!(AiProvider::OpenAi.default_model(), "gpt-4");
-        assert_eq!(
-            AiProvider::Claude.default_model(),
-            "claude-3-sonnet-20240229"
-        );
+        assert_eq!(AiProvider::DeepSeek.default_model(), "deepseek-v4-pro");
         assert_eq!(AiProvider::Kimi.default_model(), "moonshot-v1-8k");
-        assert_eq!(AiProvider::Azure.default_model(), "gpt-4");
         assert_eq!(AiProvider::Custom.default_model(), "");
     }
 
     #[test]
+    fn provider_preset_models() {
+        // DeepSeek/Kimi 提供真实模型清单；Custom 无预置
+        assert_eq!(
+            AiProvider::DeepSeek.preset_models(),
+            &["deepseek-v4-pro", "deepseek-v4-flash"]
+        );
+        assert!(AiProvider::Kimi.preset_models().contains(&"moonshot-v1-8k"));
+        assert!(AiProvider::Kimi.preset_models().contains(&"kimi-latest"));
+        assert!(AiProvider::Custom.preset_models().is_empty());
+        // 每个预置模型的第一项即该服务商的默认模型
+        assert_eq!(
+            AiProvider::DeepSeek.preset_models().first(),
+            Some(&AiProvider::DeepSeek.default_model())
+        );
+    }
+
+    #[test]
     fn provider_as_str() {
-        assert_eq!(AiProvider::OpenAi.as_str(), "openai");
-        assert_eq!(AiProvider::Claude.as_str(), "claude");
+        assert_eq!(AiProvider::DeepSeek.as_str(), "deepseek");
         assert_eq!(AiProvider::Kimi.as_str(), "kimi");
-        assert_eq!(AiProvider::Azure.as_str(), "azure");
         assert_eq!(AiProvider::Custom.as_str(), "custom");
     }
 
@@ -1087,33 +1023,31 @@ mod tests {
             model: model.to_string(),
             temperature: None,
             max_tokens: None,
+            max_input_tokens: None,
             system_prompt: None,
+            thinking: None,
         }
     }
 
     #[test]
     fn config_from_settings_defaults() {
-        let settings = settings_with("openai", "key", None, "");
+        let settings = settings_with("deepseek", "key", None, "");
         let config = AiConfig::from_settings(&settings);
-        assert_eq!(config.provider, AiProvider::OpenAi);
+        assert_eq!(config.provider, AiProvider::DeepSeek);
         assert_eq!(config.api_key, "key");
         assert_eq!(
             config.base_url,
-            Some("https://api.openai.com/v1".to_string())
+            Some("https://api.deepseek.com/v1".to_string())
         );
-        assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.model, "deepseek-v4-pro");
     }
 
     #[test]
     fn config_from_settings_custom_base_url_and_model() {
-        let settings = settings_with(
-            "claude",
-            "secret",
-            Some("https://example.com/v1"),
-            "model-x",
-        );
+        // 显式 base_url 应覆盖服务商默认值
+        let settings = settings_with("kimi", "secret", Some("https://example.com/v1"), "model-x");
         let config = AiConfig::from_settings(&settings);
-        assert_eq!(config.provider, AiProvider::Claude);
+        assert_eq!(config.provider, AiProvider::Kimi);
         assert_eq!(config.base_url, Some("https://example.com/v1".to_string()));
         assert_eq!(config.model, "model-x");
     }
@@ -1130,7 +1064,7 @@ mod tests {
 
     #[test]
     fn config_from_settings_explicit_empty_base_url() {
-        let settings = settings_with("openai", "key", Some(""), "");
+        let settings = settings_with("deepseek", "key", Some(""), "");
         let config = AiConfig::from_settings(&settings);
         // An explicitly empty base_url is preserved as Some("") rather than falling back.
         assert_eq!(config.base_url, Some("".to_string()));
@@ -1139,13 +1073,14 @@ mod tests {
     #[test]
     fn config_debug_hides_api_key_and_shows_system_prompt_presence() {
         let config = AiConfig {
-            provider: AiProvider::OpenAi,
+            provider: AiProvider::DeepSeek,
             api_key: "super-secret".to_string(),
-            base_url: Some("https://api.openai.com/v1".to_string()),
-            model: "gpt-4".to_string(),
+            base_url: Some("https://api.deepseek.com/v1".to_string()),
+            model: "deepseek-v4-pro".to_string(),
             temperature: Some(0.7),
             max_tokens: Some(100),
             system_prompt: Some("you are helpful".to_string()),
+            thinking: None,
         };
         let out = format!("{:?}", config);
         assert!(!out.contains("super-secret"), "api_key leaked in Debug");
@@ -1154,7 +1089,7 @@ mod tests {
             out.contains("[PRESENT]"),
             "system_prompt presence not indicated"
         );
-        assert!(out.contains("gpt-4"));
+        assert!(out.contains("deepseek-v4-pro"));
     }
 
     // ==================== ChatMessage ====================
@@ -1170,36 +1105,6 @@ mod tests {
         assert_eq!(a.content, "hi there");
     }
 
-    #[test]
-    fn split_claude_messages_extracts_system_to_top_level() {
-        let messages = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: "sys-1".to_string(),
-            },
-            ChatMessage::user("hello"),
-            ChatMessage {
-                role: "system".to_string(),
-                content: "sys-2".to_string(),
-            },
-            ChatMessage::assistant("hi".to_string()),
-        ];
-        let (system, msgs) = split_claude_messages(&messages);
-        // system 消息合并到顶层，messages 数组只含 user/assistant
-        assert_eq!(system, Some("sys-1\n\nsys-2".to_string()));
-        assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0]["role"], "user");
-        assert_eq!(msgs[1]["role"], "assistant");
-    }
-
-    #[test]
-    fn split_claude_messages_without_system_returns_none() {
-        let messages = vec![ChatMessage::user("hello")];
-        let (system, msgs) = split_claude_messages(&messages);
-        assert_eq!(system, None);
-        assert_eq!(msgs.len(), 1);
-    }
-
     // ==================== AiClient ====================
 
     #[test]
@@ -1211,7 +1116,9 @@ mod tests {
             model: "moonshot-v1-8k".to_string(),
             temperature: Some(0.5),
             max_tokens: Some(512),
+            max_input_tokens: None,
             system_prompt: Some("sys".to_string()),
+            thinking: Some(true),
         };
         let client = AiClient::new(&settings);
         assert_eq!(client.config.provider, AiProvider::Kimi);
@@ -1224,6 +1131,30 @@ mod tests {
         assert_eq!(client.config.temperature, Some(0.5));
         assert_eq!(client.config.max_tokens, Some(512));
         assert_eq!(client.config.system_prompt, Some("sys".to_string()));
+        assert_eq!(client.config.thinking, Some(true));
+    }
+
+    #[test]
+    fn parse_model_ids_deepseek_example() {
+        // DeepSeek /models 官方示例响应
+        let text = r#"{"object":"list","data":[
+            {"id":"deepseek-v4-flash","object":"model","owned_by":"deepseek"},
+            {"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"}
+        ]}"#;
+        let ids = AiClient::parse_model_ids(text).unwrap();
+        assert_eq!(ids, vec!["deepseek-v4-flash", "deepseek-v4-pro"]);
+    }
+
+    #[test]
+    fn parse_model_ids_empty_and_bad() {
+        // 空 data → 空列表
+        assert!(AiClient::parse_model_ids(r#"{"object":"list","data":[]}"#)
+            .unwrap()
+            .is_empty());
+        // 缺 data 数组 → 解析错误
+        assert!(AiClient::parse_model_ids(r#"{"object":"list"}"#).is_err());
+        // 非法 JSON → 解析错误
+        assert!(AiClient::parse_model_ids("not json").is_err());
     }
 
     #[test]
@@ -1353,14 +1284,53 @@ mod tests {
             model: "model".to_string(),
             temperature: None,
             max_tokens: None,
+            max_input_tokens: None,
             system_prompt: None,
+            thinking: None,
         };
         AiClient::new(&settings)
     }
 
+    fn thinking_client(provider: &str, thinking: Option<bool>) -> AiClient {
+        AiClient::new(&AiSettings {
+            provider: provider.to_string(),
+            api_key: "k".to_string(),
+            base_url: Some("https://1.1.1.1".to_string()),
+            model: "m".to_string(),
+            temperature: None,
+            max_tokens: None,
+            max_input_tokens: None,
+            system_prompt: None,
+            thinking,
+        })
+    }
+
     #[test]
-    fn complete_rejects_empty_api_key_openai_compatible() {
-        let client = client_with_empty_key(AiProvider::OpenAi, "https://1.1.1.1");
+    fn deepseek_thinking_param_applied() {
+        // DeepSeek + thinking=Some(false) → 下发 {"type":"disabled"}
+        let mut body = serde_json::json!({});
+        thinking_client("deepseek", Some(false)).apply_thinking_param(&mut body);
+        assert_eq!(body["thinking"], serde_json::json!({"type": "disabled"}));
+
+        // DeepSeek + thinking=Some(true) → {"type":"enabled"}
+        let mut body = serde_json::json!({});
+        thinking_client("deepseek", Some(true)).apply_thinking_param(&mut body);
+        assert_eq!(body["thinking"], serde_json::json!({"type": "enabled"}));
+
+        // DeepSeek + thinking=None → 不下发（用服务端默认）
+        let mut body = serde_json::json!({});
+        thinking_client("deepseek", None).apply_thinking_param(&mut body);
+        assert!(body.get("thinking").is_none());
+
+        // 非 DeepSeek（kimi）即使设了 thinking 也不下发（DeepSeek 专属参数）
+        let mut body = serde_json::json!({});
+        thinking_client("kimi", Some(true)).apply_thinking_param(&mut body);
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn complete_rejects_empty_api_key_deepseek() {
+        let client = client_with_empty_key(AiProvider::DeepSeek, "https://1.1.1.1");
         let err = client.complete("prompt").unwrap_err();
         match err {
             AiError::Config(msg) => assert_eq!(msg, "API Key 未设置"),
@@ -1369,8 +1339,8 @@ mod tests {
     }
 
     #[test]
-    fn complete_rejects_empty_api_key_claude() {
-        let client = client_with_empty_key(AiProvider::Claude, "https://1.1.1.1");
+    fn complete_rejects_empty_api_key_kimi() {
+        let client = client_with_empty_key(AiProvider::Kimi, "https://1.1.1.1");
         let err = client.complete("prompt").unwrap_err();
         match err {
             AiError::Config(msg) => assert_eq!(msg, "API Key 未设置"),
@@ -1379,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_rejects_empty_api_key_openai_compatible() {
+    fn chat_completion_rejects_empty_api_key_kimi() {
         let client = client_with_empty_key(AiProvider::Kimi, "https://1.1.1.1");
         let err = client
             .chat_completion(&[ChatMessage::user("hi")])
@@ -1391,8 +1361,8 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_rejects_empty_api_key_claude() {
-        let client = client_with_empty_key(AiProvider::Claude, "https://1.1.1.1");
+    fn chat_completion_rejects_empty_api_key_deepseek() {
+        let client = client_with_empty_key(AiProvider::DeepSeek, "https://1.1.1.1");
         let err = client
             .chat_completion(&[ChatMessage::user("hi")])
             .unwrap_err();
@@ -1403,20 +1373,8 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_stream_rejects_empty_api_key_openai_compatible() {
-        let client = client_with_empty_key(AiProvider::Azure, "https://1.1.1.1");
-        let err = client
-            .chat_completion_stream(&[ChatMessage::user("hi")])
-            .unwrap_err();
-        match err {
-            AiError::Config(msg) => assert_eq!(msg, "API Key 未设置"),
-            other => panic!("expected Config error, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn chat_completion_stream_rejects_empty_api_key_claude() {
-        let client = client_with_empty_key(AiProvider::Claude, "https://1.1.1.1");
+    fn chat_completion_stream_rejects_empty_api_key_deepseek() {
+        let client = client_with_empty_key(AiProvider::DeepSeek, "https://1.1.1.1");
         let err = client
             .chat_completion_stream(&[ChatMessage::user("hi")])
             .unwrap_err();
@@ -1482,6 +1440,68 @@ mod tests {
     fn extract_stream_token_unrelated() {
         let json = serde_json::json!({"foo": "bar"});
         assert_eq!(AiClient::extract_stream_token(&json), None);
+    }
+
+    // ==================== extract_stream_reasoning ====================
+
+    #[test]
+    fn extract_stream_reasoning_openai_deepseek() {
+        let json = serde_json::json!({
+            "choices": [{"delta": {"reasoning_content": "让我想想"}}]
+        });
+        assert_eq!(
+            AiClient::extract_stream_reasoning(&json),
+            Some("让我想想".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_stream_reasoning_anthropic_thinking_delta() {
+        let json = serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "先分析问题"}
+        });
+        assert_eq!(
+            AiClient::extract_stream_reasoning(&json),
+            Some("先分析问题".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_stream_reasoning_anthropic_text_delta_is_none() {
+        // 普通回答分片（text_delta）不应被识别为思维链
+        let json = serde_json::json!({
+            "delta": {"type": "text_delta", "text": "答案"}
+        });
+        assert_eq!(AiClient::extract_stream_reasoning(&json), None);
+    }
+
+    #[test]
+    fn extract_stream_reasoning_anthropic_signature_delta_is_none() {
+        // 思考签名块不含 thinking 文本，应忽略
+        let json = serde_json::json!({
+            "delta": {"type": "signature_delta", "signature": "abc"}
+        });
+        assert_eq!(AiClient::extract_stream_reasoning(&json), None);
+    }
+
+    #[test]
+    fn extract_stream_reasoning_unrelated_is_none() {
+        let json = serde_json::json!({"foo": "bar"});
+        assert_eq!(AiClient::extract_stream_reasoning(&json), None);
+    }
+
+    #[test]
+    fn thinking_delta_not_treated_as_answer_token() {
+        let json = serde_json::json!({
+            "delta": {"type": "thinking_delta", "thinking": "思考中"}
+        });
+        assert_eq!(AiClient::extract_stream_token(&json), None);
+        assert_eq!(
+            AiClient::extract_stream_reasoning(&json),
+            Some("思考中".to_string())
+        );
     }
 
     // ==================== AiStreamEvent ====================

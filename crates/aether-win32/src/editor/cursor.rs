@@ -154,7 +154,9 @@ impl EditorState {
         self.content.selection_end = None;
 
         // 同步到当前标签页
-        if let Some(crate::tabs::Tab::File(content)) = self.tabs.get_mut(self.active_tab) {
+        if let Some(crate::tabs::Tab::File(content)) =
+            self.tab_bar.tabs.get_mut(self.tab_bar.active_tab)
+        {
             content.cursor_line = target_line;
             content.cursor_col = target_col;
             content.selection_start = None;
@@ -198,7 +200,8 @@ impl EditorState {
                 let node_height = 16.0;
                 // P0-1: 按可见节点数（含展开的子节点）估算滚动高度
                 let visible_nodes = self
-                    .remote_file_tree
+                    .remote
+                    .file_tree
                     .as_ref()
                     .map(|t| t.count_visible_nodes())
                     .unwrap_or(0) as f32;
@@ -206,7 +209,7 @@ impl EditorState {
                 let sidebar_region = self.layout.sidebar_region();
                 let visible_height = sidebar_region.height;
                 let max_scroll = (total_height - visible_height).max(0.0);
-                self.remote_scroll_y = (self.remote_scroll_y + delta_y).clamp(0.0, max_scroll);
+                self.remote.scroll_y = (self.remote.scroll_y + delta_y).clamp(0.0, max_scroll);
             }
             crate::layout::SidebarContent::SourceControlPanel => {
                 let item_height = 22.0;

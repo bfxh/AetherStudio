@@ -33,7 +33,7 @@ pub(crate) unsafe fn on_l_button_down(
             st.terminal_panel.focused = false;
             st.set_terminal_ime_bypass(false);
         }
-        st.lbutton_down = true;
+        st.mouse_press.lbutton_down = true;
         let mouse_x = raw_x / st.dpi_scale;
         let mouse_y = raw_y / st.dpi_scale;
         let layout = st.layout.clone();

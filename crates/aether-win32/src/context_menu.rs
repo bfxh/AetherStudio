@@ -166,13 +166,26 @@ impl ExplorerContextMenu {
     }
 
     /// 命中测试：返回点击的菜单项在 `items` 中的索引（分隔符不可命中）。
-    /// 必须在 `menu_rect` 已由渲染阶段设置后调用。
+    /// 基于 origin 直接计算，不依赖渲染阶段回写的 `menu_rect`（避免首帧命中真空）；
+    /// 顶部/底部 padding 不留死区，分别吸附到第一项/最后一项。
     pub fn hit_test_menu(&self, mouse_x: f32, mouse_y: f32) -> Option<usize> {
-        let rect = self.menu_rect.clone()?;
-        if !rect.contains(mouse_x, mouse_y) {
+        if !self.is_open {
             return None;
         }
-        let mut current_y = rect.y + Self::TOP_PADDING;
+        let x = self.origin_x;
+        let y = self.origin_y;
+        if mouse_x < x
+            || mouse_x >= x + Self::MENU_WIDTH
+            || mouse_y < y
+            || mouse_y >= y + self.menu_height()
+        {
+            return None;
+        }
+        let mut current_y = y + Self::TOP_PADDING;
+        // 顶部 padding：吸附到第一个非分隔项
+        if mouse_y < current_y {
+            return self.items.iter().position(|it| !it.is_separator());
+        }
         for (i, item) in self.items.iter().enumerate() {
             let h = if item.is_separator() {
                 Self::SEPARATOR_HEIGHT
@@ -184,6 +197,10 @@ impl ExplorerContextMenu {
                 return Some(i);
             }
             current_y += h;
+        }
+        // 底部 padding：吸附到最后一个非分隔项；分隔符区域仍不可命中
+        if mouse_y >= current_y {
+            return self.items.iter().rposition(|it| !it.is_separator());
         }
         None
     }
@@ -290,11 +307,23 @@ impl FileNodeContextMenu {
     }
 
     pub fn hit_test_menu(&self, mouse_x: f32, mouse_y: f32) -> Option<usize> {
-        let rect = self.menu_rect.clone()?;
-        if !rect.contains(mouse_x, mouse_y) {
+        if !self.is_open {
             return None;
         }
-        let mut current_y = rect.y + Self::TOP_PADDING;
+        let x = self.origin_x;
+        let y = self.origin_y;
+        if mouse_x < x
+            || mouse_x >= x + Self::MENU_WIDTH
+            || mouse_y < y
+            || mouse_y >= y + self.menu_height()
+        {
+            return None;
+        }
+        let mut current_y = y + Self::TOP_PADDING;
+        // 顶部 padding：吸附到第一个非分隔项
+        if mouse_y < current_y {
+            return self.items.iter().position(|it| !it.is_separator());
+        }
         for (i, item) in self.items.iter().enumerate() {
             let h = if item.is_separator() {
                 Self::SEPARATOR_HEIGHT
@@ -306,6 +335,10 @@ impl FileNodeContextMenu {
                 return Some(i);
             }
             current_y += h;
+        }
+        // 底部 padding：吸附到最后一个非分隔项；分隔符区域仍不可命中
+        if mouse_y >= current_y {
+            return self.items.iter().rposition(|it| !it.is_separator());
         }
         None
     }

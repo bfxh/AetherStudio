@@ -47,6 +47,8 @@ pub(crate) const AI_TIMER_ID: usize = 0xA005;
 pub(crate) const HIGHLIGHT_TIMER_ID: usize = 0xA006;
 /// AI 对话温数据归档定时器 ID（周期检查空闲会话，归档进 MemoryStore）
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
+/// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
+pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -57,6 +59,8 @@ pub(crate) const TERM_REFRESH_MS: u32 = 50;
 pub(crate) const AI_REFRESH_MS: u32 = 80;
 /// 语法高亮刷新间隔（毫秒），约 30fps，让后台高亮结果尽快着色显示
 pub(crate) const HIGHLIGHT_REFRESH_MS: u32 = 33;
+/// UI 动画帧间隔（毫秒），约 60fps，用于下拉面板展开/收起动画
+pub(crate) const UI_ANIM_MS: u32 = 16;
 /// P3.4: Hover tooltip 触发延迟（毫秒）
 pub(crate) const HOVER_DELAY_MS: u32 = 500;
 /// 长按期间允许的鼠标移动容差（逻辑像素，超过则取消长按检测）

@@ -80,7 +80,7 @@ impl EditorState {
         self.content.buffer.insert(pos, &comp.text);
         self.content.cursor_col += comp.text.len();
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -259,10 +259,10 @@ impl EditorState {
                 self.paste();
             }
             crate::menu_bar::CommandId::EditFind => {
-                self.toggle_find();
+                self.find.toggle_find(&self.content);
             }
             crate::menu_bar::CommandId::EditReplace => {
-                self.toggle_replace();
+                self.find.toggle_replace(&self.content);
             }
             crate::menu_bar::CommandId::EditSelectAll => {
                 self.select_all();

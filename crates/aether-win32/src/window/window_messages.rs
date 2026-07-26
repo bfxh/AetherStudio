@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
     AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HIGHLIGHT_TIMER_ID,
-    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, TERM_TIMER_ID,
+    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, TERM_TIMER_ID, UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
 
@@ -46,6 +46,25 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     if wparam.0 == AI_ARCHIVE_TIMER_ID {
         return on_timer_ai_archive(hwnd);
     }
+    if wparam.0 == UI_ANIM_TIMER_ID {
+        return on_timer_ui_anim(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// UI 动画：驱动历史记录下拉面板展开/收起动画，动画结束后自动停止定时器
+unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
+    let animating = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| state.borrow_mut().ai_panel.tick_history_anim())
+            .unwrap_or(false)
+    });
+    if !animating {
+        let _ = KillTimer(hwnd, UI_ANIM_TIMER_ID);
+    }
+    // 无论是否结束都重绘一次，确保最后一帧（完全展开/收起）被绘制
+    invalidate_window(hwnd);
     LRESULT(0)
 }
 
@@ -63,13 +82,13 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
         // 仅在仍有悬停目标时计算 tooltip
-        if st.hover_file_node.is_some() || st.hover_remote_node.is_some() {
+        if st.hover_file_node.is_some() || st.remote.hover_node.is_some() {
             if let Some(text) = st.compute_hover_tooltip_text() {
                 // tooltip 定位：鼠标右下方，预留 16px 间距
-                let tx = st.hover_last_mouse_x + 16.0;
-                let ty = st.hover_last_mouse_y + 16.0;
+                let tx = st.hover.last_mouse_x + 16.0;
+                let ty = st.hover.last_mouse_y + 16.0;
                 let max_w = 400.0;
-                st.hover_tooltip = Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
+                st.hover.tooltip = Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
                 drop(st);
                 invalidate_window(hwnd);
             }
@@ -194,12 +213,12 @@ unsafe fn on_timer_long_press(hwnd: HWND) -> LRESULT {
     let _ = KillTimer(hwnd, LP_TIMER_ID);
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
-        if st.lbutton_down {
-            if let Some(target) = st.lpress_target {
+        if st.mouse_press.lbutton_down {
+            if let Some(target) = st.mouse_press.lpress_target {
                 // 检查按下时间是否达到长按阈值
-                if let Some(start) = st.lpress_start {
+                if let Some(start) = st.mouse_press.lpress_start {
                     if start.elapsed() >= std::time::Duration::from_millis(LP_THRESHOLD_MS as u64) {
-                        let idx = st.lpress_index;
+                        let idx = st.mouse_press.lpress_index;
                         match target {
                             crate::input::PressTarget::ActivityBar => {
                                 st.activity_bar.begin_drag(idx);
@@ -212,7 +231,7 @@ unsafe fn on_timer_long_press(hwnd: HWND) -> LRESULT {
                                     "菜单栏自定义模式（拖拽排序，Esc 退出）".to_string();
                             }
                         }
-                        st.lpress_start = None;
+                        st.mouse_press.lpress_start = None;
                         drop(st);
                         invalidate_window(hwnd);
                         return LRESULT(0);
@@ -269,7 +288,13 @@ pub(crate) unsafe fn on_wm_app_3(
     let event: &LspEvent = &_event_guard;
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().handle_lsp_event(event.clone());
+            let st = &mut *state.borrow_mut();
+            if let Some(msg) = st
+                .lsp
+                .handle_event(event.clone(), st.content.file_path.as_ref())
+            {
+                st.status_message = msg;
+            }
         }
     });
     // REQ-P1-07: 不直接调用 render()，触发 WM_PAINT 统一渲染，避免双重渲染

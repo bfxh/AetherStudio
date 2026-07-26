@@ -8,22 +8,22 @@ impl EditorState {
         let max_tab_width = 200.0;
         let gap = 2.0;
 
-        let tab_count = self.tabs.len();
+        let tab_count = self.tab_bar.tabs.len();
         let available_width = width - 8.0;
         let tab_width = (available_width / tab_count as f32 - gap)
             .max(min_tab_width)
             .min(max_tab_width);
 
-        let mut tab_x = x + 4.0 - self.tab_scroll_x;
-        self.tab_layouts.clear();
+        let mut tab_x = x + 4.0 - self.tab_bar.tab_scroll_x;
+        self.tab_bar.tab_layouts.clear();
 
-        for i in 0..self.tabs.len() {
+        for i in 0..self.tab_bar.tabs.len() {
             let tw = tab_width;
-            self.tab_layouts.push(crate::tabs::TabLayout {
+            self.tab_bar.tab_layouts.push(crate::tabs::TabLayout {
                 index: i,
-                x: tab_x - x - 4.0 + self.tab_scroll_x,
+                x: tab_x - x - 4.0 + self.tab_bar.tab_scroll_x,
                 width: tw,
-                close_x: tab_x - x - 4.0 + self.tab_scroll_x + tw - close_btn_width + 4.0,
+                close_x: tab_x - x - 4.0 + self.tab_bar.tab_scroll_x + tw - close_btn_width + 4.0,
                 close_width: 16.0,
             });
             tab_x += tw + gap;
@@ -154,17 +154,17 @@ impl EditorState {
                 )
                 .unwrap();
 
-            let mut tab_x = x + 4.0 - self.tab_scroll_x;
+            let mut tab_x = x + 4.0 - self.tab_bar.tab_scroll_x;
             let close_btn_width = 20.0;
             let gap = 2.0;
             // SubTask 7.2: 记录最后一个标签右侧位置，用于定位 "+" 按钮
             let mut last_tab_right = tab_x;
 
-            for (i, tab) in self.tabs.iter().enumerate() {
-                let is_active = i == self.active_tab;
-                let is_hover = self.hover_tab == Some(i);
-                let tw = if i < self.tab_layouts.len() {
-                    self.tab_layouts[i].width
+            for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
+                let is_active = i == self.tab_bar.active_tab;
+                let is_hover = self.tab_bar.hover_tab == Some(i);
+                let tw = if i < self.tab_bar.tab_layouts.len() {
+                    self.tab_bar.tab_layouts[i].width
                 } else {
                     100.0
                 };
@@ -301,17 +301,19 @@ impl EditorState {
             }
 
             // Task 8.5: 拖拽插入指示线（蓝色 2px 垂直线）
-            if let (Some(drag_idx), Some(drop_idx)) = (self.dragging_tab, self.tab_drop_index) {
-                if drag_idx < self.tabs.len() && drop_idx <= self.tabs.len() {
+            if let (Some(drag_idx), Some(drop_idx)) =
+                (self.tab_bar.dragging_tab, self.tab_bar.tab_drop_index)
+            {
+                if drag_idx < self.tab_bar.tabs.len() && drop_idx <= self.tab_bar.tabs.len() {
                     let drop_line_color = color_f(100.0 / 255.0, 150.0 / 255.0, 1.0, 1.0);
                     let drop_line_brush = self
                         .render_ctx
                         .brush_cache
                         .get_brush(target, &drop_line_color)
                         .unwrap();
-                    let mut line_x = x + 4.0 - self.tab_scroll_x;
-                    for i in 0..drop_idx.min(self.tab_layouts.len()) {
-                        line_x += self.tab_layouts[i].width + gap;
+                    let mut line_x = x + 4.0 - self.tab_bar.tab_scroll_x;
+                    for i in 0..drop_idx.min(self.tab_bar.tab_layouts.len()) {
+                        line_x += self.tab_bar.tab_layouts[i].width + gap;
                     }
                     let line_rect = D2D_RECT_F {
                         left: line_x - 1.0,
@@ -332,7 +334,7 @@ impl EditorState {
             let plus_bottom = plus_y + plus_btn_size;
             // 仅在有足够空间时渲染并更新命中区域
             if plus_right <= x + width {
-                if self.plus_button_hover {
+                if self.tab_bar.plus_button_hover {
                     let plus_bg_rect = D2D_RECT_F {
                         left: plus_x,
                         top: plus_y,
@@ -346,7 +348,7 @@ impl EditorState {
                     };
                     target.FillRoundedRectangle(&rounded_rect, &hover_bg_brush);
                 }
-                let plus_icon_color = if self.plus_button_hover {
+                let plus_icon_color = if self.tab_bar.plus_button_hover {
                     color_f(1.0, 1.0, 1.0, 1.0)
                 } else {
                     color_f(0.7, 0.7, 0.7, 1.0)
@@ -366,9 +368,9 @@ impl EditorState {
                     plus_icon_size,
                     &plus_icon_brush,
                 );
-                self.plus_button_rect = Some((plus_x, plus_y, plus_right, plus_bottom));
+                self.tab_bar.plus_button_rect = Some((plus_x, plus_y, plus_right, plus_bottom));
             } else {
-                self.plus_button_rect = None;
+                self.tab_bar.plus_button_rect = None;
             }
 
             // 底部边框线

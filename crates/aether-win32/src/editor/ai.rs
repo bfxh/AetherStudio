@@ -67,8 +67,8 @@ impl EditorState {
     }
     /// AI Agent：处理最后一条助手消息中的动作标记（生成完成时调用一次）。
     ///
-    /// - `<<<<<<< FILE 路径 >>>>>>>` 块：创建/修改/删除文件（自动建目录）。
-    /// - `<<<<<<< RUN >>>>>>>` 块：在集成终端执行命令。
+    /// - `AETHER_FILE 路径` 块：创建/修改/删除文件（自动建目录）。
+    /// - `AETHER_RUN` 块：在集成终端执行命令。
     ///
     /// 执行结果以助手消息形式反馈到 AI 面板，并刷新文件树。
     pub fn process_ai_agent_actions(&mut self) {
@@ -83,8 +83,25 @@ impl EditorState {
             return;
         };
 
+        // CoT 编排分流（仅活动会话）：
+        // - 流水线运行中：worker 完成 → 落盘并推进下一任务；
+        // - Agent 模式且无流水线：每次完成都尝试识别任务清单（含 READ/LIST 探查回喂后的轮次），
+        //   识别到 AETHER_PLAN 即进入流水线，否则回退到普通处理（探查/单文件/聊天）。
+        if conv_idx == self.ai_panel.active {
+            if self.ai_panel.agent_pipeline.is_some() {
+                self.advance_agent_pipeline(conv_idx);
+                return;
+            }
+            if matches!(self.ai_panel.mode, crate::ai_prompt::AiMode::Agent) {
+                if let Some((goal, tasks)) = crate::ai_agent::parse_plan(&text) {
+                    self.start_agent_pipeline(goal, tasks);
+                    return;
+                }
+            }
+        }
+
         // 文件/终端操作必须在已打开的工作区内进行；未打开文件夹时提示用户。
-        let has_actions = text.contains("<<<<<<< FILE") || text.contains("<<<<<<< RUN");
+        let has_actions = crate::ai_agent::has_agent_markers(&text);
         if has_actions && self.current_folder.is_none() {
             self.ai_panel
                 .add_assistant_message_to(conv_idx, "提示：尚未打开工作区文件夹，无法直接创建/修改文件。请先通过“文件 → 打开文件夹”打开一个项目再试。".to_string());
@@ -154,15 +171,109 @@ impl EditorState {
             }
         }
 
-        // 3. 反馈汇总到对应会话
-        if !file_summary.is_empty() || !cmd_summary.is_empty() {
+        // 3. 只读探查工具（读取文件 / 列出目录）：同步执行，结果回喂给模型
+        let tool_reqs = crate::ai_agent::parse_tool_requests(&text);
+        let mut tool_display: Vec<String> = Vec::new();
+        let mut tool_feedback = String::new();
+        if !tool_reqs.is_empty() {
+            let (display, feedback) = self.execute_tool_requests(&tool_reqs);
+            tool_display = display;
+            tool_feedback = feedback;
+        }
+
+        // 4. 反馈汇总到对应会话
+        if !file_summary.is_empty() || !cmd_summary.is_empty() || !tool_display.is_empty() {
             let mut lines = Vec::new();
             lines.extend(file_summary);
             lines.extend(cmd_summary);
+            lines.extend(tool_display);
             self.ai_panel
                 .add_assistant_message_to(conv_idx, lines.join("\n"));
             self.dirty_tracker.mark_full_window();
         }
+
+        // 5. 只读探查结果驱动续跑：仅活动会话，且本轮没有 RUN 命令
+        //    （RUN 有自身的异步续跑路径，避免重复触发并发请求；受最大轮次限制）。
+        if conv_idx == self.ai_panel.active && commands.is_empty() && !tool_feedback.is_empty() {
+            let settings = self.app_settings.ai.clone();
+            let mode = self.ai_panel.mode;
+            if let Err(e) =
+                self.ai_panel
+                    .continue_agent_with_tool_result(&settings, tool_feedback, mode)
+            {
+                self.ai_panel
+                    .add_assistant_message_to(conv_idx, format!("（{}，如需继续请手动发消息）", e));
+            }
+        }
+    }
+
+    /// 生成中断（网络断开等）时的文件块抢救：
+    ///
+    /// - 应用该会话中已**完整接收**的 `AETHER_FILE ... AETHER_END_FILE` 块；
+    /// - 抢救未闭合的尾部「新建文件」块（部分内容落盘并明确提示可能不完整）；
+    /// - 修改/删除类的截断块不抢救（避免破坏现有文件）；
+    /// - 不执行 RUN 命令（内容不完整时执行命令风险过高）。
+    pub fn salvage_ai_partial_edits(&mut self, conv_idx: usize) {
+        // 跳过末尾的错误提示消息，定位携带文件块的内容消息
+        let Some(text) = self
+            .ai_panel
+            .last_assistant_text_matching_of(conv_idx, |t| {
+                t.contains(crate::ai_agent::FILE_HEADER_PREFIX)
+            })
+        else {
+            return;
+        };
+        if self.current_folder.is_none() {
+            self.ai_panel.add_assistant_message_to(
+                conv_idx,
+                "⚠ 生成中断：检测到未保存的文件块，但尚未打开工作区文件夹，无法写入。".to_string(),
+            );
+            self.dirty_tracker.mark_full_window();
+            return;
+        }
+
+        let mut edits = crate::ai_agent::parse_edits(&text, None);
+        // 尾部未闭合的新建文件块（如生成到一半的网页）：部分内容也值得落盘
+        let mut partial_name: Option<String> = None;
+        if let Some(trailing) = crate::ai_agent::parse_trailing_create_block(&text) {
+            if !edits.iter().any(|e| e.path == trailing.path) {
+                partial_name = Some(trailing.path.to_string_lossy().to_string());
+                edits.push(trailing);
+            }
+        }
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut lines = vec!["⚠ 生成中断，已抢救接收到的文件块：".to_string()];
+        match self.apply_ai_workspace_edits(&edits) {
+            Ok(paths) => {
+                for p in &paths {
+                    let name = self
+                        .current_folder
+                        .as_ref()
+                        .and_then(|root| p.strip_prefix(root).ok())
+                        .unwrap_or(p.as_path());
+                    lines.push(format!("✓ 已写入 `{}`", name.display()));
+                }
+            }
+            Err(e) => {
+                lines.push(format!("✕ 文件操作失败: {}", e));
+            }
+        }
+        if let Some(name) = partial_name {
+            lines.push(format!(
+                "⚠ `{}` 为生成中断时的部分内容，可能不完整，请检查后再使用。",
+                name
+            ));
+        }
+        // 刷新文件树以显示新文件
+        if self.current_folder.is_some() {
+            self.refresh_file_tree_light();
+        }
+        self.ai_panel
+            .add_assistant_message_to(conv_idx, lines.join("\n"));
+        self.dirty_tracker.mark_full_window();
     }
     /// AI Agent：终端命令执行完成后的结果处理（主线程每帧轮询驱动）。
     ///
@@ -341,7 +452,7 @@ impl EditorState {
                 AiContextAttachment::OpenFiles => {
                     let mut summary = String::from("打开的文件列表：\n");
                     // 活动标签页的内容存于 self.content（swap 后），需提前提取避免借用冲突
-                    let active_idx = self.active_tab;
+                    let active_idx = self.tab_bar.active_tab;
                     let active_path = self
                         .content
                         .file_path
@@ -352,7 +463,7 @@ impl EditorState {
                         .content
                         .buffer
                         .get_text(0, self.content.buffer.len_bytes());
-                    for (i, tab) in self.tabs.iter().enumerate() {
+                    for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
                         let (path, lang, text) = if i == active_idx {
                             (
                                 active_path
@@ -535,7 +646,7 @@ impl EditorState {
         edits: &[AiEdit],
     ) -> std::result::Result<Vec<PathBuf>, String> {
         let mut applied = Vec::new();
-        let original_tab = self.active_tab;
+        let original_tab = self.tab_bar.active_tab;
 
         for edit in edits {
             let full_path = self.resolve_edit_path(&edit.path);
@@ -544,6 +655,7 @@ impl EditorState {
             if edit.is_delete() {
                 // 关闭对应 tab（如果有）；用户取消则跳过此文件
                 if let Some(idx) = self
+                    .tab_bar
                     .tabs
                     .iter()
                     .position(|t| t.file_path() == Some(&full_path))
@@ -564,6 +676,7 @@ impl EditorState {
 
             // 找到或创建对应标签页
             let tab_idx = self
+                .tab_bar
                 .tabs
                 .iter()
                 .position(|t| t.file_path() == Some(&full_path));
@@ -638,7 +751,7 @@ impl EditorState {
         }
 
         // 尽量回到原来的标签页
-        if original_tab < self.tabs.len() {
+        if original_tab < self.tab_bar.tabs.len() {
             self.switch_tab(original_tab);
         }
 
@@ -652,6 +765,344 @@ impl EditorState {
             .as_ref()
             .map(|root| root.join(path))
             .unwrap_or_else(|| path.to_path_buf())
+    }
+
+    /// 将工作区相对路径解析为经沙箱校验的绝对路径（仅允许工作区内，禁止逃逸）。
+    fn workspace_sandbox_path(&self, rel: &str) -> std::result::Result<PathBuf, String> {
+        let root = self
+            .current_folder
+            .as_ref()
+            .ok_or_else(|| "未打开工作区文件夹".to_string())?;
+        let root_canon = root
+            .canonicalize()
+            .map_err(|e| format!("工作区路径无效: {}", e))?;
+        // 拒绝绝对路径，避免逃逸工作区
+        if Path::new(rel).is_absolute() {
+            return Err("路径必须相对于工作区根目录".to_string());
+        }
+        let canon = root
+            .join(rel)
+            .canonicalize()
+            .map_err(|e| format!("路径不存在或无法访问: {}", e))?;
+        if !canon.starts_with(&root_canon) {
+            return Err("禁止访问工作区之外的路径".to_string());
+        }
+        Ok(canon)
+    }
+
+    /// 读取工作区内文件内容（沙箱校验 + 大小/长度限制），供 Agent 只读探查。
+    fn read_workspace_file(&self, rel: &str) -> std::result::Result<String, String> {
+        let path = self.workspace_sandbox_path(rel)?;
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            return Err("这是一个目录，请改用列目录工具".to_string());
+        }
+        const MAX_BYTES: u64 = 1024 * 1024; // 1MB 上限，避免超大文件撑爆上下文
+        if meta.len() > MAX_BYTES {
+            return Err(format!(
+                "文件过大（{} 字节，上限 1MB），请分段查看或改用命令",
+                meta.len()
+            ));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let content = String::from_utf8_lossy(&bytes);
+        // 限制回喂给模型的长度，避免占满上下文预算
+        Ok(truncate_chars(&content, 8000))
+    }
+
+    /// 列出工作区内目录条目（沙箱校验 + 数量限制），目录在前、名称排序。
+    fn list_workspace_dir(&self, rel: &str) -> std::result::Result<String, String> {
+        let path = self.workspace_sandbox_path(rel)?;
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if !meta.is_dir() {
+            return Err("这不是目录，请改用读取文件工具".to_string());
+        }
+        let mut items: Vec<(bool, String)> = Vec::new();
+        for entry in std::fs::read_dir(&path)
+            .map_err(|e| e.to_string())?
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            items.push((is_dir, name));
+        }
+        // 目录优先，其后按名称排序
+        items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        const MAX_ENTRIES: usize = 300;
+        let total = items.len();
+        let mut lines: Vec<String> = items
+            .into_iter()
+            .take(MAX_ENTRIES)
+            .map(|(is_dir, name)| if is_dir { format!("{}/", name) } else { name })
+            .collect();
+        if total > MAX_ENTRIES {
+            lines.push(format!("…（共 {} 项，已省略其余）", total));
+        }
+        if lines.is_empty() {
+            return Ok("（空目录）".to_string());
+        }
+        Ok(lines.join("\n"))
+    }
+
+    /// 执行一批只读探查请求，返回 `(面板展示行, 回喂给模型的反馈文本)`。
+    fn execute_tool_requests(
+        &self,
+        reqs: &[crate::ai_agent::ToolRequest],
+    ) -> (Vec<String>, String) {
+        use crate::ai_agent::ToolRequest;
+        let mut display: Vec<String> = Vec::new();
+        let mut feedback: Vec<String> = Vec::new();
+        for req in reqs {
+            match req {
+                ToolRequest::Read(path) => match self.read_workspace_file(path) {
+                    Ok(content) => {
+                        let n = content.lines().count();
+                        display.push(format!("◎ 已读取 `{}`（{} 行）", path, n));
+                        feedback.push(format!("[文件内容] {}\n```\n{}\n```", path, content));
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 读取 `{}` 失败：{}", path, e));
+                        feedback.push(format!("[文件读取失败] {}：{}", path, e));
+                    }
+                },
+                ToolRequest::List(path) => {
+                    let shown = if path.is_empty() { "." } else { path.as_str() };
+                    match self.list_workspace_dir(path) {
+                        Ok(listing) => {
+                            display.push(format!("◇ 已列出目录 `{}`", shown));
+                            feedback.push(format!("[目录列表] {}\n{}", shown, listing));
+                        }
+                        Err(e) => {
+                            display.push(format!("✕ 列出 `{}` 失败：{}", shown, e));
+                            feedback.push(format!("[目录列出失败] {}：{}", shown, e));
+                        }
+                    }
+                }
+            }
+        }
+        (display, feedback.join("\n\n"))
+    }
+
+    // ==================== CoT 多任务编排流水线 ====================
+
+    /// 启动流水线：把规划器原始清单替换为可读的执行计划，创建 pipeline，执行首个任务。
+    fn start_agent_pipeline(&mut self, goal: String, tasks: Vec<crate::ai_agent::PlannedTask>) {
+        use crate::ai_agent::PlannedTaskKind;
+        let mut lines = Vec::new();
+        if goal.trim().is_empty() {
+            lines.push("执行计划：".to_string());
+        } else {
+            lines.push(format!("执行计划（{}）：", goal.trim()));
+        }
+        for (i, t) in tasks.iter().enumerate() {
+            let verb = match t.kind {
+                PlannedTaskKind::File => "生成文件",
+                PlannedTaskKind::Run => "运行",
+            };
+            if t.description.trim().is_empty() {
+                lines.push(format!("{}. {} {}", i + 1, verb, t.target));
+            } else {
+                lines.push(format!(
+                    "{}. {} {} — {}",
+                    i + 1,
+                    verb,
+                    t.target,
+                    t.description
+                ));
+            }
+        }
+        // 用可读计划替换规划器输出的原始 AETHER_PLAN 块，避免裸标记显示
+        self.ai_panel.rewrite_last_assistant(lines.join("\n"));
+        self.ai_panel.agent_pipeline = Some(crate::ai_panel::AgentPipeline {
+            goal,
+            tasks,
+            cursor: 0,
+            created_files: Vec::new(),
+            failed_files: Vec::new(),
+        });
+        self.dirty_tracker.mark_full_window();
+        self.run_pipeline_until_file_task_or_finish();
+    }
+
+    /// 顺序推进：RUN 任务直接执行并前进；FILE 任务发起 worker 调用后返回（由完成回调续推进）；任务耗尽则收尾。
+    fn run_pipeline_until_file_task_or_finish(&mut self) {
+        use crate::ai_agent::PlannedTaskKind;
+        loop {
+            let snapshot = {
+                let Some(p) = self.ai_panel.agent_pipeline.as_ref() else {
+                    return;
+                };
+                if p.cursor >= p.tasks.len() {
+                    None
+                } else {
+                    let t = &p.tasks[p.cursor];
+                    Some((
+                        t.kind.clone(),
+                        t.target.clone(),
+                        t.description.clone(),
+                        p.cursor,
+                        p.tasks.len(),
+                        p.goal.clone(),
+                        p.created_files.clone(),
+                    ))
+                }
+            };
+            let Some((kind, target, desc, cursor, total, goal, created)) = snapshot else {
+                self.finish_agent_pipeline();
+                return;
+            };
+            match kind {
+                PlannedTaskKind::Run => {
+                    self.ai_panel.add_assistant_message(format!(
+                        "[{}/{}] 运行 `{}`",
+                        cursor + 1,
+                        total,
+                        target
+                    ));
+                    if self.current_folder.is_some() {
+                        self.run_pipeline_command(&target);
+                    }
+                    if let Some(p) = self.ai_panel.agent_pipeline.as_mut() {
+                        p.cursor += 1;
+                    }
+                    continue;
+                }
+                PlannedTaskKind::File => {
+                    // 仅带目标文件现有内容（若存在）+ 目标 + 已建文件内容，窗口可控
+                    let existing = self.read_workspace_file(&target).ok();
+                    // 信息传递：把已生成文件的实际内容带给后续 worker（如 css/js 需要
+                    // 引用 index.html 的类名/结构），read_workspace_file 自带长度截断。
+                    let created_with_content: Vec<(String, String)> = created
+                        .iter()
+                        .map(|name| {
+                            let content = self.read_workspace_file(name).unwrap_or_default();
+                            (name.clone(), content)
+                        })
+                        .collect();
+                    let (system, user) = crate::ai_prompt::build_worker_prompt(
+                        &goal,
+                        &target,
+                        &desc,
+                        existing.as_deref(),
+                        &created_with_content,
+                    );
+                    let mut settings = self.app_settings.active_ai_settings();
+                    // worker 为机械生成阶段（规划已完成思考）：强制关闭深度思考。
+                    // DeepSeek 思维链计入 completion 输出预算，思考会挤占长文件的
+                    // 生成空间，导致刚输出 FILE 头就撞 max_tokens 截断。
+                    settings.thinking = Some(false);
+                    // 代码生成场景固定低温采样（DeepSeek 官方建议 0.0）。
+                    // 注意：思考模式下温度被忽略，但 worker 关闭思考后温度真实生效，
+                    // 用户全局温度过高（如 2.0）会导致长代码生成退化为乱语。
+                    settings.temperature = Some(0.0);
+                    self.status_message =
+                        format!("[{}/{}] 正在生成 {} …", cursor + 1, total, target);
+                    self.ai_panel.stream_focused(&settings, system, user);
+                    return; // 完成后由 advance_agent_pipeline 续推进
+                }
+            }
+        }
+    }
+
+    /// worker 完成回调：把刚生成的文件落盘，记入已建清单，推进到下一任务。
+    fn advance_agent_pipeline(&mut self, conv_idx: usize) {
+        // 用户中途停止 → 中止流水线
+        if self
+            .ai_panel
+            .should_stop
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            self.ai_panel.agent_pipeline = None;
+            self.ai_panel
+                .add_assistant_message("已停止，剩余任务未执行。".to_string());
+            self.dirty_tracker.mark_full_window();
+            return;
+        }
+        // 落盘当前 worker 生成的文件；成功与否如实记录
+        let mut wrote_ok = false;
+        if let Some(text) = self.ai_panel.last_assistant_text_of(conv_idx) {
+            let edits = crate::ai_agent::parse_edits(&text, None);
+            if !edits.is_empty() && self.current_folder.is_some() {
+                match self.apply_ai_workspace_edits(&edits) {
+                    Ok(paths) => {
+                        wrote_ok = !paths.is_empty();
+                        for p in &paths {
+                            let name = self
+                                .current_folder
+                                .as_ref()
+                                .and_then(|root| p.strip_prefix(root).ok())
+                                .unwrap_or(p.as_path());
+                            self.ai_panel
+                                .add_assistant_message(format!("✓ 已写入 `{}`", name.display()));
+                        }
+                        self.refresh_file_tree_light();
+                    }
+                    Err(e) => {
+                        self.ai_panel
+                            .add_assistant_message(format!("✕ 文件写入失败: {}", e));
+                    }
+                }
+            }
+        }
+        // 记录成败并前进：成功的内容会传给后续 worker，失败的收尾时汇报
+        if let Some(p) = self.ai_panel.agent_pipeline.as_mut() {
+            if let Some(task) = p.tasks.get(p.cursor) {
+                if wrote_ok {
+                    p.created_files.push(task.target.clone());
+                } else {
+                    p.failed_files.push(task.target.clone());
+                }
+            }
+            p.cursor += 1;
+        }
+        self.dirty_tracker.mark_full_window();
+        self.run_pipeline_until_file_task_or_finish();
+    }
+
+    /// 流水线收尾：清理状态并如实汇总成败。
+    fn finish_agent_pipeline(&mut self) {
+        let (total, failed) = self
+            .ai_panel
+            .agent_pipeline
+            .as_ref()
+            .map(|p| (p.tasks.len(), p.failed_files.clone()))
+            .unwrap_or((0, Vec::new()));
+        self.ai_panel.agent_pipeline = None;
+        if failed.is_empty() {
+            self.ai_panel
+                .add_assistant_message(format!("✅ 已完成 {} 个任务", total));
+            self.status_message = "任务全部完成".to_string();
+        } else {
+            self.ai_panel.add_assistant_message(format!(
+                "⚠️ {} 个任务中有 {} 个未成功写入：{}。可重新发送需求重试。",
+                total,
+                failed.len(),
+                failed.join("、")
+            ));
+            self.status_message = "部分任务未完成".to_string();
+        }
+        self.dirty_tracker.mark_full_window();
+    }
+
+    /// 流水线内执行单条命令：打开底部终端、同步工作目录、排队执行（射后不理，不回喂）。
+    fn run_pipeline_command(&mut self, cmd: &str) {
+        self.layout.bottom_panel_visible = true;
+        self.bottom_panel_tab = crate::editor::BottomPanelTab::Terminal;
+        if let Some(folder) = self.current_folder.clone() {
+            self.terminal_panel.cwd = folder.to_string_lossy().to_string();
+        }
+        if !self.terminal_panel.running {
+            let _ = self.terminal_panel.start();
+        }
+        self.terminal_panel.queue_command(cmd.to_string());
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                self.hwnd,
+                crate::window::TERM_TIMER_ID,
+                crate::window::TERM_REFRESH_MS,
+                None,
+            );
+        }
     }
 }
 

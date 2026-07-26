@@ -37,6 +37,11 @@ pub(crate) unsafe fn on_r_button_down(
 
     let mut st = state.borrow_mut();
 
+    // 记录用户右键那一帧的文件树列表起始 Y（含内联输入框偏移）。
+    // 必须在 cancel_file_tree_input 之前读取：用户是按屏幕上已渲染的
+    // （带输入框、节点整体下移）布局点击的，若取消后再算偏移会错位约两行。
+    let list_start_y = st.file_tree_list_start_y();
+
     // 若正在内联输入，右键先取消输入（与左键逻辑一致）
     if st.file_tree_input.is_some() {
         st.cancel_file_tree_input();
@@ -48,18 +53,26 @@ pub(crate) unsafe fn on_r_button_down(
     if show_tab_bar && tab_region.contains(mouse_x, mouse_y) {
         if let Some(tab_idx) = st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y) {
             // 获取该标签的 file_path（用于判断 has_path 和复制路径）
-            let has_path = st.tabs.get(tab_idx).and_then(|t| t.file_path()).is_some();
+            let has_path = st
+                .tab_bar
+                .tabs
+                .get(tab_idx)
+                .and_then(|t| t.file_path())
+                .is_some();
             let mut menu = TabContextMenuState::build_for_tab(tab_idx, has_path);
             menu.open_at(mouse_x, mouse_y, window_w, window_h);
-            st.tab_context_menu = menu;
+            st.context_menus.tab = menu;
             // 关闭可能打开的资源管理器菜单，避免重叠
-            if st.explorer_context_menu.is_open {
-                st.explorer_context_menu.close();
+            if st.context_menus.explorer.is_open {
+                st.context_menus.explorer.close();
             }
             // 菜单互斥：关闭活动栏菜单
-            if st.activity_bar_context_menu.visible {
-                st.activity_bar_context_menu.hide();
+            if st.context_menus.activity_bar.visible {
+                st.context_menus.activity_bar.hide();
             }
+            // 菜单开合必须走完整首帧渲染（擦除旧菜单/绘制新菜单），
+            // 否则紧随其后的 hover 会以 Dialog 脏区触发快速路径，留下残影。
+            st.dirty_tracker.mark_full_window();
             drop(st);
             invalidate_window(hwnd);
             return LRESULT(0);
@@ -75,14 +88,15 @@ pub(crate) unsafe fn on_r_button_down(
         let active_view = st.activity_view;
         let mut menu = ActivityBarContextMenuState::build(active_view);
         menu.open_at(mouse_x, mouse_y, window_w, window_h);
-        st.activity_bar_context_menu = menu;
+        st.context_menus.activity_bar = menu;
         // 菜单互斥：关闭标签菜单与资源管理器菜单
-        if st.tab_context_menu.visible {
-            st.tab_context_menu.hide();
+        if st.context_menus.tab.visible {
+            st.context_menus.tab.hide();
         }
-        if st.explorer_context_menu.is_open {
-            st.explorer_context_menu.close();
+        if st.context_menus.explorer.is_open {
+            st.context_menus.explorer.close();
         }
+        st.dirty_tracker.mark_full_window();
         drop(st);
         invalidate_window(hwnd);
         return LRESULT(0);
@@ -98,17 +112,20 @@ pub(crate) unsafe fn on_r_button_down(
     if !in_sidebar_file_tree {
         // 在侧边栏外右键：关闭已打开的菜单
         let mut need_invalidate = false;
-        if st.explorer_context_menu.is_open {
-            st.explorer_context_menu.close();
+        if st.context_menus.explorer.is_open {
+            st.context_menus.explorer.close();
             need_invalidate = true;
         }
-        if st.tab_context_menu.visible {
-            st.tab_context_menu.hide();
+        if st.context_menus.tab.visible {
+            st.context_menus.tab.hide();
             need_invalidate = true;
         }
-        if st.activity_bar_context_menu.visible {
-            st.activity_bar_context_menu.hide();
+        if st.context_menus.activity_bar.visible {
+            st.context_menus.activity_bar.hide();
             need_invalidate = true;
+        }
+        if need_invalidate {
+            st.dirty_tracker.mark_full_window();
         }
         drop(st);
         if need_invalidate {
@@ -132,27 +149,21 @@ pub(crate) unsafe fn on_r_button_down(
         return LRESULT(0);
     }
 
-    // 侧边栏内坐标（相对侧边栏左上角）
-    let s = st.dpi_scale;
-    let header_h = 28.0 * s;
-    let input_offset_y = if st.file_tree_input.is_some() {
-        26.0 * s + 10.0 * s
-    } else {
-        0.0
-    };
+    // 侧边栏内坐标（相对侧边栏左上角），与左键 handle_file_tree_click /
+    // hover 路径同一坐标基准；起始 Y 统一复用 file_tree_list_start_y()，
+    // 避免手写偏移公式与渲染布局漂移。
     let sidebar_rel_x = mouse_x - sidebar_region.x;
-    let content_y =
-        mouse_y - sidebar_region.y + st.sidebar_scroll_y - (header_h + 6.0 * s + input_offset_y);
+    let sidebar_rel_y = mouse_y - sidebar_region.y;
     let sidebar_width = st.layout.sidebar_width;
 
     // 命中文件/文件夹节点 → 弹出文件节点上下文菜单
     let hit_node_idx: Option<u32> = st.file_tree.as_ref().and_then(|tree| {
-        let mut current_y = 0.0;
+        let mut current_y = list_start_y;
         EditorState::find_tree_click_target(
             tree,
             u32::MAX,
             sidebar_rel_x,
-            content_y,
+            sidebar_rel_y,
             sidebar_width,
             st.dpi_scale,
             &mut current_y,
@@ -162,44 +173,48 @@ pub(crate) unsafe fn on_r_button_down(
 
     if let Some(node_idx) = hit_node_idx {
         // 节点命中：选中节点，关闭旧菜单，弹出节点级上下文菜单
-        if st.explorer_context_menu.is_open {
-            st.explorer_context_menu.close();
+        if st.context_menus.explorer.is_open {
+            st.context_menus.explorer.close();
         }
-        if st.file_node_context_menu.is_open {
-            st.file_node_context_menu.close();
+        if st.context_menus.file_node.is_open {
+            st.context_menus.file_node.close();
         }
-        if st.tab_context_menu.visible {
-            st.tab_context_menu.hide();
+        if st.context_menus.tab.visible {
+            st.context_menus.tab.hide();
         }
-        if st.activity_bar_context_menu.visible {
-            st.activity_bar_context_menu.hide();
+        if st.context_menus.activity_bar.visible {
+            st.context_menus.activity_bar.hide();
         }
         st.selected_file_node = Some(node_idx);
         st.emit_event(crate::events::EditorEvent::SidebarChanged);
         // 弹出文件节点上下文菜单
-        st.file_node_context_menu
+        st.context_menus
+            .file_node
             .open(mouse_x, mouse_y, window_w, window_h, node_idx);
+        st.dirty_tracker.mark_full_window();
         drop(st);
         invalidate_window(hwnd);
         return LRESULT(0);
     }
 
     // 空白区域：弹出上下文菜单（菜单内部会做窗口边界校正）
-    st.explorer_context_menu
+    st.context_menus
+        .explorer
         .open(mouse_x, mouse_y, window_w, window_h);
     // 关闭可能打开的其他菜单，避免重叠
-    if st.file_node_context_menu.is_open {
-        st.file_node_context_menu.close();
+    if st.context_menus.file_node.is_open {
+        st.context_menus.file_node.close();
     }
-    if st.tab_context_menu.visible {
-        st.tab_context_menu.hide();
+    if st.context_menus.tab.visible {
+        st.context_menus.tab.hide();
     }
-    if st.activity_bar_context_menu.visible {
-        st.activity_bar_context_menu.hide();
+    if st.context_menus.activity_bar.visible {
+        st.context_menus.activity_bar.hide();
     }
     // 空白区域右键同时清除当前选中节点（符合"未选中任何文件或文件夹"语义）
     st.selected_file_node = None;
     st.emit_event(crate::events::EditorEvent::SidebarChanged);
+    st.dirty_tracker.mark_full_window();
     drop(st);
     invalidate_window(hwnd);
     LRESULT(0)

@@ -127,7 +127,7 @@ impl EditorState {
             cy += 32.0;
 
             // 错误消息
-            if let Some(err) = &self.ssh_dialog.error_message {
+            if let Some(err) = &self.remote.ssh_dialog.error_message {
                 let err_text: Vec<u16> = err.encode_utf16().chain(Some(0)).collect();
                 let err_rect = D2D_RECT_F {
                     left: x + 16.0,
@@ -154,9 +154,9 @@ impl EditorState {
 
             // 字段标签和输入框
             let fields = vec![
-                ("主机:", &self.ssh_dialog.host, 0),
-                ("端口:", &self.ssh_dialog.port, 1),
-                ("用户名:", &self.ssh_dialog.username, 2),
+                ("主机:", &self.remote.ssh_dialog.host, 0),
+                ("端口:", &self.remote.ssh_dialog.port, 1),
+                ("用户名:", &self.remote.ssh_dialog.username, 2),
             ];
 
             for (label, value, idx) in &fields {
@@ -200,7 +200,7 @@ impl EditorState {
                 );
 
                 // 焦点指示器
-                if self.ssh_dialog.focus_field == *idx {
+                if self.remote.ssh_dialog.focus_field == *idx {
                     let focus_rect = D2D_RECT_F {
                         left: x + 80.0,
                         top: cy - 2.0,
@@ -236,7 +236,7 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            let auth_text = match self.ssh_dialog.auth_type {
+            let auth_text = match self.remote.ssh_dialog.auth_type {
                 crate::ssh::SshAuthType::Password => "密码",
                 crate::ssh::SshAuthType::Key => "私钥",
                 crate::ssh::SshAuthType::Agent => "SSH Agent",
@@ -259,7 +259,7 @@ impl EditorState {
             cy += 28.0;
 
             // 根据认证类型显示不同字段
-            match self.ssh_dialog.auth_type {
+            match self.remote.ssh_dialog.auth_type {
                 crate::ssh::SshAuthType::Password => {
                     let label_text: Vec<u16> = "密码:".encode_utf16().chain(Some(0)).collect();
                     let label_rect = D2D_RECT_F {
@@ -285,7 +285,13 @@ impl EditorState {
                     };
                     target.FillRectangle(&input_rect, &input_bg_brush);
                     // H-22: 使用 char 计数而非字节计数，避免多字节 UTF-8 泄漏长度
-                    let hidden: String = self.ssh_dialog.password.chars().map(|_| '*').collect();
+                    let hidden: String = self
+                        .remote
+                        .ssh_dialog
+                        .password
+                        .chars()
+                        .map(|_| '*')
+                        .collect();
                     let val_text: Vec<u16> = hidden.encode_utf16().chain(Some(0)).collect();
                     let val_rect = D2D_RECT_F {
                         left: x + 84.0,
@@ -302,7 +308,7 @@ impl EditorState {
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
 
-                    if self.ssh_dialog.focus_field == 3 {
+                    if self.remote.ssh_dialog.focus_field == 3 {
                         let focus_rect = D2D_RECT_F {
                             left: x + 80.0,
                             top: cy - 2.0,
@@ -344,6 +350,7 @@ impl EditorState {
                     };
                     target.FillRectangle(&input_rect, &input_bg_brush);
                     let val_text: Vec<u16> = self
+                        .remote
                         .ssh_dialog
                         .key_path
                         .encode_utf16()
@@ -364,7 +371,7 @@ impl EditorState {
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
 
-                    if self.ssh_dialog.focus_field == 3 {
+                    if self.remote.ssh_dialog.focus_field == 3 {
                         let focus_rect = D2D_RECT_F {
                             left: x + 80.0,
                             top: cy - 2.0,
@@ -404,7 +411,7 @@ impl EditorState {
                         bottom: cy + 20.0,
                     };
                     target.FillRectangle(&input2_rect, &input_bg_brush);
-                    let hidden2 = "*".repeat(self.ssh_dialog.key_passphrase.len());
+                    let hidden2 = "*".repeat(self.remote.ssh_dialog.key_passphrase.len());
                     let val2_text: Vec<u16> = hidden2.encode_utf16().chain(Some(0)).collect();
                     let val2_rect = D2D_RECT_F {
                         left: x + 84.0,
@@ -421,7 +428,7 @@ impl EditorState {
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
 
-                    if self.ssh_dialog.focus_field == 4 {
+                    if self.remote.ssh_dialog.focus_field == 4 {
                         let focus_rect = D2D_RECT_F {
                             left: x + 80.0,
                             top: cy - 2.0,
@@ -454,7 +461,7 @@ impl EditorState {
                 right: x + width - 16.0 - btn_w - 8.0,
                 bottom: cy + btn_h,
             };
-            let is_connect_hover = self.ssh_dialog.hover_button == Some(0);
+            let is_connect_hover = self.remote.ssh_dialog.hover_button == Some(0);
             target.FillRectangle(
                 &connect_btn_rect,
                 if is_connect_hover {
@@ -498,7 +505,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &cancel_hover_color)
                 .unwrap();
-            let is_cancel_hover = self.ssh_dialog.hover_button == Some(1);
+            let is_cancel_hover = self.remote.ssh_dialog.hover_button == Some(1);
             target.FillRectangle(
                 &cancel_btn_rect,
                 if is_cancel_hover {
@@ -524,13 +531,13 @@ impl EditorState {
             );
 
             // 存储按钮区域用于点击检测
-            self.ssh_dialog.connect_btn_rect = Some(crate::layout::Region::new(
+            self.remote.ssh_dialog.connect_btn_rect = Some(crate::layout::Region::new(
                 connect_btn_rect.left,
                 connect_btn_rect.top,
                 connect_btn_rect.right - connect_btn_rect.left,
                 connect_btn_rect.bottom - connect_btn_rect.top,
             ));
-            self.ssh_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
+            self.remote.ssh_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
                 cancel_btn_rect.left,
                 cancel_btn_rect.top,
                 cancel_btn_rect.right - cancel_btn_rect.left,
@@ -683,6 +690,7 @@ impl EditorState {
             };
             target.FillRectangle(&input_rect, &input_bg_brush);
             let val_text: Vec<u16> = self
+                .remote
                 .clone_dialog
                 .url
                 .encode_utf16()
@@ -703,7 +711,7 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            if self.clone_dialog.focus_field == 0 {
+            if self.remote.clone_dialog.focus_field == 0 {
                 let focus_rect = D2D_RECT_F {
                     left: x + 90.0,
                     top: cy - 2.0,
@@ -721,7 +729,7 @@ impl EditorState {
             cy += 36.0;
 
             // 错误消息
-            if let Some(err) = &self.clone_dialog.error_message {
+            if let Some(err) = &self.remote.clone_dialog.error_message {
                 let err_text: Vec<u16> = err.encode_utf16().chain(Some(0)).collect();
                 let err_rect = D2D_RECT_F {
                     left: x + 16.0,
@@ -758,7 +766,7 @@ impl EditorState {
                 right: x + width - 16.0 - btn_w - 8.0,
                 bottom: cy + btn_h,
             };
-            let is_clone_hover = self.clone_dialog.hover_button == Some(0);
+            let is_clone_hover = self.remote.clone_dialog.hover_button == Some(0);
             target.FillRectangle(
                 &clone_btn_rect,
                 if is_clone_hover {
@@ -801,7 +809,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &cancel_hover_color)
                 .unwrap();
-            let is_cancel_hover = self.clone_dialog.hover_button == Some(1);
+            let is_cancel_hover = self.remote.clone_dialog.hover_button == Some(1);
             target.FillRectangle(
                 &cancel_btn_rect,
                 if is_cancel_hover {
@@ -827,13 +835,13 @@ impl EditorState {
             );
 
             // 存储按钮区域用于点击检测
-            self.clone_dialog.clone_btn_rect = Some(crate::layout::Region::new(
+            self.remote.clone_dialog.clone_btn_rect = Some(crate::layout::Region::new(
                 clone_btn_rect.left,
                 clone_btn_rect.top,
                 clone_btn_rect.right - clone_btn_rect.left,
                 clone_btn_rect.bottom - clone_btn_rect.top,
             ));
-            self.clone_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
+            self.remote.clone_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
                 cancel_btn_rect.left,
                 cancel_btn_rect.top,
                 cancel_btn_rect.right - cancel_btn_rect.left,

@@ -748,7 +748,7 @@ impl EditorState {
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
-        let Some(tooltip) = self.hover_tooltip.as_ref() else {
+        let Some(tooltip) = self.hover.tooltip.as_ref() else {
             return;
         };
         if tooltip.is_empty() {

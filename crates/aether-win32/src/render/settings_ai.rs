@@ -370,8 +370,8 @@ impl EditorState {
                 cy += input_h + gap;
             } // end if is_custom
 
-            // Model 下拉（仅自定义模式显示，预制模式自动填充）
-            if is_custom {
+            // Model 下拉：对所有厂商显示，选项优先来自 /models 实时拉取（失败回退预置清单）
+            {
                 let model_value = if self.settings_panel.model.is_empty() {
                     "选择模型".to_string()
                 } else {
@@ -383,6 +383,14 @@ impl EditorState {
                     .into_iter()
                     .map(|(_id, name)| name)
                     .collect();
+                // 标签体现自动获取状态：获取中 / 失败原因
+                let model_label = if self.settings_panel.is_fetching_models {
+                    "模型（正在获取…）".to_string()
+                } else if !self.settings_panel.models_fetch_status.is_empty() {
+                    format!("模型（{}）", self.settings_panel.models_fetch_status)
+                } else {
+                    "模型".to_string()
+                };
                 cy = self.render_settings_dropdown(
                     target,
                     x,
@@ -392,7 +400,7 @@ impl EditorState {
                     label_h,
                     input_h,
                     gap,
-                    "模型",
+                    &model_label,
                     &model_value,
                     true,
                     crate::settings::SettingsDropdownKind::Model,
@@ -401,7 +409,82 @@ impl EditorState {
                     &input_format,
                     text_brush,
                 );
-            } // end if is_custom
+            }
+
+            // 深度思考开关（DeepSeek 专属：thinking enabled/disabled）——勾选框 + 标签
+            if self.settings_panel.provider == "deepseek" {
+                let box_size = 18.0_f32;
+                let box_x = x + margin;
+                let box_y = cy;
+                let checked = self.settings_panel.thinking;
+                let box_bg = if checked {
+                    color_f(0.0, 0.47, 0.83, 1.0)
+                } else {
+                    color_f(0.18, 0.18, 0.18, 1.0)
+                };
+                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &box_bg) {
+                    target.FillRectangle(
+                        &D2D_RECT_F {
+                            left: box_x,
+                            top: box_y,
+                            right: box_x + box_size,
+                            bottom: box_y + box_size,
+                        },
+                        &b,
+                    );
+                }
+                if let Ok(bb) = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.3, 0.3, 0.3, 1.0))
+                {
+                    draw_input_borders(target, box_x, box_y, box_size, box_size, &bb);
+                }
+                if checked {
+                    let check: Vec<u16> = "✓".encode_utf16().chain(Some(0)).collect();
+                    if let Ok(cbk) = self
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
+                    {
+                        target.DrawText(
+                            &check,
+                            &input_format,
+                            &D2D_RECT_F {
+                                left: box_x + 2.0,
+                                top: box_y,
+                                right: box_x + box_size,
+                                bottom: box_y + box_size,
+                            },
+                            &cbk,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                }
+                let lbl: Vec<u16> = "深度思考（推理模式，仅 DeepSeek）"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                let lbl_rect = D2D_RECT_F {
+                    left: box_x + box_size + 8.0,
+                    top: box_y,
+                    right: x + width - margin,
+                    bottom: box_y + box_size,
+                };
+                target.DrawText(
+                    &lbl,
+                    &label_format,
+                    &lbl_rect,
+                    text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                // 命中区覆盖勾选框 + 标签一段，便于点击切换
+                self.settings_panel.thinking_toggle_region =
+                    Some((box_x, box_y, box_size + 8.0 + 200.0, box_size));
+                cy += box_size + gap;
+            }
 
             // 温度：滑块（0.0 - 2.0，步进 0.1）——比裸文本框更直观，且天然合法
             let temp_val = self
@@ -485,9 +568,134 @@ impl EditorState {
             self.settings_panel.temp_slider_region = Some((track_x, track_y, track_w, track_h));
             cy += 24.0 + gap;
 
-            // Max Tokens（正整数）——带合法性校验
+            // 最大输入 Token（上下文预算，正整数）——限制发送给模型的历史上下文量
+            let maxin_valid = self.settings_panel.max_input_tokens_valid();
+            let maxin_label: Vec<u16> = "最大输入 Token（上下文预算）"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let maxin_label_rect = D2D_RECT_F {
+                left: x + margin,
+                top: cy,
+                right: x + width - margin,
+                bottom: cy + label_h,
+            };
+            target.DrawText(
+                &maxin_label,
+                &label_format,
+                &maxin_label_rect,
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            cy += label_h;
+            let maxin_focused = self.settings_panel.active_field
+                == Some(crate::settings::SettingsField::MaxInputTokens);
+            let maxin_bg_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
+                .unwrap();
+            let maxin_border = if !maxin_valid {
+                color_f(0.85, 0.30, 0.30, 1.0)
+            } else if maxin_focused {
+                color_f(0.0, 0.47, 0.83, 1.0)
+            } else {
+                color_f(0.3, 0.3, 0.3, 1.0)
+            };
+            let maxin_border_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &maxin_border)
+                .unwrap();
+            target.FillRectangle(
+                &D2D_RECT_F {
+                    left: x + margin,
+                    top: cy,
+                    right: x + margin + input_w,
+                    bottom: cy + input_h,
+                },
+                &maxin_bg_brush,
+            );
+            draw_input_borders(
+                target,
+                x + margin,
+                cy,
+                input_w,
+                input_h,
+                &maxin_border_brush,
+            );
+            let maxin_empty = self.settings_panel.max_input_tokens.is_empty();
+            let maxin_display = if maxin_empty {
+                "如 24000".to_string()
+            } else {
+                self.settings_panel.max_input_tokens.clone()
+            };
+            let maxin_text: Vec<u16> = maxin_display.encode_utf16().chain(Some(0)).collect();
+            let maxin_text_color = if maxin_empty {
+                color_f(0.5, 0.5, 0.5, 1.0)
+            } else {
+                color_f(0.9, 0.9, 0.9, 1.0)
+            };
+            let maxin_text_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &maxin_text_color)
+                .unwrap();
+            target.DrawText(
+                &maxin_text,
+                &input_format,
+                &D2D_RECT_F {
+                    left: x + margin + 8.0,
+                    top: cy,
+                    right: x + margin + input_w - 8.0,
+                    bottom: cy + input_h,
+                },
+                &maxin_text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            self.settings_panel.add_field_region(
+                crate::settings::SettingsField::MaxInputTokens,
+                x + margin,
+                cy,
+                input_w,
+                input_h,
+            );
+            cy += input_h;
+            if !maxin_valid {
+                let warn_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.90, 0.45, 0.45, 1.0))
+                    .unwrap();
+                let warn_text: Vec<u16> = "请输入 1 到 2000000 之间的整数"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                target.DrawText(
+                    &warn_text,
+                    &label_format,
+                    &D2D_RECT_F {
+                        left: x + margin,
+                        top: cy + 2.0,
+                        right: x + margin + input_w,
+                        bottom: cy + 18.0,
+                    },
+                    &warn_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                cy += 18.0;
+            }
+            cy += gap;
+
+            // 最大输出 Token（回复长度，正整数）——带合法性校验
             let maxtok_valid = self.settings_panel.max_tokens_valid();
-            let maxtok_label: Vec<u16> = "Max Tokens".encode_utf16().chain(Some(0)).collect();
+            let maxtok_label: Vec<u16> = "最大输出 Token（回复长度）"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
             let maxtok_label_rect = D2D_RECT_F {
                 left: x + margin,
                 top: cy,
@@ -1070,17 +1278,18 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &item_bg)
                     .unwrap();
-                let hover_color = color_f(0.30, 0.30, 0.32, 1.0);
-                let hover_brush = self
-                    .render_ctx
-                    .brush_cache
-                    .get_brush(target, &hover_color)
-                    .unwrap();
-                let selected_color = color_f(0.20, 0.20, 0.22, 1.0);
+                let selected_color = color_f(0.14, 0.30, 0.45, 1.0);
                 let selected_brush = self
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &selected_color)
+                    .unwrap();
+                // 当前已选项的强调色（左侧竖条），与主题强调蓝一致
+                let accent_color = color_f(0.0, 0.47, 0.83, 1.0);
+                let accent_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &accent_color)
                     .unwrap();
                 for (i, item_label) in items.iter().enumerate() {
                     let iy = next_cy + i as f32 * item_h;
@@ -1100,9 +1309,9 @@ impl EditorState {
                             self.settings_panel.model == *item_label
                         }
                     };
-                    let brush = if is_hover {
-                        &hover_brush
-                    } else if is_selected {
+                    // hover 与当前选中项统一显示预选中效果（蓝色高亮底 + 左侧强调竖条）
+                    let highlighted = is_hover || is_selected;
+                    let brush = if highlighted {
                         &selected_brush
                     } else {
                         &item_bg_brush
@@ -1114,6 +1323,18 @@ impl EditorState {
                         bottom: iy + item_h,
                     };
                     target.FillRectangle(&item_rect, brush);
+                    // 预选中标识：hover 或当前选中项都显示左侧强调竖条
+                    if highlighted {
+                        target.FillRectangle(
+                            &D2D_RECT_F {
+                                left: x + margin,
+                                top: iy,
+                                right: x + margin + 3.0,
+                                bottom: iy + item_h,
+                            },
+                            &accent_brush,
+                        );
+                    }
                     let item_wide: Vec<u16> = item_label.encode_utf16().chain(Some(0)).collect();
                     target.DrawText(
                         &item_wide,

@@ -967,7 +967,14 @@ async fn reader_loop<R>(
                 }
             },
             Err(e) => {
-                tracing::debug!("LSP reader loop exit ({}): {:?}", language_id, e);
+                // 服务器进程死亡（stdout EOF）是影响功能的重要事件，用 warn 级别
+                // 记录并推送 ServerExited 事件，让 UI 层可见并清理死服务器句柄
+                tracing::warn!("LSP 服务器进程已退出 ({}): {:?}", language_id, e);
+                if let Some(tx) = &event_tx {
+                    let _ = tx.send(LspEvent::ServerExited {
+                        language_id: language_id.clone(),
+                    });
+                }
                 // 清理所有 pending sender，让等待方收到 RecvError
                 let mut channels = response_channels.lock().await;
                 channels.clear();

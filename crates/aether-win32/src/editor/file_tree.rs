@@ -167,7 +167,7 @@ impl EditorState {
                             self.status_message = format!("已重命名为: {}", name);
                             // 如果重命名的文件当前已打开，更新标签页路径
                             let old_path_str = old_path.to_string_lossy().to_string();
-                            for tab in &mut self.tabs {
+                            for tab in &mut self.tab_bar.tabs {
                                 if let Some(file_content) = tab.as_file_mut() {
                                     if let Some(ref fp) = file_content.file_path {
                                         if fp.to_string_lossy() == old_path_str {
@@ -370,27 +370,32 @@ impl EditorState {
             self.status_message = "复制路径失败".to_string();
         }
     }
-    /// 在文件资源管理器中打开指定节点路径。
+    /// 在文件资源管理器中打开/定位指定节点。
+    /// - 文件：用 `explorer /select` 打开其所在文件夹并选中该文件
+    ///   （不能用默认程序打开文件本身，否则等同于双击运行）；
+    /// - 文件夹：直接用 explorer 打开该文件夹内容。
     pub fn open_node_in_explorer(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
             self.status_message = "无法获取文件路径".to_string();
             return;
         };
         let path_str = path.to_string_lossy().to_string();
-        let wide: Vec<u16> = path_str.encode_utf16().chain(Some(0)).collect();
-        unsafe {
-            use windows::Win32::UI::Shell::ShellExecuteW;
-            let operation: Vec<u16> = "open\0".encode_utf16().collect();
-            let _ = ShellExecuteW(
-                None,
-                windows::core::PCWSTR(operation.as_ptr()),
-                windows::core::PCWSTR(wide.as_ptr()),
-                windows::core::PCWSTR::null(),
-                None,
-                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
-            );
+        let mut cmd = std::process::Command::new("explorer.exe");
+        if path.is_dir() {
+            // 文件夹：打开其内容
+            cmd.arg(&path_str);
+        } else {
+            // 文件：在所在目录中定位并选中该文件
+            cmd.arg("/select,").arg(&path_str);
         }
-        self.status_message = format!("已在文件资源管理器中打开: {}", path_str);
+        match cmd.spawn() {
+            Ok(_) => {
+                self.status_message = format!("已在文件资源管理器中打开: {}", path_str);
+            }
+            Err(e) => {
+                self.status_message = format!("打开文件资源管理器失败: {}", e);
+            }
+        }
     }
     /// 删除文件节点（文件或文件夹）。
     pub fn delete_file_node(&mut self, node_idx: u32) {
@@ -419,7 +424,7 @@ impl EditorState {
                 // 如果删除的文件当前已打开，关闭对应的标签页
                 let path_str = path.to_string_lossy().to_string();
                 let mut tabs_to_close: Vec<usize> = Vec::new();
-                for (i, tab) in self.tabs.iter().enumerate() {
+                for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
                     if let Some(ref fp) = tab.file_path() {
                         if fp.to_string_lossy() == path_str {
                             tabs_to_close.push(i);
@@ -595,9 +600,9 @@ impl EditorState {
                             // 检查该文件是否已在某个标签页中打开
                             // REQ-P1-09: 活动标签页的 file_path 在 self.content 中
                             let active_path = self.content.file_path.clone();
-                            let active_idx = self.active_tab;
+                            let active_idx = self.tab_bar.active_tab;
                             if let Some(existing_tab) =
-                                self.tabs.iter().enumerate().position(|(i, tab)| {
+                                self.tab_bar.tabs.iter().enumerate().position(|(i, tab)| {
                                     if i == active_idx {
                                         active_path.as_ref() == Some(&path)
                                     } else {
@@ -809,7 +814,9 @@ impl EditorState {
         current_y: &mut f32,
     ) -> Option<(u32, FileKind, FileTreeClickPart)> {
         let node_height = 16.0 * dpi_scale;
-        let base_x = 10.0;
+        // 与 render_tree_nodes 的节点起点 `x + 10.0 * s` 保持一致：
+        // 基准 X 同样需要乘 DPI，否则高 DPI 下命中区整体偏左。
+        let base_x = 10.0 * dpi_scale;
         let mut child_idx = if parent_idx == u32::MAX {
             tree.first_root_node()
         } else {

@@ -141,12 +141,12 @@ impl EditorState {
             let nf_hover = self
                 .file_tree_new_file_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover_last_mouse_x, self.hover_last_mouse_y))
+                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
                 .unwrap_or(false);
             let nfo_hover = self
                 .file_tree_new_folder_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover_last_mouse_x, self.hover_last_mouse_y))
+                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
                 .unwrap_or(false);
 
             target.FillRectangle(

@@ -71,7 +71,15 @@ pub struct AiSettings {
     pub model: String,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// 最大输入 Token（上下文窗口预算）：限制发送给模型的历史上下文量。
+    /// None 表示用内置默认预算。
+    #[serde(default)]
+    pub max_input_tokens: Option<u32>,
     pub system_prompt: Option<String>,
+    /// 深度思考开关（仅 DeepSeek V4 生效）：Some(true)=思考模式，Some(false)=非思考模式，
+    /// None=不下发该参数（用服务端默认，即开启）。
+    #[serde(default)]
+    pub thinking: Option<bool>,
 }
 
 impl std::fmt::Debug for AiSettings {
@@ -83,10 +91,12 @@ impl std::fmt::Debug for AiSettings {
             .field("model", &self.model)
             .field("temperature", &self.temperature)
             .field("max_tokens", &self.max_tokens)
+            .field("max_input_tokens", &self.max_input_tokens)
             .field(
                 "system_prompt",
                 &self.system_prompt.as_deref().map(|_| "[PRESENT]"),
             )
+            .field("thinking", &self.thinking)
             .finish()
     }
 }
@@ -104,9 +114,15 @@ pub struct AiModelProfile {
     pub model: String,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    /// 最大输入 Token（上下文窗口预算），语义同 AiSettings::max_input_tokens
+    #[serde(default)]
+    pub max_input_tokens: Option<u32>,
     pub system_prompt: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 深度思考开关（仅 DeepSeek V4 生效），语义同 AiSettings::thinking
+    #[serde(default)]
+    pub thinking: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -126,7 +142,9 @@ impl AiModelProfile {
             model: self.model.clone(),
             temperature: self.temperature,
             max_tokens: self.max_tokens,
+            max_input_tokens: self.max_input_tokens,
             system_prompt: self.system_prompt.clone(),
+            thinking: self.thinking,
         }
     }
 
@@ -145,8 +163,10 @@ impl AiModelProfile {
             model: ai.model.clone(),
             temperature: ai.temperature,
             max_tokens: ai.max_tokens,
+            max_input_tokens: ai.max_input_tokens,
             system_prompt: ai.system_prompt.clone(),
             enabled: true,
+            thinking: ai.thinking,
         }
     }
 }
@@ -162,11 +182,13 @@ impl std::fmt::Debug for AiModelProfile {
             .field("model", &self.model)
             .field("temperature", &self.temperature)
             .field("max_tokens", &self.max_tokens)
+            .field("max_input_tokens", &self.max_input_tokens)
             .field(
                 "system_prompt",
                 &self.system_prompt.as_deref().map(|_| "[PRESENT]"),
             )
             .field("enabled", &self.enabled)
+            .field("thinking", &self.thinking)
             .finish()
     }
 }
@@ -527,13 +549,15 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             ai: AiSettings {
-                provider: "openai".to_string(),
+                provider: "deepseek".to_string(),
                 api_key: String::new(),
                 base_url: None,
-                model: "gpt-4".to_string(),
+                model: "deepseek-v4-pro".to_string(),
                 temperature: Some(0.7),
-                max_tokens: Some(2048),
+                max_tokens: Some(8192),
+                max_input_tokens: None,
                 system_prompt: None,
+                thinking: None,
             },
             ui: UiSettings::default(),
             remote: RemoteSettings::default(),
@@ -601,11 +625,11 @@ mod tests {
     #[test]
     fn test_default_settings_values() {
         let s = AppSettings::default();
-        assert_eq!(s.ai.provider, "openai");
-        assert_eq!(s.ai.model, "gpt-4");
+        assert_eq!(s.ai.provider, "deepseek");
+        assert_eq!(s.ai.model, "deepseek-v4-pro");
         assert_eq!(s.ai.base_url, None);
         assert_eq!(s.ai.temperature, Some(0.7));
-        assert_eq!(s.ai.max_tokens, Some(2048));
+        assert_eq!(s.ai.max_tokens, Some(8192));
         assert!(s.ai.api_key.is_empty());
         assert_eq!(s.ui.theme, String::new());
         assert_eq!(s.ui.font_size, 0);
@@ -618,7 +642,7 @@ mod tests {
     fn test_settings_deserialize_defaults() {
         let json = r#"{}"#;
         let s: AppSettings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.ai.provider, "openai");
+        assert_eq!(s.ai.provider, "deepseek");
         assert_eq!(s.ui.theme, String::new());
         assert!(!s.ui.sidebar_visible);
     }
@@ -627,17 +651,17 @@ mod tests {
     fn test_settings_deserialize_different_provider() {
         let json = r#"{
             "ai": {
-                "provider": "anthropic",
-                "model": "claude-3-opus",
-                "base_url": "https://api.anthropic.com",
+                "provider": "kimi",
+                "model": "moonshot-v1-32k",
+                "base_url": "https://api.moonshot.cn/v1",
                 "temperature": 0.5,
                 "max_tokens": 4096
             }
         }"#;
         let s: AppSettings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.ai.provider, "anthropic");
-        assert_eq!(s.ai.model, "claude-3-opus");
-        assert_eq!(s.ai.base_url.as_deref(), Some("https://api.anthropic.com"));
+        assert_eq!(s.ai.provider, "kimi");
+        assert_eq!(s.ai.model, "moonshot-v1-32k");
+        assert_eq!(s.ai.base_url.as_deref(), Some("https://api.moonshot.cn/v1"));
         assert_eq!(s.ai.temperature, Some(0.5));
         assert_eq!(s.ai.max_tokens, Some(4096));
     }
@@ -699,7 +723,7 @@ mod tests {
         let settings_path = dir.join("nope.json");
         let api_key_path = dir.join("nope.enc");
         let loaded = AppSettings::load_from(&settings_path, &api_key_path);
-        assert_eq!(loaded.ai.provider, "openai");
+        assert_eq!(loaded.ai.provider, "deepseek");
         assert!(loaded.ai.api_key.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -712,7 +736,7 @@ mod tests {
         std::fs::write(&settings_path, "this is not json").unwrap();
 
         let loaded = AppSettings::load_from(&settings_path, &api_key_path);
-        assert_eq!(loaded.ai.provider, "openai");
+        assert_eq!(loaded.ai.provider, "deepseek");
         assert!(loaded.ai.api_key.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
