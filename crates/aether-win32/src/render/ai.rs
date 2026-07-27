@@ -614,6 +614,10 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
 
+                // 注册"浏览并选择文件夹"按钮命中区域（窗口绝对坐标）
+                self.ai_panel.browse_folder_region =
+                    Some((open_btn_x, open_btn_y, open_btn_w, open_btn_h));
+
                 cy += 80.0;
 
                 // 分隔线

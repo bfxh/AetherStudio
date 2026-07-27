@@ -757,7 +757,7 @@ unsafe fn lbd_right_panel_tabs(
     None
 }
 
-/// AI 面板：模式切换 / 上下文附件切换。
+/// AI 面板：模式切换 / 上下文附件切换 / 浏览文件夹。
 ///
 /// 使用渲染时注册的绝对坐标命中区（mode_button_regions / attachment_chip_regions），
 /// 与旧的硬编码坐标处理器互不冲突。
@@ -788,6 +788,28 @@ unsafe fn lbd_right_panel_ai_controls(
                 st.ai_panel.toggle_attachment(att);
             }
             drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // 3. "浏览并选择文件夹"按钮
+    {
+        let hit = {
+            let st = state.borrow();
+            if let Some((bx, by, bw, bh)) = st.ai_panel.browse_folder_region {
+                mouse_x >= bx && mouse_x < bx + bw && mouse_y >= by && mouse_y < by + bh
+            } else {
+                false
+            }
+        };
+        if hit {
+            // 弹出系统文件夹选择对话框
+            if let Some(path) = Dialogs::open_folder_dialog(hwnd, "选择工作区文件夹") {
+                let mut st = state.borrow_mut();
+                st.open_folder(path.clone());
+                st.status_message = format!("已打开: {}", path.display());
+                drop(st);
+            }
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }

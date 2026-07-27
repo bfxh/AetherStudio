@@ -647,18 +647,25 @@ pub(super) unsafe fn lbd_submenu(
     let submenu_y = titlebar_region.y + titlebar_region.height;
     let sub_idx = st
         .menu_bar
-        .hit_test_submenu(active_idx, mouse_x, mouse_y, submenu_x, submenu_y)?;
-    if let Some(item) = st.menu_bar.items.get(active_idx) {
-        if let Some(menu_item) = item.items.get(sub_idx) {
-            if menu_item.enabled && menu_item.command_id != crate::menu_bar::CommandId::None {
-                let cmd = menu_item.command_id;
-                st.menu_bar.close_all();
-                drop(st);
-                state.borrow_mut().execute_command(cmd, hwnd);
-                invalidate_window(hwnd);
-                return Some(LRESULT(0));
+        .hit_test_submenu(active_idx, mouse_x, mouse_y, submenu_x, submenu_y);
+    if let Some(sub_idx) = sub_idx {
+        if let Some(item) = st.menu_bar.items.get(active_idx) {
+            if let Some(menu_item) = item.items.get(sub_idx) {
+                if menu_item.enabled && menu_item.command_id != crate::menu_bar::CommandId::None {
+                    let cmd = menu_item.command_id;
+                    st.menu_bar.close_all();
+                    drop(st);
+                    state.borrow_mut().execute_command(cmd, hwnd);
+                    invalidate_window(hwnd);
+                    return Some(LRESULT(0));
+                }
             }
         }
     }
-    None
+    // 菜单处于展开状态，但点击未命中任何有效菜单项：
+    // 关闭菜单并消费事件，防止穿透到欢迎页/编辑器等背景元素
+    st.menu_bar.close_all();
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }
