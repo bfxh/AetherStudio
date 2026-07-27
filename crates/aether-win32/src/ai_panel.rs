@@ -628,6 +628,8 @@ pub struct AiPanel {
     pub expanded_file_cards: std::collections::HashSet<(usize, usize)>,
     /// 文件卡片命中区域 (msg_idx, block_seq, x, y, w, h)，渲染每帧更新
     pub file_card_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
+    /// "浏览并选择文件夹"按钮命中区 (x, y, w, h)
+    pub browse_folder_region: Option<(f32, f32, f32, f32)>,
 }
 
 /// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
@@ -769,6 +771,7 @@ impl AiPanel {
             agent_pipeline: None,
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
+            browse_folder_region: None,
         };
         panel.restore_latest_conversation();
         panel
@@ -882,6 +885,7 @@ impl AiPanel {
             agent_pipeline: None,
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
+            browse_folder_region: None,
         }
     }
 
@@ -2080,6 +2084,7 @@ impl AiPanel {
         self.history_detail_back_region = None;
         self.history_detail_restore_region = None;
         self.history_panel_region = None;
+        self.browse_folder_region = None;
     }
 
     /// 历史下拉面板动画步进：向目标状态（展开 1.0 / 收起 0.0）推进。
