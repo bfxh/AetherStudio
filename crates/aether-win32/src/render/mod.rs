@@ -69,11 +69,15 @@ impl EditorState {
         crate::hit_test::clear_hit_regions();
 
         // AI-H01: 轮询后台 AI 请求结果，不阻塞 UI 线程
-        // 多会话并发：轮询所有会话（活动 + 后台），对本帧刚完成的每个会话处理 Agent 动作
-        let ai_completed = self.ai_panel.poll_all_background();
+        // 多会话并发：轮询所有会话（活动 + 后台），对本帧刚完成的每个会话处理 Agent 动作；
+        // 对本帧因错误中断的会话抢救已接收的文件块（不执行 RUN 命令）
+        let (ai_completed, ai_interrupted) = self.ai_panel.poll_all_background();
         self.ai_panel.sync_active_title();
         for conv_idx in ai_completed {
             self.process_ai_agent_actions_for(conv_idx);
+        }
+        for conv_idx in ai_interrupted {
+            self.salvage_ai_partial_edits(conv_idx);
         }
 
         // 设置面板：轮询测试连接结果
@@ -92,8 +96,14 @@ impl EditorState {
             crate::settings::TestPollResult::Pending => {}
         }
 
+        // 设置面板：轮询模型列表拉取结果（打开模型下拉后自动获取厂商可用模型）
+        if self.settings_panel.poll_models_fetch() {
+            self.dirty_tracker.mark_full_window();
+        }
+
         // LSP: 轮询诊断事件，更新 diagnostics 字段
-        self.poll_lsp_events();
+        self.lsp
+            .poll_events(&mut self.diagnostics, &mut self.status_message);
 
         // 终端输出轮询：从读取线程拉取子进程 stdout/stderr 并写入输出缓存。
         // 此前未调用 flush_output 导致 shell 输出无法显示，现在每帧轮询保证实时性。
@@ -203,11 +213,19 @@ impl EditorState {
             self.menu_bar.item_widths.clear();
             self.menu_bar.item_widths.reserve(self.menu_bar.items.len());
             for item in &self.menu_bar.items {
-                let text_width: f32 = item
-                    .label
-                    .chars()
-                    .map(|ch| if ch.is_ascii() { 8.0 } else { 13.0 })
-                    .sum();
+                // 优先用 DirectWrite 精确测量文本宽度，保证各菜单项间距均匀；
+                // 测量失败时回退到字符宽度估算
+                let text_width = self
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(&item.label, 13.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                    .filter(|w| *w > 0.0)
+                    .unwrap_or_else(|| {
+                        item.label
+                            .chars()
+                            .map(|ch| if ch.is_ascii() { 8.0 } else { 13.0 })
+                            .sum()
+                    });
                 let item_width = text_width + 24.0; // 左右各 12px padding
                 self.menu_bar.item_widths.push(item_width);
             }
@@ -230,23 +248,45 @@ impl EditorState {
         // P1.2: 先把事件队列中累积的事件转换为脏矩形
         self.flush_events_to_dirty_tracker();
 
+        // 侧边栏宽度动画 tick：每帧 lerp，到达终态后匃布可见性并清除动画
+        if let Some(anim) = self.layout.sidebar_anim {
+            let (width, done) = anim.tick();
+            if done {
+                if anim.end_width <= 0.0 {
+                    // 收起终态：隐藏 + 宽度复位到默认（下次展开时使用）
+                    self.layout.sidebar_visible = false;
+                    self.layout.sidebar_width = crate::layout::SIDEBAR_WIDTH;
+                } else {
+                    self.layout.sidebar_visible = true;
+                    self.layout.sidebar_width = anim.end_width;
+                }
+                self.layout.sidebar_anim = None;
+            } else {
+                self.layout.sidebar_width = width.max(0.0);
+            }
+            // 动画期间每帧刷新
+            self.dirty_tracker.mark_full_window();
+            crate::window::invalidate_window(self.hwnd);
+        }
+
         // 脏矩形检测：对比上一帧状态，标记变化区域（兼容层）
-        let cursor_moved = self.content.cursor_line != self.last_cursor_line
-            || self.content.cursor_col != self.last_cursor_col;
-        let scroll_changed = (self.content.scroll_y - self.last_scroll_y).abs() > 0.01;
-        let selection_changed = self.content.selection_start != self.last_selection_start
-            || self.content.selection_end != self.last_selection_end;
-        let sidebar_changed = self.sidebar_content != self.last_sidebar_content;
-        let sidebar_visible_changed = self.layout.sidebar_visible != self.last_sidebar_visible;
+        let cursor_moved = self.content.cursor_line != self.prev.cursor_line
+            || self.content.cursor_col != self.prev.cursor_col;
+        let scroll_changed = (self.content.scroll_y - self.prev.scroll_y).abs() > 0.01;
+        let selection_changed = self.content.selection_start != self.prev.selection_start
+            || self.content.selection_end != self.prev.selection_end;
+        let sidebar_changed = self.sidebar_content != self.prev.sidebar_content;
+        let sidebar_visible_changed = self.layout.sidebar_visible != self.prev.sidebar_visible;
         let activity_bar_visible_changed =
-            self.layout.activity_bar_visible != self.last_activity_bar_visible;
-        let right_panel_changed = self.layout.right_panel_visible != self.last_right_panel_visible;
+            self.layout.activity_bar_visible != self.prev.activity_bar_visible;
+        let right_panel_changed = self.layout.right_panel_visible != self.prev.right_panel_visible;
         let bottom_panel_changed =
-            self.layout.bottom_panel_visible != self.last_bottom_panel_visible;
-        let status_changed = self.status_message != self.last_status_message;
-        let active_tab_changed = self.active_tab != self.last_active_tab;
-        let dialog_visible =
-            self.ssh_dialog.visible || self.clone_dialog.visible || self.command_palette.visible;
+            self.layout.bottom_panel_visible != self.prev.bottom_panel_visible;
+        let status_changed = self.status_message != self.prev.status_message;
+        let active_tab_changed = self.tab_bar.active_tab != self.prev.active_tab;
+        let dialog_visible = self.remote.ssh_dialog.visible
+            || self.remote.clone_dialog.visible
+            || self.command_palette.visible;
 
         // 标签页切换会改变标签栏高亮、编辑器内容、状态栏等多个区域，
         // 局部裁剪容易遗漏旧像素导致重影，强制全量重绘。
@@ -404,19 +444,102 @@ impl EditorState {
         // REQ-P0-06: 如果没有脏区域，跳过渲染（避免无变化时的全窗口重绘）
         if !self.dirty_tracker.has_dirty() {
             // 仍需更新上一帧状态追踪，避免下一帧误检测到变化
-            self.last_cursor_line = self.content.cursor_line;
-            self.last_cursor_col = self.content.cursor_col;
-            self.last_scroll_y = self.content.scroll_y;
-            self.last_selection_start = self.content.selection_start;
-            self.last_selection_end = self.content.selection_end;
-            self.last_sidebar_content = self.sidebar_content.clone();
-            self.last_sidebar_visible = self.layout.sidebar_visible;
-            self.last_activity_bar_visible = self.layout.activity_bar_visible;
-            self.last_right_panel_visible = self.layout.right_panel_visible;
-            self.last_bottom_panel_visible = self.layout.bottom_panel_visible;
-            self.last_status_message.clone_from(&self.status_message);
-            self.last_active_tab = self.active_tab;
+            self.snapshot_prev_frame_state();
             return;
+        }
+
+        // 菜单 hover 快速路径：脏区全部为 Dialog 类型（仅菜单 hover 标记该类型）且有
+        // 上下文菜单展开时，跳过整条渲染管线（面板遍历 + 几何裁剪层构建），只重绘
+        // 不透明的菜单本体。菜单是最顶层不透明绘制，直接覆盖旧高亮即可，单帧成本
+        // 从整管线降至若干矩形 + 几行文本，彻底消除快速滑动菜单时的卡顿。
+        {
+            let menus_open = self.context_menus.explorer.is_open
+                || self.context_menus.file_node.is_open
+                || self.context_menus.tab.visible
+                || self.context_menus.activity_bar.visible;
+            let dialog_only = !self.dirty_tracker.is_full_window()
+                && self
+                    .dirty_tracker
+                    .rects()
+                    .iter()
+                    .all(|r| r.region_type == crate::dirty_rect::DirtyRegionType::Dialog);
+            if menus_open && dialog_only {
+                let target = {
+                    let Some(rt) = &self.render_ctx.target else {
+                        return;
+                    };
+                    rt.target().clone()
+                };
+                // 裁剪到菜单本体矩形：菜单阴影为半透明绘制，若不裁剪，每次 hover
+                // 重绘都会在旧阴影上再叠一层，数次后菜单右/下侧积出黑色偏移块。
+                let clip_to = |x: f32, y: f32, w: f32, h: f32| {
+                    windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
+                        left: x,
+                        top: y,
+                        right: x + w,
+                        bottom: y + h,
+                    }
+                };
+                self.render_ctx.begin_draw();
+                if self.context_menus.explorer.is_open {
+                    let r = clip_to(
+                        self.context_menus.explorer.origin_x,
+                        self.context_menus.explorer.origin_y,
+                        self.context_menus.explorer.menu_width(),
+                        self.context_menus.explorer.menu_height(),
+                    );
+                    unsafe { target.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+                    self.render_explorer_context_menu(&target);
+                    unsafe { target.PopAxisAlignedClip() };
+                }
+                if self.context_menus.file_node.is_open {
+                    let r = clip_to(
+                        self.context_menus.file_node.origin_x,
+                        self.context_menus.file_node.origin_y,
+                        self.context_menus.file_node.menu_width(),
+                        self.context_menus.file_node.menu_height(),
+                    );
+                    unsafe { target.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+                    self.render_file_node_context_menu(&target);
+                    unsafe { target.PopAxisAlignedClip() };
+                }
+                if self.context_menus.tab.visible {
+                    let r = clip_to(
+                        self.context_menus.tab.x,
+                        self.context_menus.tab.y,
+                        self.context_menus.tab.width,
+                        self.context_menus.tab.menu_height(),
+                    );
+                    unsafe { target.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+                    self.render_tab_context_menu(&target);
+                    unsafe { target.PopAxisAlignedClip() };
+                }
+                if self.context_menus.activity_bar.visible {
+                    let r = clip_to(
+                        self.context_menus.activity_bar.x,
+                        self.context_menus.activity_bar.y,
+                        self.context_menus.activity_bar.width,
+                        self.context_menus.activity_bar.menu_height(),
+                    );
+                    unsafe { target.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+                    self.render_activity_bar_context_menu(&target);
+                    unsafe { target.PopAxisAlignedClip() };
+                }
+                if let Err(e) = self.render_ctx.end_draw() {
+                    // 帧被丢弃（如批次外绘制残留导致 D2DERR_WRONG_STATE）：
+                    // 标记全窗口并立即请求重绘。若只标记不重绘，要等到下一次
+                    // 交互才恢复，表现为菜单 hover 高亮"隔次丢失"。
+                    tracing::warn!(
+                        hresult = format_args!("{:#010X}", e.code().0 as u32),
+                        "菜单快速路径 EndDraw 失败，丢帧后全窗口重绘恢复"
+                    );
+                    self.recover_from_end_draw_failure();
+                } else {
+                    self.end_draw_fail_streak = 0;
+                    self.dirty_tracker.clear();
+                }
+                return;
+            }
         }
 
         // 获取渲染目标，开始绘制
@@ -616,7 +739,7 @@ impl EditorState {
         }
 
         // 5.5 查找替换框
-        if self.find_visible {
+        if self.find.visible {
             self.render_find_replace(
                 &target,
                 editor_content_region.x,
@@ -689,12 +812,12 @@ impl EditorState {
         }
 
         // 9. SSH 连接对话框
-        if self.ssh_dialog.visible {
+        if self.remote.ssh_dialog.visible {
             self.render_ssh_dialog(&target);
         }
 
         // 10. 克隆仓库对话框
-        if self.clone_dialog.visible {
+        if self.remote.clone_dialog.visible {
             self.render_clone_dialog(&target);
         }
 
@@ -707,34 +830,44 @@ impl EditorState {
         if self.user_menu.is_open {
             let titlebar_h = self.layout.title_bar_height;
             let window_w = self.window_width as f32;
-            let btn_width = 40.0;
-            let close_x = window_w - btn_width;
-            let maximize_x = close_x - btn_width;
-            let minimize_x = maximize_x - btn_width;
-            let user_btn_size = 26.0;
-            let user_btn_x = minimize_x - 28.0 * 3.0 - user_btn_size - 4.0;
-            let user_btn_y = (titlebar_h - user_btn_size) / 2.0;
-            self.render_user_menu(&target, user_btn_x, user_btn_y + user_btn_size + 4.0);
+            // 与标题栏按钮共用单一布局源，菜单精确锚定在用户头像按钮下方
+            let tb = crate::layout::TitlebarButtons::compute(0.0, window_w);
+            let user_btn_y = (titlebar_h - tb.user_btn_size) / 2.0;
+            self.render_user_menu(&target, tb.user_btn_x, user_btn_y + tb.user_btn_size + 4.0);
         }
 
         // 13. 资源管理器空白区域上下文菜单（最上层渲染，覆盖所有内容）
-        if self.explorer_context_menu.is_open {
+        if self.context_menus.explorer.is_open {
             self.render_explorer_context_menu(&target);
         }
 
         // 13b. 文件节点右键上下文菜单（最上层渲染）
-        if self.file_node_context_menu.is_open {
+        if self.context_menus.file_node.is_open {
             self.render_file_node_context_menu(&target);
         }
 
         // 14. 标签右键上下文菜单（最顶层渲染，覆盖所有内容）
-        if self.tab_context_menu.visible {
+        if self.context_menus.tab.visible {
             self.render_tab_context_menu(&target);
         }
 
         // 15. 活动栏右键上下文菜单（最顶层渲染，覆盖所有内容）
-        if self.activity_bar_context_menu.visible {
+        if self.context_menus.activity_bar.visible {
             self.render_activity_bar_context_menu(&target);
+        }
+
+        // 16. P3.4: hover tooltip + UI Tooltip（最上层，必须在 EndDraw 之前）。
+        // 此前二者在 EndDraw 之后调用：批次外命令被 D2D 静默丢弃（tooltip
+        // 实际画不出来），且错误会锁存到下一次 EndDraw 返回 D2DERR_WRONG_STATE，
+        // 导致下一帧（菜单 hover 快速路径）整帧被丢弃——单双数交替丢帧的根因。
+        self.render_hover_tooltip(&target);
+        if let Ok(tooltip_format) = self.render_ctx.text_format_cache.get_format(
+            12.0,
+            DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+            DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+            DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+        ) {
+            self.render_tooltip(&target, &tooltip_format);
         }
 
         // 弹出裁剪区域（如果设置了）——必须在 end_draw 之前
@@ -743,9 +876,15 @@ impl EditorState {
             self.render_ctx.pop_multi_clip(use_layer);
         }
 
+        let mut end_draw_ok = true;
         match self.render_ctx.end_draw() {
             Ok(()) => {}
             Err(e) => {
+                end_draw_ok = false;
+                tracing::warn!(
+                    hresult = format_args!("{:#010X}", e.code().0 as u32),
+                    "EndDraw 失败，本帧被丢弃"
+                );
                 // 设备丢失（D2DERR_RECREATE_TARGET = 0x8899000C），需要重建渲染目标
                 if e.code().0 as u32 == 0x8899000C {
                     self.render_ctx.handle_device_lost();
@@ -788,37 +927,53 @@ impl EditorState {
         }
 
         // 更新上一帧状态追踪
-        self.last_cursor_line = self.content.cursor_line;
-        self.last_cursor_col = self.content.cursor_col;
-        self.last_scroll_y = self.content.scroll_y;
-        self.last_selection_start = self.content.selection_start;
-        self.last_selection_end = self.content.selection_end;
-        self.last_sidebar_content = self.sidebar_content.clone();
-        self.last_sidebar_visible = self.layout.sidebar_visible;
-        self.last_activity_bar_visible = self.layout.activity_bar_visible;
-        self.last_right_panel_visible = self.layout.right_panel_visible;
-        self.last_bottom_panel_visible = self.layout.bottom_panel_visible;
-        self.last_status_message.clone_from(&self.status_message);
-        self.last_active_tab = self.active_tab;
+        self.snapshot_prev_frame_state();
 
-        // P3.4: 渲染 hover tooltip（在最上层，覆盖所有内容）
-        self.render_hover_tooltip(&target);
-
-        // UI Tooltip：500ms 延迟显示的活动栏/标题栏悬停提示（最上层）
-        if let Ok(tooltip_format) = self.render_ctx.text_format_cache.get_format(
-            12.0,
-            DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-            DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
-            DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
-        ) {
-            self.render_tooltip(&target, &tooltip_format);
+        // 清除脏矩形标记（渲染完成）；失败帧保留全窗口脏标记并立即重绘恢复
+        if end_draw_ok {
+            self.end_draw_fail_streak = 0;
+            self.dirty_tracker.clear();
+        } else {
+            self.recover_from_end_draw_failure();
         }
-
-        // 清除脏矩形标记（渲染完成）
-        self.dirty_tracker.clear();
 
         // TEST: 将本帧命中区域写入文件
         crate::hit_test::flush_hit_regions_to_file();
+    }
+
+    /// 快照本帧状态到 `prev`，供下一帧变化检测使用。
+    fn snapshot_prev_frame_state(&mut self) {
+        self.prev.cursor_line = self.content.cursor_line;
+        self.prev.cursor_col = self.content.cursor_col;
+        self.prev.scroll_y = self.content.scroll_y;
+        self.prev.selection_start = self.content.selection_start;
+        self.prev.selection_end = self.content.selection_end;
+        self.prev.sidebar_content = self.sidebar_content.clone();
+        self.prev.sidebar_visible = self.layout.sidebar_visible;
+        self.prev.activity_bar_visible = self.layout.activity_bar_visible;
+        self.prev.right_panel_visible = self.layout.right_panel_visible;
+        self.prev.bottom_panel_visible = self.layout.bottom_panel_visible;
+        self.prev.status_message.clone_from(&self.status_message);
+        self.prev.active_tab = self.tab_bar.active_tab;
+    }
+
+    /// EndDraw 失败后的恢复：标记全窗口并立即请求重绘。
+    ///
+    /// 连续失败超过上限时停止自动重试（保留脏标记，交给下一次用户交互/
+    /// 系统 WM_PAINT 驱动），避免设备持续丢失时 invalidate→重绘→再失败
+    /// 的忙循环空转 CPU。
+    fn recover_from_end_draw_failure(&mut self) {
+        const MAX_AUTO_RETRY: u8 = 3;
+        self.dirty_tracker.mark_full_window();
+        self.end_draw_fail_streak = self.end_draw_fail_streak.saturating_add(1);
+        if self.end_draw_fail_streak <= MAX_AUTO_RETRY {
+            crate::window::invalidate_window(self.hwnd);
+        } else {
+            tracing::warn!(
+                streak = self.end_draw_fail_streak,
+                "EndDraw 连续失败，暂停自动重试以避免重绘忙循环"
+            );
+        }
     }
 }
 

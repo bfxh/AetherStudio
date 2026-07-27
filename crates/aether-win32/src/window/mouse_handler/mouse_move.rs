@@ -41,9 +41,56 @@ pub(crate) unsafe fn on_mouse_move(
     if let Some(r) = omm_early_returns(hwnd, &state, mouse_x, mouse_y, is_dragging, &layout) {
         return r;
     }
+    // 文本拖拽选区：前置为最高优先级（仅次于菜单/对话框）。
+    // 旧实现放在所有 hover 判定之后的 else 分支，任一 hover 变化都会
+    // 提前走 invalidate 分支跳过选区更新，导致拖拽时预选中高亮跟不上鼠标；
+    // 拖拽选区期间 hover/tooltip 状态无意义，直接跳过还能省掉逐帧命中开销。
+    if is_dragging && state.borrow().is_selecting {
+        let mut st = state.borrow_mut();
+        let editor_content = layout.editor_content_region(st.show_tab_bar());
+        let before = (
+            st.content.cursor_line,
+            st.content.cursor_col,
+            st.content.selection_end,
+        );
+        st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
+        st.update_selection();
+        let changed = (
+            st.content.cursor_line,
+            st.content.cursor_col,
+            st.content.selection_end,
+        ) != before;
+        if changed {
+            // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘
+            st.dirty_tracker.mark_region(
+                editor_content.x,
+                editor_content.y,
+                editor_content.width,
+                editor_content.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
+            );
+            let sb = st.layout.status_bar_region();
+            st.dirty_tracker.mark_region(
+                sb.x,
+                sb.y,
+                sb.width,
+                sb.height,
+                crate::dirty_rect::DirtyRegionType::StatusBar,
+            );
+        }
+        drop(st);
+        // 光标未跨过字符边界时跳过重绘，避免鼠标微动刷帧
+        if changed {
+            invalidate_window(hwnd);
+            // WM_PAINT 优先级低于 WM_MOUSEMOVE，快速拖拽时会被消息洪流饿死，
+            // 导致选区/光标视觉滞后——UpdateWindow 绕过队列立即重绘
+            let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+        }
+        return LRESULT(0);
+    }
     // 悬停状态更新（每个辅助函数返回是否有变化）
     let titlebar_changed = omm_titlebar_menu_hover(&state, mouse_x, mouse_y, &layout);
-    let (tab_changed, editor_content) = omm_activity_tab_hover(&state, mouse_x, mouse_y, &layout);
+    let (tab_changed, _editor_content) = omm_activity_tab_hover(&state, mouse_x, mouse_y, &layout);
     let tree_changed = omm_file_tree_hover(&state, mouse_x, mouse_y, &layout);
     let settings_changed = omm_settings_hover(&state, mouse_x, mouse_y, is_dragging, &layout);
     let ai_changed = omm_ai_hover(&state, mouse_x, mouse_y, &layout);
@@ -64,14 +111,8 @@ pub(crate) unsafe fn on_mouse_move(
     omm_hover_tooltip(hwnd, &state, mouse_x, mouse_y, &layout);
     // UI Tooltip 状态更新（500ms 延迟显示、4px 移动容差）
     let tooltip_changed = omm_tooltip_state(hwnd, &state, mouse_x, mouse_y);
-    // 最终失效判定
+    // 最终失效判定（文本拖拽选区已在前置分支处理并提前返回）
     if any_hover_changed || tooltip_changed {
-        invalidate_window(hwnd);
-    } else if is_dragging {
-        let mut st = state.borrow_mut();
-        st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
-        st.update_selection();
-        drop(st);
         invalidate_window(hwnd);
     }
     LRESULT(0)
@@ -88,62 +129,129 @@ unsafe fn omm_early_returns(
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
     // 资源管理器空白区域上下文菜单：更新 hover 状态
-    if st.explorer_context_menu.is_open {
-        let changed = st.explorer_context_menu.update_hover(mouse_x, mouse_y);
+    if st.context_menus.explorer.is_open {
+        let changed = st.context_menus.explorer.update_hover(mouse_x, mouse_y);
+        if changed {
+            // 标记菜单区域为脏，否则脏矩形渲染器会因“无脏区”跳过整帧重绘 → hover 卡顿
+            let mx = st.context_menus.explorer.origin_x;
+            let my = st.context_menus.explorer.origin_y;
+            let mw = st.context_menus.explorer.menu_width();
+            let mh = st.context_menus.explorer.menu_height();
+            st.dirty_tracker.mark_region(
+                mx,
+                my,
+                mw,
+                mh,
+                crate::dirty_rect::DirtyRegionType::Dialog,
+            );
+        }
         drop(st);
         if changed {
             invalidate_window(hwnd);
+            // 强制即时重绘：WM_PAINT 优先级低于 WM_MOUSEMOVE，快速移动鼠标时 WM_PAINT
+            // 会被洪流饿死——UpdateWindow 绕过队列优先级直接派发 WM_PAINT，消除菜单卡顿。
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
         }
         return Some(LRESULT(0));
     }
     // 文件节点右键上下文菜单：更新 hover 状态
-    if st.file_node_context_menu.is_open {
-        let changed = st.file_node_context_menu.update_hover(mouse_x, mouse_y);
+    if st.context_menus.file_node.is_open {
+        let changed = st.context_menus.file_node.update_hover(mouse_x, mouse_y);
+        if changed {
+            let mx = st.context_menus.file_node.origin_x;
+            let my = st.context_menus.file_node.origin_y;
+            let mw = st.context_menus.file_node.menu_width();
+            let mh = st.context_menus.file_node.menu_height();
+            st.dirty_tracker.mark_region(
+                mx,
+                my,
+                mw,
+                mh,
+                crate::dirty_rect::DirtyRegionType::Dialog,
+            );
+        }
         drop(st);
         if changed {
             invalidate_window(hwnd);
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
         }
         return Some(LRESULT(0));
     }
     // 标签右键上下文菜单：更新 hover 状态
-    if st.tab_context_menu.visible {
-        let changed = st.tab_context_menu.update_hover(mouse_x, mouse_y);
+    if st.context_menus.tab.visible {
+        let changed = st.context_menus.tab.update_hover(mouse_x, mouse_y);
+        if changed {
+            let mx = st.context_menus.tab.x;
+            let my = st.context_menus.tab.y;
+            let mw = st.context_menus.tab.width;
+            let mh = st.context_menus.tab.menu_height();
+            st.dirty_tracker.mark_region(
+                mx,
+                my,
+                mw,
+                mh,
+                crate::dirty_rect::DirtyRegionType::Dialog,
+            );
+        }
         drop(st);
         if changed {
             invalidate_window(hwnd);
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
         }
         return Some(LRESULT(0));
     }
     // 活动栏右键上下文菜单：更新 hover 状态
-    if st.activity_bar_context_menu.visible {
-        let changed = st.activity_bar_context_menu.update_hover(mouse_x, mouse_y);
+    if st.context_menus.activity_bar.visible {
+        let changed = st.context_menus.activity_bar.update_hover(mouse_x, mouse_y);
+        if changed {
+            let mx = st.context_menus.activity_bar.x;
+            let my = st.context_menus.activity_bar.y;
+            let mw = st.context_menus.activity_bar.width;
+            let mh = st.context_menus.activity_bar.menu_height();
+            st.dirty_tracker.mark_region(
+                mx,
+                my,
+                mw,
+                mh,
+                crate::dirty_rect::DirtyRegionType::Dialog,
+            );
+        }
         drop(st);
         if changed {
             invalidate_window(hwnd);
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
         }
         return Some(LRESULT(0));
     }
     // 对话框悬停处理
-    if st.ssh_dialog.visible {
+    if st.remote.ssh_dialog.visible {
         st.handle_ssh_dialog_hover(mouse_x, mouse_y);
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
-    if st.clone_dialog.visible {
+    if st.remote.clone_dialog.visible {
         st.handle_clone_dialog_hover(mouse_x, mouse_y);
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
     // 长按检测：移动超过容差则取消
-    if is_dragging && st.lpress_target.is_some() {
-        let dx = mouse_x - st.lpress_x;
-        let dy = mouse_y - st.lpress_y;
+    if is_dragging && st.mouse_press.lpress_target.is_some() {
+        let dx = mouse_x - st.mouse_press.lpress_x;
+        let dy = mouse_y - st.mouse_press.lpress_y;
         if dx.abs() > LP_MOVE_TOLERANCE || dy.abs() > LP_MOVE_TOLERANCE {
             let _ = KillTimer(hwnd, LP_TIMER_ID);
-            st.lpress_target = None;
-            st.lpress_start = None;
+            st.mouse_press.lpress_target = None;
+            st.mouse_press.lpress_start = None;
         }
     }
     // 自定义模式下：跟随鼠标更新放置目标
@@ -163,17 +271,17 @@ unsafe fn omm_early_returns(
         return Some(LRESULT(0));
     }
     // Task 8.3: 标签拖拽——检测阈值进入拖拽模式，或更新 drop_index
-    if is_dragging && st.tab_drag_start.is_some() {
-        if st.dragging_tab.is_none() {
+    if is_dragging && st.tab_bar.tab_drag_start.is_some() {
+        if st.tab_bar.dragging_tab.is_none() {
             // 判定是否超过 3px 阈值（dx*dx + dy*dy > 9）
-            let (sx, sy) = st.tab_drag_start.unwrap();
+            let (sx, sy) = st.tab_bar.tab_drag_start.unwrap();
             let dx = mouse_x - sx as f32;
             let dy = mouse_y - sy as f32;
             if dx * dx + dy * dy > 9.0 {
                 // 进入拖拽模式：使用当前 hover_tab 作为拖拽目标
-                if let Some(hover) = st.hover_tab {
-                    st.dragging_tab = Some(hover);
-                    st.tab_drop_index = Some(hover);
+                if let Some(hover) = st.tab_bar.hover_tab {
+                    st.tab_bar.dragging_tab = Some(hover);
+                    st.tab_bar.tab_drop_index = Some(hover);
                     drop(st);
                     invalidate_window(hwnd);
                     return Some(LRESULT(0));
@@ -184,8 +292,8 @@ unsafe fn omm_early_returns(
             let show_tab_bar = st.show_tab_bar();
             let editor_content = layout.editor_content_region(show_tab_bar);
             let new_drop = st.tab_drop_index_at(mouse_x, editor_content.x);
-            let changed = st.tab_drop_index != Some(new_drop);
-            st.tab_drop_index = Some(new_drop);
+            let changed = st.tab_bar.tab_drop_index != Some(new_drop);
+            st.tab_bar.tab_drop_index = Some(new_drop);
             drop(st);
             if changed {
                 invalidate_window(hwnd);
@@ -208,22 +316,18 @@ unsafe fn omm_titlebar_menu_hover(
     // 标题栏按钮悬停（与 render_title_bar 布局保持一致）
     let old_titlebar_hover = st.titlebar_hover_button;
     if titlebar_region.contains(mouse_x, mouse_y) {
-        let btn_width = 40.0;
-        let close_x = titlebar_region.x + titlebar_region.width - btn_width;
-        let maximize_x = close_x - btn_width;
-        let minimize_x = maximize_x - btn_width;
-
-        let tool_btn_size = 28.0f32;
-        let tool_btn_gap = 2.0f32;
-        let user_btn_size = 24.0f32;
-        let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
-        let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
-        let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-        let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-        let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
-        let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
-        let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
-        let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+        // 与 render_title_bar 共用单一布局源，消除手写副本间的尺寸漂移
+        let tb = crate::layout::TitlebarButtons::compute(titlebar_region.x, titlebar_region.width);
+        let close_x = tb.close_x;
+        let maximize_x = tb.maximize_x;
+        let minimize_x = tb.minimize_x;
+        let user_btn_x = tb.user_btn_x;
+        let settings_btn_x = tb.settings_btn_x;
+        let right_panel_btn_x = tb.right_panel_btn_x;
+        let bottom_panel_btn_x = tb.bottom_panel_btn_x;
+        let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+        let forward_btn_x = tb.forward_btn_x;
+        let back_btn_x = tb.back_btn_x;
 
         if mouse_x >= minimize_x {
             if mouse_x >= close_x {
@@ -269,7 +373,33 @@ unsafe fn omm_titlebar_menu_hover(
     } else {
         st.menu_bar.hover_index = None;
     }
-    titlebar_changed || old_menu_hover != st.menu_bar.hover_index
+    // 菜单展开状态下：横向移动悬停即切换展开项（符合常规菜单栏行为），
+    // 并追踪子菜单项悬停以驱动高亮反馈
+    let old_submenu_hover = st.menu_bar.submenu_hover;
+    if let Some(active_idx) = st.menu_bar.active_index {
+        if !st.menu_bar.customize_mode {
+            if let Some(h) = st.menu_bar.hover_index {
+                if h != active_idx && h < st.menu_bar.items.len() {
+                    st.menu_bar.expand(h);
+                }
+            }
+        }
+        let cur_active = st.menu_bar.active_index.unwrap_or(active_idx);
+        st.menu_bar.submenu_hover = st
+            .menu_bar
+            .item_x_positions
+            .get(cur_active)
+            .and_then(|&sx| {
+                let sy = titlebar_region.y + titlebar_region.height;
+                st.menu_bar
+                    .hit_test_submenu(cur_active, mouse_x, mouse_y, sx, sy)
+            });
+    } else {
+        st.menu_bar.submenu_hover = None;
+    }
+    titlebar_changed
+        || old_menu_hover != st.menu_bar.hover_index
+        || old_submenu_hover != st.menu_bar.submenu_hover
 }
 
 /// 活动栏 + 标签栏悬停更新。返回 (是否有变化, editor_content)。
@@ -287,9 +417,9 @@ unsafe fn omm_activity_tab_hover(
         .hit_test(mouse_x, mouse_y, activity_region.y);
     // 标签栏悬停
     let editor_content = layout.editor_content_region(st.show_tab_bar());
-    let old_hover = st.hover_tab;
+    let old_hover = st.tab_bar.hover_tab;
     st.update_hover_tab(mouse_x, mouse_y, editor_content.x);
-    (old_hover != st.hover_tab, editor_content)
+    (old_hover != st.tab_bar.hover_tab, editor_content)
 }
 
 /// 文件树 / SSH 管理面板 / 源代码管理面板悬停更新。返回是否有变化。
@@ -305,41 +435,41 @@ unsafe fn omm_file_tree_hover(
     if sidebar_region.contains(mouse_x, mouse_y) {
         if st.sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel {
             // SSH 管理面板悬停检测
-            let old_hover = st.ssh_manager_panel.hover;
-            let old_action = st.ssh_manager_panel.hover_action;
+            let old_hover = st.remote.ssh_manager_panel.hover;
+            let old_action = st.remote.ssh_manager_panel.hover_action;
             let mut new_hover_action = None;
-            let btn_rects = st.ssh_manager_panel.item_btn_rects.clone();
+            let btn_rects = st.remote.ssh_manager_panel.item_btn_rects.clone();
             for &(idx, action, ref rect) in &btn_rects {
                 if rect.contains(mouse_x, mouse_y) {
                     new_hover_action = Some((idx, action));
                     break;
                 }
             }
-            st.ssh_manager_panel.hover_action = new_hover_action;
+            st.remote.ssh_manager_panel.hover_action = new_hover_action;
             if new_hover_action.is_none() {
-                if let Some(ref rect) = st.ssh_manager_panel.add_btn_rect {
+                if let Some(ref rect) = st.remote.ssh_manager_panel.add_btn_rect {
                     if rect.contains(mouse_x, mouse_y) {
-                        st.ssh_manager_panel.hover_action = Some((997, 0));
+                        st.remote.ssh_manager_panel.hover_action = Some((997, 0));
                     }
                 }
             }
-            if new_hover_action.is_none() && st.ssh_manager_panel.editing {
-                if let Some(ref rect) = st.ssh_manager_panel.save_btn_rect {
+            if new_hover_action.is_none() && st.remote.ssh_manager_panel.editing {
+                if let Some(ref rect) = st.remote.ssh_manager_panel.save_btn_rect {
                     if rect.contains(mouse_x, mouse_y) {
-                        st.ssh_manager_panel.hover_action = Some((998, 0));
+                        st.remote.ssh_manager_panel.hover_action = Some((998, 0));
                     }
                 }
-                if st.ssh_manager_panel.hover_action.is_none() {
-                    if let Some(ref rect) = st.ssh_manager_panel.cancel_btn_rect {
+                if st.remote.ssh_manager_panel.hover_action.is_none() {
+                    if let Some(ref rect) = st.remote.ssh_manager_panel.cancel_btn_rect {
                         if rect.contains(mouse_x, mouse_y) {
-                            st.ssh_manager_panel.hover_action = Some((998, 1));
+                            st.remote.ssh_manager_panel.hover_action = Some((998, 1));
                         }
                     }
                 }
             }
-            st.ssh_manager_panel.hover = None;
-            old_hover != st.ssh_manager_panel.hover
-                || old_action != st.ssh_manager_panel.hover_action
+            st.remote.ssh_manager_panel.hover = None;
+            old_hover != st.remote.ssh_manager_panel.hover
+                || old_action != st.remote.ssh_manager_panel.hover_action
         } else if st.sidebar_content == crate::layout::SidebarContent::SourceControlPanel {
             let old_hover = st.git.hover_button.clone();
             st.update_git_panel_hover(mouse_x - sidebar_region.x, mouse_y - sidebar_region.y);
@@ -464,7 +594,7 @@ unsafe fn omm_ai_hover(
             && rel_x < apply_btn_x + apply_btn_w
             && rel_y >= apply_y
             && rel_y < apply_y + apply_btn_h;
-        // 历史条目悬停（命中区为绝对坐标）
+        // 历史条目 / 会话标签悬停（命中区为绝对坐标）
         let old_tab_hover = st.ai_panel.hover_tab;
         st.ai_panel.hover_tab = if st.ai_panel.history_open {
             st.ai_panel
@@ -475,7 +605,13 @@ unsafe fn omm_ai_hover(
                 })
                 .map(|(i, ..)| *i)
         } else {
-            None
+            st.ai_panel
+                .tab_regions
+                .iter()
+                .find(|(_, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(i, ..)| *i)
         };
         old_apply_hover != st.ai_panel.hover_apply_button || old_tab_hover != st.ai_panel.hover_tab
     } else {
@@ -582,12 +718,24 @@ unsafe fn omm_resize_drag(
         && (mouse_y >= bottom_region.y - 4.0 && mouse_y <= bottom_region.y + 4.0)
         && mouse_x >= bottom_region.x
         && mouse_x < bottom_region.x + bottom_region.width;
-    // 侧边栏右侧调整区域
+    // 侧边栏右侧调整区域（显示时）或活动栏右缘拖回把手（隐藏时）
     let sidebar_region = layout.sidebar_region();
-    let sidebar_resize_zone = layout.sidebar_visible
-        && (mouse_x >= sidebar_region.right() - 4.0 && mouse_x <= sidebar_region.right() + 4.0)
-        && mouse_y >= sidebar_region.y
-        && mouse_y < sidebar_region.y + sidebar_region.height;
+    let sidebar_resize_zone = if layout.sidebar_visible {
+        // 正常状态：侧边栏右边缘 ±4px
+        (mouse_x >= sidebar_region.right() - 4.0 && mouse_x <= sidebar_region.right() + 4.0)
+            && mouse_y >= sidebar_region.y
+            && mouse_y < sidebar_region.y + sidebar_region.height
+    } else {
+        // 收起状态：活动栏右缘保留 4px 拖回把手（VS Code 行为）
+        let edge = if layout.activity_bar_visible {
+            layout.activity_bar_width
+        } else {
+            0.0
+        };
+        (mouse_x >= edge - 2.0 && mouse_x <= edge + 4.0)
+            && mouse_y >= sidebar_region.y
+            && mouse_y < sidebar_region.y + sidebar_region.height
+    };
     // 更新 hover 状态
     st.hover_sidebar_resize = sidebar_resize_zone;
     // 设置拖拽光标
@@ -614,8 +762,15 @@ unsafe fn omm_resize_drag(
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         } else if st.layout.sidebar_resizing {
-            let delta = mouse_x - sidebar_region.right();
-            st.layout.resize_sidebar(delta);
+            // 期望宽度 = 鼠标相对侧边栏左缘；不用 region.right() 做增量，
+            // 因为收起后 region 宽度归零，增量式无法支持"拖回恢复"
+            let sidebar_left = if st.layout.activity_bar_visible {
+                st.layout.activity_bar_width
+            } else {
+                0.0
+            };
+            st.layout
+                .set_sidebar_width_or_collapse(mouse_x - sidebar_left);
             drop(st);
             invalidate_window(hwnd);
             return Some(LRESULT(0));
@@ -645,20 +800,20 @@ unsafe fn omm_hover_tooltip(
             st.sidebar_content,
             crate::layout::SidebarContent::FileTree | crate::layout::SidebarContent::RemoteFileTree
         );
-    let has_hover_node = st.hover_file_node.is_some() || st.hover_remote_node.is_some();
-    let dx = mouse_x - st.hover_last_mouse_x;
-    let dy = mouse_y - st.hover_last_mouse_y;
+    let has_hover_node = st.hover_file_node.is_some() || st.remote.hover_node.is_some();
+    let dx = mouse_x - st.hover.last_mouse_x;
+    let dy = mouse_y - st.hover.last_mouse_y;
     let moved_beyond_tolerance = dx.abs() > HOVER_MOVE_TOLERANCE || dy.abs() > HOVER_MOVE_TOLERANCE;
-    if (moved_beyond_tolerance || !in_sidebar || !has_hover_node) && st.hover_tooltip.is_some() {
-        st.hover_tooltip = None;
+    if (moved_beyond_tolerance || !in_sidebar || !has_hover_node) && st.hover.tooltip.is_some() {
+        st.hover.tooltip = None;
     }
     if in_sidebar && has_hover_node {
         let _ = SetTimer(hwnd, HOVER_TIMER_ID, HOVER_DELAY_MS, None);
     } else {
         let _ = KillTimer(hwnd, HOVER_TIMER_ID);
     }
-    st.hover_last_mouse_x = mouse_x;
-    st.hover_last_mouse_y = mouse_y;
+    st.hover.last_mouse_x = mouse_x;
+    st.hover.last_mouse_y = mouse_y;
 }
 
 /// UI Tooltip 状态更新：500ms 延迟显示、4px 移动容差。
@@ -755,9 +910,11 @@ unsafe fn omm_tooltip_state(
 /// 7. 侧边栏分隔条 → SizeWE
 /// 8. 右侧面板分隔条 → SizeWE
 /// 9. 底部面板分隔条 → SizeNS
-/// 10. 编辑器内容区 → IBeam
-/// 11. 状态栏 clickable 分区 → Hand
-/// 12. 默认 → Arrow
+/// 10. 文件树内联输入框（新建/重命名时）→ IBeam
+/// 11. AI 面板输入框 → IBeam
+/// 12. 编辑器内容区：欢迎页/空占位页 → Arrow；设置页仅输入字段 → IBeam；其余 → IBeam
+/// 13. 状态栏 clickable 分区 → Hand
+/// 14. 默认 → Arrow
 pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> CursorType {
     EDITOR_STATE.with(|s| {
         let s = s.borrow();
@@ -772,7 +929,10 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         let layout = st.layout.clone();
 
         // 1. 对话框/命令面板打开时返回默认箭头
-        if st.ssh_dialog.visible || st.clone_dialog.visible || st.command_palette.visible {
+        if st.remote.ssh_dialog.visible
+            || st.remote.clone_dialog.visible
+            || st.command_palette.visible
+        {
             return CursorType::Arrow;
         }
 
@@ -810,7 +970,7 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
 
         // 6. 标签栏 hover → Hand
         let tab_bar_region = layout.tab_bar_region(st.show_tab_bar());
-        if tab_bar_region.contains(mouse_x, mouse_y) && st.hover_tab.is_some() {
+        if tab_bar_region.contains(mouse_x, mouse_y) && st.tab_bar.hover_tab.is_some() {
             return CursorType::Hand;
         }
 
@@ -847,12 +1007,72 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             }
         }
 
-        // 10. 编辑器内容区 → IBeam
+        // 10. 文件树内联输入框（新建文件/文件夹/重命名时显示）→ IBeam
+        // 几何与 render_tree_nodes 的输入框绘制保持一致（header_h + 6，高 26，左右 10 边距）
+        if layout.sidebar_visible
+            && st.sidebar_content == crate::layout::SidebarContent::FileTree
+            && st.file_tree_input.is_some()
+        {
+            let sidebar = layout.sidebar_region();
+            let s = st.dpi_scale;
+            let input_top = sidebar.y + 28.0 * s + 6.0 * s;
+            let input_h = 26.0 * s;
+            if mouse_x >= sidebar.x + 10.0 * s
+                && mouse_x < sidebar.x + sidebar.width - 10.0 * s
+                && mouse_y >= input_top
+                && mouse_y < input_top + input_h
+            {
+                return CursorType::IBeam;
+            }
+        }
+
+        // 11. AI 面板输入框 → IBeam
+        // 几何与 lbd_right_panel_apply_input 的输入框命中检测保持一致
+        if layout.right_panel_visible {
+            let rp = layout.right_panel_region();
+            if rp.contains(mouse_x, mouse_y) {
+                let rp_rel_x = mouse_x - rp.x;
+                let rp_rel_y = mouse_y - rp.y;
+                let margin = 10.0;
+                let input_margin = 8.0;
+                let input_area_h = 80.0f32;
+                let text_input_y = rp.height - input_area_h + 6.0;
+                let text_input_h = 36.0f32;
+                if rp_rel_y >= text_input_y
+                    && rp_rel_y < text_input_y + text_input_h
+                    && rp_rel_x >= margin + input_margin
+                    && rp_rel_x < rp.width - margin - input_margin
+                {
+                    return CursorType::IBeam;
+                }
+            }
+        }
+
+        // 12. 编辑器内容区
         if editor_content.contains(mouse_x, mouse_y) {
+            // 欢迎页/空占位页：非文本区域 → Arrow（欢迎页可点项已在步骤 2 返回 Hand）
+            if st.show_welcome() || st.show_empty_placeholder() {
+                return CursorType::Arrow;
+            }
+            // 设置页：仅文本输入字段 → IBeam（Provider 为下拉选择，保持 Arrow）
+            if st.active_tab_is_settings() {
+                if st
+                    .settings_panel
+                    .hit_test_field(mouse_x, mouse_y)
+                    .is_some_and(|f| f != crate::settings::SettingsField::Provider)
+                {
+                    return CursorType::IBeam;
+                }
+                return CursorType::Arrow;
+            }
+            // 图片预览：非文本 → Arrow
+            if st.content.language == aether_core::lexer::Language::Image {
+                return CursorType::Arrow;
+            }
             return CursorType::IBeam;
         }
 
-        // 11. 状态栏 → Hand（clickable 分区）
+        // 13. 状态栏 → Hand（clickable 分区）
         let status_region = layout.status_bar_region();
         if status_region.contains(mouse_x, mouse_y) {
             let rel_x = mouse_x - status_region.x;
@@ -870,7 +1090,7 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             return CursorType::Arrow;
         }
 
-        // 12. 默认 → Arrow
+        // 14. 默认 → Arrow
         CursorType::Arrow
     })
 }

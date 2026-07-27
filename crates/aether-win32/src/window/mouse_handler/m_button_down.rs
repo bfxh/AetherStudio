@@ -38,9 +38,9 @@ pub(crate) unsafe fn on_m_button_down(
         return LRESULT(0);
     }
     // 命中检测：与 handle_tab_bar_click 一致，应用 tab_scroll_x 偏移
-    let rel_x = mouse_x - tab_region.x + st.tab_scroll_x;
+    let rel_x = mouse_x - tab_region.x + st.tab_bar.tab_scroll_x;
     let mut hit_index: Option<usize> = None;
-    for layout_entry in &st.tab_layouts {
+    for layout_entry in &st.tab_bar.tab_layouts {
         if rel_x >= layout_entry.x && rel_x < layout_entry.x + layout_entry.width {
             hit_index = Some(layout_entry.index);
             break;

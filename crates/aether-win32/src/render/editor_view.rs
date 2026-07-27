@@ -348,25 +348,18 @@ impl EditorState {
                             // 颜色变化：flush 前一段，开始新段
                             let segment = &line_text[seg_start_byte..current_byte];
                             if !segment.is_empty() {
-                                let brush = self
-                                    .render_ctx
-                                    .brush_cache
-                                    .get_brush(target, &seg_color)
-                                    .unwrap();
-                                let layout = self
-                                    .render_ctx
-                                    .text_layout_cache
-                                    .get_or_create(segment, &code_format, line_height, font_size)
-                                    .unwrap();
-                                let point = D2D_POINT_2F {
-                                    x: text_x + seg_start_char as f32 * char_width,
-                                    y: line_y,
-                                };
-                                target.DrawTextLayout(
-                                    point,
-                                    &layout,
-                                    &brush,
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                draw_segment_cell_aligned(
+                                    &mut self.render_ctx,
+                                    target,
+                                    segment,
+                                    seg_start_char,
+                                    text_x,
+                                    line_y,
+                                    char_width,
+                                    line_height,
+                                    font_size,
+                                    &code_format,
+                                    &seg_color,
                                 );
                             }
                             seg_start_byte = current_byte;
@@ -386,25 +379,18 @@ impl EditorState {
                     if seg_active {
                         let segment = &line_text[seg_start_byte..current_byte];
                         if !segment.is_empty() {
-                            let brush = self
-                                .render_ctx
-                                .brush_cache
-                                .get_brush(target, &seg_color)
-                                .unwrap();
-                            let layout = self
-                                .render_ctx
-                                .text_layout_cache
-                                .get_or_create(segment, &code_format, line_height, font_size)
-                                .unwrap();
-                            let point = D2D_POINT_2F {
-                                x: text_x + seg_start_char as f32 * char_width,
-                                y: line_y,
-                            };
-                            target.DrawTextLayout(
-                                point,
-                                &layout,
-                                &brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            draw_segment_cell_aligned(
+                                &mut self.render_ctx,
+                                target,
+                                segment,
+                                seg_start_char,
+                                text_x,
+                                line_y,
+                                char_width,
+                                line_height,
+                                font_size,
+                                &code_format,
+                                &seg_color,
                             );
                         }
                     }
@@ -742,13 +728,13 @@ impl EditorState {
 
     /// P3.4: 渲染 hover tooltip（鼠标悬停提示框）
     ///
-    /// 在鼠标附近绘制一个深色背景的提示框，显示文件树节点的完整路径。
-    /// 后续可扩展为 LSP hover 信息显示。
+    /// 在鼠标附近绘制一个深色背景的提示框，显示文件树节点的绝对路径。
+    /// 小字号单行优先；超宽时仅在路径分隔符处折行，绝不折断单个文件/文件夹名。
     pub(super) fn render_hover_tooltip(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
-        let Some(tooltip) = self.hover_tooltip.as_ref() else {
+        let Some(tooltip) = self.hover.tooltip.as_ref() else {
             return;
         };
         if tooltip.is_empty() {
@@ -756,22 +742,69 @@ impl EditorState {
         }
 
         unsafe {
-            // 估算文本尺寸：每行高度 16px，字符宽度约 7px
-            let char_width = 7.0_f32;
+            // 小字号提示（VS Code 风格）
+            let font_size = 11.0_f32;
             let line_height = 16.0_f32;
-            let padding = 8.0_f32;
-            let lines: Vec<&str> = tooltip.text.split('\n').collect();
-            let max_line_chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-            // 限制最大宽度
-            let max_w = tooltip.max_width.min(400.0);
-            let text_w = (max_line_chars as f32 * char_width).min(max_w);
-            let text_h = lines.len() as f32 * line_height;
-            let box_w = text_w + padding * 2.0;
-            let box_h = text_h + padding * 2.0;
-
-            // 钳制到窗口范围内，避免 tooltip 超出右/下边界
+            let padding_x = 8.0_f32;
+            let padding_y = 5.0_f32;
             let win_w = self.window_width as f32;
             let win_h = self.window_height as f32;
+            // 可用最大文本宽度：窗口宽减去边距与内边距
+            let max_text_w = (win_w - 16.0 - padding_x * 2.0).max(80.0);
+
+            // DirectWrite 精确测宽（估算宽度会导致 DrawText 在名字中间折行）
+            let measure =
+                |cache: &aether_render::d2d::brush_cache::TextFormatCache, s: &str| -> f32 {
+                    cache
+                        .measure_text_width(s, font_size, 400)
+                        .unwrap_or(s.chars().count() as f32 * font_size * 0.62)
+                };
+
+            // 整段能放下则单行；否则仅在路径分隔符（\ /）后折行，
+            // 单段（单个文件/文件夹名）即使超宽也独占一行不折断
+            let mut lines: Vec<String> = Vec::new();
+            let mut line_widths: Vec<f32> = Vec::new();
+            for raw_line in tooltip.text.split('\n') {
+                let full_w = measure(&self.render_ctx.text_format_cache, raw_line);
+                if full_w <= max_text_w {
+                    lines.push(raw_line.to_string());
+                    line_widths.push(full_w);
+                    continue;
+                }
+                // 按分隔符拆段（分隔符留在段尾），贪心拼行
+                let segments: Vec<&str> = raw_line.split_inclusive(['\\', '/']).collect();
+                let mut current = String::new();
+                for seg in segments {
+                    if current.is_empty() {
+                        current.push_str(seg);
+                        continue;
+                    }
+                    let candidate_w = measure(
+                        &self.render_ctx.text_format_cache,
+                        &format!("{}{}", current, seg),
+                    );
+                    if candidate_w <= max_text_w {
+                        current.push_str(seg);
+                    } else {
+                        let w = measure(&self.render_ctx.text_format_cache, &current);
+                        lines.push(std::mem::take(&mut current));
+                        line_widths.push(w);
+                        current.push_str(seg);
+                    }
+                }
+                if !current.is_empty() {
+                    let w = measure(&self.render_ctx.text_format_cache, &current);
+                    lines.push(current);
+                    line_widths.push(w);
+                }
+            }
+
+            let text_w = line_widths.iter().copied().fold(0.0_f32, f32::max);
+            let text_h = lines.len() as f32 * line_height;
+            let box_w = text_w + padding_x * 2.0 + 2.0; // +2 余量防亚像素舍入再折行
+            let box_h = text_h + padding_y * 2.0;
+
+            // 钳制到窗口范围内，避免 tooltip 超出右/下边界
             let tx = if tooltip.x + box_w > win_w {
                 (win_w - box_w).max(0.0)
             } else {
@@ -809,9 +842,8 @@ impl EditorState {
             target.FillRectangle(&box_rect, &bg_brush);
             target.DrawRectangle(&box_rect, &border_brush, 1.0, None);
 
-            // 绘制文本（逐行）
+            // 绘制文本（逐行，小字号）
             // DWRITE_TEXT_ALIGNMENT_LEADING=0, DWRITE_PARAGRAPH_ALIGNMENT_NEAR=0
-            let font_size = self.text_renderer.font_size();
             let tf = match self
                 .render_ctx
                 .text_format_cache
@@ -822,11 +854,12 @@ impl EditorState {
             };
 
             for (i, line) in lines.iter().enumerate() {
-                let line_y = ty + padding + i as f32 * line_height;
+                let line_y = ty + padding_y + i as f32 * line_height;
                 let line_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
-                    left: tx + padding,
+                    left: tx + padding_x,
                     top: line_y,
-                    right: tx + box_w - padding,
+                    // 给足宽度：折行已在上面按分隔符完成，DrawText 不得再自动换行
+                    right: tx + padding_x + text_w + 2.0,
                     bottom: line_y + line_height,
                 };
                 let utf16: Vec<u16> = line.encode_utf16().collect();
@@ -841,4 +874,72 @@ impl EditorState {
             }
         }
     }
+}
+
+/// 按可视单元格网格绘制一段同色代码文本。
+///
+/// 纯窄字符（ASCII 等）段整体一次绘制（等宽字体下字形天然对齐网格，无性能回退）；
+/// 含宽字符（CJK 等占 2 格）时按宽度类切分：窄字符连续区间整体绘制，
+/// 宽字符逐个对齐到所属单元格起点。否则 DirectWrite 回退字体的 CJK 真实字宽
+/// ≠ 2×char_width，段内字形逐渐漂离网格，导致光标/选区/点击命中（均按网格计算）
+/// 与字形视觉位置对不上，中文越多偏差越大。
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_segment_cell_aligned(
+    render_ctx: &mut crate::render_context::RenderContext,
+    target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+    segment: &str,
+    start_cell: usize,
+    text_x: f32,
+    line_y: f32,
+    char_width: f32,
+    line_height: f32,
+    font_size: f32,
+    code_format: &windows::Win32::Graphics::DirectWrite::IDWriteTextFormat,
+    color: &windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F,
+) {
+    let Ok(brush) = render_ctx.brush_cache.get_brush(target, color) else {
+        return;
+    };
+    let draw_run = |run: &str, cell: usize, ctx: &mut crate::render_context::RenderContext| {
+        if run.is_empty() {
+            return;
+        }
+        if let Ok(layout) =
+            ctx.text_layout_cache
+                .get_or_create(run, code_format, line_height, font_size)
+        {
+            let point = D2D_POINT_2F {
+                x: text_x + cell as f32 * char_width,
+                y: line_y,
+            };
+            target.DrawTextLayout(point, &layout, &brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+        }
+    };
+
+    // 快速路径：无宽字符 → 整段一次绘制（绝大多数代码行）
+    if segment.chars().all(|c| unicode_char_width(c) < 2) {
+        draw_run(segment, start_cell, render_ctx);
+        return;
+    }
+
+    let mut run_start_byte = 0usize;
+    let mut run_start_cell = start_cell;
+    let mut cur_cell = start_cell;
+    for (i, ch) in segment.char_indices() {
+        let w = unicode_char_width(ch);
+        if w >= 2 {
+            // flush 之前的窄字符连续区间
+            draw_run(&segment[run_start_byte..i], run_start_cell, render_ctx);
+            // 宽字符对齐到自身单元格起点单独绘制（单字符 layout 命中缓存）
+            let end = i + ch.len_utf8();
+            draw_run(&segment[i..end], cur_cell, render_ctx);
+            run_start_byte = end;
+            cur_cell += w;
+            run_start_cell = cur_cell;
+        } else {
+            cur_cell += w;
+        }
+    }
+    // flush 尾部窄字符区间
+    draw_run(&segment[run_start_byte..], run_start_cell, render_ctx);
 }

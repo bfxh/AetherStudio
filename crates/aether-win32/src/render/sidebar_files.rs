@@ -24,12 +24,12 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
                 .unwrap();
-            // 章节标题：11px 加粗，与"源代码管理"侧栏保持一致
+            // 章节标题：10px 加粗，紧凑风格
             let header_format = self
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    11.0 * s,
+                    10.0 * s,
                     DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
@@ -78,12 +78,6 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
-            let btn_bg_color = color_f(0.18, 0.18, 0.18, 1.0);
-            let btn_bg_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &btn_bg_color)
-                .unwrap();
             let btn_hover_color = color_f(0.28, 0.28, 0.28, 1.0);
             let btn_hover_brush = self
                 .render_ctx
@@ -109,8 +103,8 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            // 标题栏右侧：新建文件 / 新建文件夹按钮
-            let btn_size = 20.0f32 * s;
+            // 标题栏右侧：新建文件 / 打开文件夹按钮（紧凑小尺寸）
+            let btn_size = 16.0f32 * s;
             let btn_margin = 4.0f32 * s;
             let new_file_rect = D2D_RECT_F {
                 left: x + width - btn_size * 2.0 - btn_margin * 2.0,
@@ -141,58 +135,41 @@ impl EditorState {
             let nf_hover = self
                 .file_tree_new_file_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover_last_mouse_x, self.hover_last_mouse_y))
+                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
                 .unwrap_or(false);
             let nfo_hover = self
                 .file_tree_new_folder_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover_last_mouse_x, self.hover_last_mouse_y))
+                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
                 .unwrap_or(false);
 
-            target.FillRectangle(
-                &new_file_rect,
-                if nf_hover {
-                    &btn_hover_brush
-                } else {
-                    &btn_bg_brush
-                },
-            );
-            target.FillRectangle(
-                &new_folder_rect,
-                if nfo_hover {
-                    &btn_hover_brush
-                } else {
-                    &btn_bg_brush
-                },
-            );
+            // 轻量化：常态不画背景色块，仅 hover 时显示浅色反馈
+            if nf_hover {
+                target.FillRectangle(&new_file_rect, &btn_hover_brush);
+            }
+            if nfo_hover {
+                target.FillRectangle(&new_folder_rect, &btn_hover_brush);
+            }
 
-            let btn_format = self
-                .render_ctx
-                .text_format_cache
-                .get_format(
-                    12.0 * s,
-                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-                )
-                .unwrap();
-            let new_file_text: Vec<u16> = "\u{2795}".encode_utf16().chain(Some(0)).collect();
-            let new_folder_text: Vec<u16> = "\u{1F4C1}".encode_utf16().chain(Some(0)).collect();
-            target.DrawText(
-                &new_file_text,
-                &btn_format,
-                &new_file_rect,
+            // 矢量描边图标替代 emoji（➕/📁）：细线条、可缩放、与主题同色
+            let icon_inset = 1.5f32 * s;
+            self.icons.draw(
+                target,
+                crate::icons::IconKind::NewFile,
+                new_file_rect.left + icon_inset,
+                new_file_rect.top + icon_inset,
+                btn_size - icon_inset * 2.0,
+                btn_size - icon_inset * 2.0,
                 text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
             );
-            target.DrawText(
-                &new_folder_text,
-                &btn_format,
-                &new_folder_rect,
+            self.icons.draw(
+                target,
+                crate::icons::IconKind::OpenFolder,
+                new_folder_rect.left + icon_inset,
+                new_folder_rect.top + icon_inset,
+                btn_size - icon_inset * 2.0,
+                btn_size - icon_inset * 2.0,
                 text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
             );
 
             // 标题下方的分隔线
@@ -448,14 +425,18 @@ impl EditorState {
 
                 let item_left = base_x + indent;
                 let item_right = base_x + sidebar_width - 10.0 * s;
+                // 高亮背景横跨整个侧边栏宽度（VS Code 风格），
+                // 而非随缩进缩短，视觉上更整齐稳定
+                let row_left = base_x - 10.0 * s;
+                let row_right = row_left + sidebar_width;
 
                 // 绘制悬停背景
                 let is_hover = self.hover_file_node == Some(idx);
                 if is_hover {
                     let hover_rect = D2D_RECT_F {
-                        left: item_left - 4.0 * s,
+                        left: row_left,
                         top: *current_y,
-                        right: item_right,
+                        right: row_right,
                         bottom: *current_y + node_height,
                     };
                     unsafe {
@@ -467,9 +448,9 @@ impl EditorState {
                 let is_selected = self.selected_file_node == Some(idx);
                 if is_selected {
                     let sel_rect = D2D_RECT_F {
-                        left: item_left - 4.0 * s,
+                        left: row_left,
                         top: *current_y,
-                        right: item_right,
+                        right: row_right,
                         bottom: *current_y + node_height,
                     };
                     unsafe {
@@ -484,8 +465,8 @@ impl EditorState {
                 };
 
                 let text_left = if vector_icon.is_some() {
-                    // 矢量图标占 14px 宽 + 2px 间距，文字右移避免被图标遮挡
-                    item_left + 16.0 * s
+                    // 矢量图标占 12px 宽 + 2px 间距，文字右移避免被图标遮挡
+                    item_left + 14.0 * s
                 } else {
                     item_left
                 };
@@ -502,6 +483,10 @@ impl EditorState {
                         .text_layout_cache
                         .create_ellipsis_layout(&display_buf, format, max_text_w, node_height)
                         .unwrap();
+                    // 文字在行内垂直居中（layout 高度 = 行高，默认顶对齐会偏上）
+                    let _ = layout.SetParagraphAlignment(
+                        windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                    );
                     let point = D2D_POINT_2F {
                         x: text_left,
                         y: *current_y,
@@ -509,9 +494,10 @@ impl EditorState {
                     target.DrawTextLayout(point, &layout, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
 
-                // 矢量文件图标：在文本前绘制 14x14 矢量图标（命中 .py/.java/.txt）
+                // 矢量文件图标：在文本前绘制 12x12 矢量图标，尺寸与字高对齐
+                //（字号 10px，图标略大于字面与 VS Code 视觉比例一致，不喧宾夺主）
                 if let Some(kind) = vector_icon {
-                    let icon_size = 14.0_f32 * s;
+                    let icon_size = 12.0_f32 * s;
                     let icon_left = item_left;
                     let icon_top = *current_y + (node_height - icon_size) / 2.0;
                     self.icons.draw(

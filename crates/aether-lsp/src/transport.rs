@@ -258,6 +258,53 @@ pub async fn spawn_server(config: &crate::types::ServerConfig) -> io::Result<Chi
     cmd.spawn()
 }
 
+/// 启动前探活：以 `--version` 快速验证服务器二进制真实可用。
+///
+/// 典型失败场景：PATH 上的 rust-analyzer 是 rustup 代理 shim 但组件未安装，
+/// shim 能被 spawn 成功、却在数秒后报错退出（exit code 1），导致 LSP 静默死亡。
+/// 该探测能在正式启动前识别此类"可执行但不可用"的二进制。
+pub async fn probe_server_command(config: &crate::types::ServerConfig) -> io::Result<()> {
+    let command = config
+        .command
+        .as_ref()
+        .and_then(|p| p.to_str())
+        .unwrap_or("rust-analyzer");
+
+    let mut std_cmd = std::process::Command::new(command);
+    std_cmd
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+
+    // Windows: 禁止创建控制台窗口（与 build_command 保持一致）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        std_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut cmd = tokio::process::Command::from(std_cmd);
+    // rustup shim 解析工具链清单可能耗时 10+ 秒，留足超时余量
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        cmd.output().await
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "LSP server probe timed out"))??;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(io::Error::other(format!(
+            "LSP server probe failed ({}): {}",
+            command,
+            stderr.trim()
+        )))
+    }
+}
+
 /// 根据配置构造 Command（不实际执行，便于单元测试校验参数）
 pub(crate) fn build_command(config: &crate::types::ServerConfig) -> tokio::process::Command {
     let command = config

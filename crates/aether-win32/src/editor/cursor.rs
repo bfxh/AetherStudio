@@ -154,7 +154,9 @@ impl EditorState {
         self.content.selection_end = None;
 
         // 同步到当前标签页
-        if let Some(crate::tabs::Tab::File(content)) = self.tabs.get_mut(self.active_tab) {
+        if let Some(crate::tabs::Tab::File(content)) =
+            self.tab_bar.tabs.get_mut(self.tab_bar.active_tab)
+        {
             content.cursor_line = target_line;
             content.cursor_col = target_col;
             content.selection_start = None;
@@ -198,7 +200,8 @@ impl EditorState {
                 let node_height = 16.0;
                 // P0-1: 按可见节点数（含展开的子节点）估算滚动高度
                 let visible_nodes = self
-                    .remote_file_tree
+                    .remote
+                    .file_tree
                     .as_ref()
                     .map(|t| t.count_visible_nodes())
                     .unwrap_or(0) as f32;
@@ -206,7 +209,7 @@ impl EditorState {
                 let sidebar_region = self.layout.sidebar_region();
                 let visible_height = sidebar_region.height;
                 let max_scroll = (total_height - visible_height).max(0.0);
-                self.remote_scroll_y = (self.remote_scroll_y + delta_y).clamp(0.0, max_scroll);
+                self.remote.scroll_y = (self.remote.scroll_y + delta_y).clamp(0.0, max_scroll);
             }
             crate::layout::SidebarContent::SourceControlPanel => {
                 let item_height = 22.0;
@@ -563,18 +566,23 @@ impl EditorState {
         let rel_y = mouse_y - editor_y + self.content.scroll_y;
 
         let line = (rel_y / line_height) as usize;
-        let char_col = (rel_x / char_width).max(0.0) as usize;
 
         let total_lines = self.content.buffer.len_lines();
         self.content.cursor_line = line.min(total_lines.saturating_sub(1));
 
         if let Some(text) = self.content.buffer.get_line(self.content.cursor_line) {
-            // 将字符列转换为字节偏移，对齐到字符边界
+            // 与渲染一致：按可视列折算 x（CJK 等宽字符占 2 格，见 render_editor
+            // 的 unicode_char_width 累加），否则行内含中文时光标落点偏左。
+            // 就近吸附：点击超过字符一半宽度时落到其后边界，避免永远偏左一格。
+            let target_cells = (rel_x / char_width).max(0.0);
+            let mut cells = 0f32;
             let mut byte_col = 0usize;
-            for (i, ch) in text.chars().enumerate() {
-                if i >= char_col {
+            for ch in text.chars() {
+                let w = unicode_char_width(ch) as f32;
+                if target_cells < cells + w / 2.0 {
                     break;
                 }
+                cells += w;
                 byte_col += ch.len_utf8();
             }
             self.content.cursor_col = byte_col.min(text.len());

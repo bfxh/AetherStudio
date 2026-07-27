@@ -246,7 +246,7 @@ unsafe fn okd_file_node_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRES
     let open = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().file_node_context_menu.is_open)
+            .map(|state| state.borrow().context_menus.file_node.is_open)
             .unwrap_or(false)
     });
     if !open {
@@ -255,7 +255,7 @@ unsafe fn okd_file_node_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRES
     if vk == VK_ESCAPE {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().file_node_context_menu.close();
+                state.borrow_mut().context_menus.file_node.close();
                 invalidate_window(hwnd);
             }
         });
@@ -270,7 +270,7 @@ unsafe fn okd_explorer_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESU
     let open = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().explorer_context_menu.is_open)
+            .map(|state| state.borrow().context_menus.explorer.is_open)
             .unwrap_or(false)
     });
     if !open {
@@ -282,7 +282,7 @@ unsafe fn okd_explorer_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESU
     }
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().explorer_context_menu.close();
+            state.borrow_mut().context_menus.explorer.close();
             invalidate_window(hwnd);
         }
     });
@@ -294,7 +294,7 @@ unsafe fn okd_tab_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
     let open = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().tab_context_menu.visible)
+            .map(|state| state.borrow().context_menus.tab.visible)
             .unwrap_or(false)
     });
     if !open {
@@ -306,7 +306,7 @@ unsafe fn okd_tab_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
     }
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().tab_context_menu.hide();
+            state.borrow_mut().context_menus.tab.hide();
             invalidate_window(hwnd);
         }
     });
@@ -318,7 +318,7 @@ unsafe fn okd_activity_bar_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<L
     let open = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().activity_bar_context_menu.visible)
+            .map(|state| state.borrow().context_menus.activity_bar.visible)
             .unwrap_or(false)
     });
     if !open {
@@ -330,7 +330,7 @@ unsafe fn okd_activity_bar_context_menu(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<L
     }
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().activity_bar_context_menu.hide();
+            state.borrow_mut().context_menus.activity_bar.hide();
             invalidate_window(hwnd);
         }
     });
@@ -519,7 +519,7 @@ unsafe fn okd_completion_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().completion_visible)
+            .map(|state| state.borrow().lsp.completion_visible)
             .unwrap_or(false)
     });
     if !active {
@@ -529,7 +529,7 @@ unsafe fn okd_completion_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<
         VK_UP => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().completion_prev();
+                    state.borrow_mut().lsp.completion_prev();
                 }
             });
             invalidate_window(hwnd);
@@ -538,7 +538,7 @@ unsafe fn okd_completion_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<
         VK_DOWN => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().completion_next();
+                    state.borrow_mut().lsp.completion_next();
                 }
             });
             invalidate_window(hwnd);
@@ -556,7 +556,7 @@ unsafe fn okd_completion_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().completion_cancel();
+                    state.borrow_mut().lsp.completion_cancel();
                 }
             });
             invalidate_window(hwnd);
@@ -653,7 +653,7 @@ unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRES
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().ssh_dialog.visible)
+            .map(|state| state.borrow().remote.ssh_dialog.visible)
             .unwrap_or(false)
     });
     if !active {
@@ -663,7 +663,7 @@ unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRES
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ssh_dialog.visible = false;
+                    state.borrow_mut().remote.ssh_dialog.visible = false;
                     invalidate_window(hwnd);
                 }
             });
@@ -673,12 +673,12 @@ unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRES
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     // C-09: SSH 连接移至后台线程，避免阻塞 UI
-                    if st.ssh_connecting {
+                    if st.remote.ssh_connecting {
                         // 正在连接中，忽略
-                    } else if let Some(config) = st.ssh_dialog.to_config() {
+                    } else if let Some(config) = st.remote.ssh_dialog.to_config() {
                         st.start_ssh_connect(config);
                     } else {
-                        st.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
+                        st.remote.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
                     }
                     drop(st);
                     invalidate_window(hwnd);
@@ -688,7 +688,7 @@ unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRES
         VK_TAB => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ssh_dialog.next_field();
+                    state.borrow_mut().remote.ssh_dialog.next_field();
                     invalidate_window(hwnd);
                 }
             });
@@ -721,7 +721,7 @@ unsafe fn okd_clone_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LR
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().clone_dialog.visible)
+            .map(|state| state.borrow().remote.clone_dialog.visible)
             .unwrap_or(false)
     });
     if !active {
@@ -731,7 +731,7 @@ unsafe fn okd_clone_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LR
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().clone_dialog.visible = false;
+                    state.borrow_mut().remote.clone_dialog.visible = false;
                     invalidate_window(hwnd);
                 }
             });
@@ -767,15 +767,15 @@ unsafe fn okd_clone_dialog_enter(hwnd: HWND) {
     EDITOR_STATE.with(|s| -> LRESULT {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
-            if st.clone_dialog.url.is_empty() {
-                st.clone_dialog.error_message = Some("请输入仓库 URL".to_string());
+            if st.remote.clone_dialog.url.is_empty() {
+                st.remote.clone_dialog.error_message = Some("请输入仓库 URL".to_string());
                 drop(st);
                 invalidate_window(hwnd);
             } else if st.git_cloning {
                 // C-09: 正在克隆中，忽略
                 drop(st);
             } else {
-                let url = st.clone_dialog.url.clone();
+                let url = st.remote.clone_dialog.url.clone();
                 drop(st);
                 if let Some(target_path) =
                     crate::dialogs::Dialogs::open_folder_dialog(hwnd, "选择克隆目标文件夹")
@@ -865,7 +865,7 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
             .as_ref()
             .map(|state| {
                 state.borrow().sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
-                    && state.borrow().ssh_manager_panel.editing
+                    && state.borrow().remote.ssh_manager_panel.editing
             })
             .unwrap_or(false)
     });
@@ -876,7 +876,7 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ssh_manager_panel.cancel_edit();
+                    state.borrow_mut().remote.ssh_manager_panel.cancel_edit();
                     invalidate_window(hwnd);
                 }
             });
@@ -890,7 +890,7 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
                             st.status_message = "服务器配置已保存".to_string();
                         }
                         Err(e) => {
-                            st.ssh_manager_panel.error_message = Some(e);
+                            st.remote.ssh_manager_panel.error_message = Some(e);
                         }
                     }
                     drop(st);
@@ -902,7 +902,8 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
-                    st.ssh_manager_panel.focus_field = (st.ssh_manager_panel.focus_field + 1) % 5;
+                    st.remote.ssh_manager_panel.focus_field =
+                        (st.remote.ssh_manager_panel.focus_field + 1) % 5;
                     drop(st);
                     invalidate_window(hwnd);
                 }
@@ -912,14 +913,14 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
-                    let field = st.ssh_manager_panel.focus_field;
+                    let field = st.remote.ssh_manager_panel.focus_field;
                     let field_str = match field {
-                        0 => &mut st.ssh_manager_panel.form_name,
-                        1 => &mut st.ssh_manager_panel.form_host,
-                        2 => &mut st.ssh_manager_panel.form_port,
-                        3 => &mut st.ssh_manager_panel.form_username,
-                        4 => &mut st.ssh_manager_panel.form_key_path,
-                        _ => &mut st.ssh_manager_panel.form_name,
+                        0 => &mut st.remote.ssh_manager_panel.form_name,
+                        1 => &mut st.remote.ssh_manager_panel.form_host,
+                        2 => &mut st.remote.ssh_manager_panel.form_port,
+                        3 => &mut st.remote.ssh_manager_panel.form_username,
+                        4 => &mut st.remote.ssh_manager_panel.form_key_path,
+                        _ => &mut st.remote.ssh_manager_panel.form_name,
                     };
                     field_str.pop();
                     drop(st);

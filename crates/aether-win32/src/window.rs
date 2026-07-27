@@ -47,6 +47,8 @@ pub(crate) const AI_TIMER_ID: usize = 0xA005;
 pub(crate) const HIGHLIGHT_TIMER_ID: usize = 0xA006;
 /// AI 对话温数据归档定时器 ID（周期检查空闲会话，归档进 MemoryStore）
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
+/// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
+pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -57,6 +59,8 @@ pub(crate) const TERM_REFRESH_MS: u32 = 50;
 pub(crate) const AI_REFRESH_MS: u32 = 80;
 /// 语法高亮刷新间隔（毫秒），约 30fps，让后台高亮结果尽快着色显示
 pub(crate) const HIGHLIGHT_REFRESH_MS: u32 = 33;
+/// UI 动画帧间隔（毫秒），约 60fps，用于下拉面板展开/收起动画
+pub(crate) const UI_ANIM_MS: u32 = 16;
 /// P3.4: Hover tooltip 触发延迟（毫秒）
 pub(crate) const HOVER_DELAY_MS: u32 = 500;
 /// 长按期间允许的鼠标移动容差（逻辑像素，超过则取消长按检测）
@@ -143,6 +147,11 @@ pub fn run(args: LaunchArgs) {
         }
     }
 
+    // 崩溃守卫：SEH 过滤器捕获 FFI/原生崩溃写 minidump；会话哨兵审计异常退出。
+    // release 的 panic="abort"+strip 下 Rust panic hook 无法覆盖原生崩溃，
+    // 此处补齐（见 tests/BUG_REPORT_empty_folder_lsp.md 第四节"叠加风险"）。
+    crate::crash_guard::install();
+
     unsafe {
         // 设置 DPI 感知模式（Per-Monitor V2）
         set_dpi_awareness();
@@ -187,6 +196,9 @@ pub fn run(args: LaunchArgs) {
             DispatchMessageW(&msg);
         }
     }
+
+    // 消息循环正常退出：清除会话哨兵（崩溃/强杀不会走到这里，哨兵残留即异常）
+    crate::crash_guard::mark_clean_exit();
 }
 
 /// 创建一个新的编辑器窗口

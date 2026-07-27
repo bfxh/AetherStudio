@@ -94,6 +94,10 @@ impl HotDataStore {
         self.conversations = panel.conversations.clone();
         self.active = panel.active;
         for conv in &self.conversations {
+            // 休眠会话消息体已卸载且已落库，标脏会以空消息覆写归档元数据
+            if conv.hibernated {
+                continue;
+            }
             self.dirty_conversations.insert(conv.id.clone());
         }
     }
@@ -111,6 +115,11 @@ impl HotDataStore {
 
         // 检测哪些会话发生了变更
         for (i, conv) in panel.conversations.iter().enumerate() {
+            // 休眠会话：消息体已卸载（空 Vec），若照常对比会被误判为
+            // “消息变化”标脏，进而以空会话覆写热日志/归档元数据，必须跳过
+            if conv.hibernated {
+                continue;
+            }
             if let Some(existing) = self.conversations.get_mut(i) {
                 if existing.messages.len() != conv.messages.len() {
                     // 消息数量变化 → 追加新消息到日志

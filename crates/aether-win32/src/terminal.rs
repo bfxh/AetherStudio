@@ -568,10 +568,8 @@ impl TerminalPanel {
                 self.running = false;
             } else {
                 self.output_receiver = Some(rx);
-                // 新输出到达后自动滚动到底部
-                if self.scroll_offset > 0 {
-                    self.scroll_offset = 0;
-                }
+                // 仅当用户未手动上滚（贴底状态）时，新输出到达后才自动保持底部；
+                // 用户正在浏览历史（scroll_offset > 0）时不强制归零，避免滚轮失效。
             }
         }
     }

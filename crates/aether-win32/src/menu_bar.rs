@@ -154,6 +154,8 @@ pub struct MenuBar {
     pub items: Vec<MenuBarItem>,
     pub active_index: Option<usize>,
     pub hover_index: Option<usize>,
+    /// 展开子菜单中被悬停的项索引（用于 hover 高亮反馈）
+    pub submenu_hover: Option<usize>,
     pub item_widths: Vec<f32>,
     /// 每个菜单项的 x 位置（用于子菜单定位）
     pub item_x_positions: Vec<f32>,
@@ -251,6 +253,7 @@ impl MenuBar {
             ],
             active_index: None,
             hover_index: None,
+            submenu_hover: None,
             item_widths: Vec::new(),
             item_x_positions: Vec::new(),
             layout_dirty: true,
@@ -302,6 +305,7 @@ impl MenuBar {
     /// 关闭所有展开的菜单
     pub fn close_all(&mut self) {
         self.active_index = None;
+        self.submenu_hover = None;
         for item in &mut self.items {
             item.expanded = false;
         }

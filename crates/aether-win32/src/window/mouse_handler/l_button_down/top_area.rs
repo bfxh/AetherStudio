@@ -39,22 +39,22 @@ unsafe fn lbd_ssh_dialog(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.ssh_dialog.visible {
+    if !st.remote.ssh_dialog.visible {
         return None;
     }
     if let Some(action) = st.handle_ssh_dialog_click(mouse_x, mouse_y) {
         match action {
             crate::ssh::DialogAction::Connect => {
-                if st.ssh_connecting {
+                if st.remote.ssh_connecting {
                     // 正在连接中，忽略重复点击
-                } else if let Some(config) = st.ssh_dialog.to_config() {
+                } else if let Some(config) = st.remote.ssh_dialog.to_config() {
                     st.start_ssh_connect(config);
                 } else {
-                    st.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
+                    st.remote.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
                 }
             }
             crate::ssh::DialogAction::Cancel => {
-                st.ssh_dialog.visible = false;
+                st.remote.ssh_dialog.visible = false;
             }
             crate::ssh::DialogAction::None => {}
         }
@@ -72,14 +72,14 @@ unsafe fn lbd_clone_dialog(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.clone_dialog.visible {
+    if !st.remote.clone_dialog.visible {
         return None;
     }
     if let Some(action) = st.handle_clone_dialog_click(mouse_x, mouse_y) {
         match action {
             crate::ssh::DialogAction::Connect => {
-                if st.clone_dialog.url.is_empty() {
-                    st.clone_dialog.error_message = Some("请输入仓库 URL".to_string());
+                if st.remote.clone_dialog.url.is_empty() {
+                    st.remote.clone_dialog.error_message = Some("请输入仓库 URL".to_string());
                 } else if st.git_cloning {
                     // C-09: 正在克隆中，忽略重复点击
                 } else {
@@ -88,7 +88,7 @@ unsafe fn lbd_clone_dialog(
                         crate::dialogs::Dialogs::open_folder_dialog(hwnd, "选择克隆目标文件夹")
                     {
                         let mut st = state.borrow_mut();
-                        let url = st.clone_dialog.url.clone();
+                        let url = st.remote.clone_dialog.url.clone();
                         st.start_git_clone(url, target_path);
                         drop(st);
                         invalidate_window(hwnd);
@@ -99,7 +99,7 @@ unsafe fn lbd_clone_dialog(
                 }
             }
             crate::ssh::DialogAction::Cancel => {
-                st.clone_dialog.visible = false;
+                st.remote.clone_dialog.visible = false;
             }
             crate::ssh::DialogAction::None => {}
         }
@@ -176,22 +176,18 @@ unsafe fn lbd_titlebar_controls(
     mouse_x: f32,
     titlebar_region: &crate::layout::Region,
 ) -> Option<LRESULT> {
-    let btn_width = 40.0;
-    let close_x = titlebar_region.x + titlebar_region.width - btn_width;
-    let maximize_x = close_x - btn_width;
-    let minimize_x = maximize_x - btn_width;
-
-    let tool_btn_size = 28.0f32;
-    let tool_btn_gap = 2.0f32;
-    let user_btn_size = 24.0f32;
-    let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
-    let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
-    let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-    let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-    let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
-    let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
-    let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
-    let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+    // 与 render_title_bar / 悬停共用单一布局源，命中区域与绘制位置严格一致
+    let tb = crate::layout::TitlebarButtons::compute(titlebar_region.x, titlebar_region.width);
+    let close_x = tb.close_x;
+    let maximize_x = tb.maximize_x;
+    let minimize_x = tb.minimize_x;
+    let user_btn_x = tb.user_btn_x;
+    let settings_btn_x = tb.settings_btn_x;
+    let right_panel_btn_x = tb.right_panel_btn_x;
+    let bottom_panel_btn_x = tb.bottom_panel_btn_x;
+    let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+    let forward_btn_x = tb.forward_btn_x;
+    let back_btn_x = tb.back_btn_x;
 
     let mut st = state.borrow_mut();
     if mouse_x >= minimize_x {
@@ -279,11 +275,11 @@ unsafe fn lbd_titlebar_menu(
         .menu_bar
         .hit_test(mouse_x, mouse_y - titlebar_region.y, titlebar_region.height)?;
     // 长按检测：记录按下信息并启动定时器
-    st.lpress_start = Some(std::time::Instant::now());
-    st.lpress_x = mouse_x;
-    st.lpress_y = mouse_y;
-    st.lpress_target = Some(crate::input::PressTarget::MenuBar);
-    st.lpress_index = idx;
+    st.mouse_press.lpress_start = Some(std::time::Instant::now());
+    st.mouse_press.lpress_x = mouse_x;
+    st.mouse_press.lpress_y = mouse_y;
+    st.mouse_press.lpress_target = Some(crate::input::PressTarget::MenuBar);
+    st.mouse_press.lpress_index = idx;
     let _ = SetTimer(hwnd, LP_TIMER_ID, LP_THRESHOLD_MS, None);
     // 自定义模式下：不展开子菜单，而是开始拖拽
     if st.menu_bar.customize_mode {
@@ -394,13 +390,13 @@ pub(super) unsafe fn lbd_explorer_context_menu(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.explorer_context_menu.is_open {
+    if !st.context_menus.explorer.is_open {
         return None;
     }
     // 命中菜单项 → 执行动作
-    if let Some(idx) = st.explorer_context_menu.hit_test_menu(mouse_x, mouse_y) {
-        let item = st.explorer_context_menu.items[idx];
-        st.explorer_context_menu.close();
+    if let Some(idx) = st.context_menus.explorer.hit_test_menu(mouse_x, mouse_y) {
+        let item = st.context_menus.explorer.items[idx];
+        st.context_menus.explorer.close();
         // 标记侧边栏脏区域（动作可能触发文件树刷新或内联输入）
         let region = st.layout.sidebar_region().clone();
         st.dirty_tracker.mark_region(
@@ -417,7 +413,7 @@ pub(super) unsafe fn lbd_explorer_context_menu(
         return Some(LRESULT(0));
     }
     // 点击菜单外部 → 关闭菜单
-    st.explorer_context_menu.close();
+    st.context_menus.explorer.close();
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -434,14 +430,14 @@ pub(super) unsafe fn lbd_file_node_context_menu(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.file_node_context_menu.is_open {
+    if !st.context_menus.file_node.is_open {
         return None;
     }
     // 命中菜单项 → 执行动作
-    if let Some(idx) = st.file_node_context_menu.hit_test_menu(mouse_x, mouse_y) {
-        let item = st.file_node_context_menu.items[idx];
-        let node_idx = st.file_node_context_menu.target_node;
-        st.file_node_context_menu.close();
+    if let Some(idx) = st.context_menus.file_node.hit_test_menu(mouse_x, mouse_y) {
+        let item = st.context_menus.file_node.items[idx];
+        let node_idx = st.context_menus.file_node.target_node;
+        st.context_menus.file_node.close();
         // 标记侧边栏脏区域
         let region = st.layout.sidebar_region().clone();
         st.dirty_tracker.mark_region(
@@ -462,7 +458,7 @@ pub(super) unsafe fn lbd_file_node_context_menu(
         return Some(LRESULT(0));
     }
     // 点击菜单外部 → 关闭菜单
-    st.file_node_context_menu.close();
+    st.context_menus.file_node.close();
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -479,14 +475,15 @@ pub(super) unsafe fn lbd_tab_context_menu(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.tab_context_menu.visible {
+    if !st.context_menus.tab.visible {
         return None;
     }
     // 命中菜单项 → 执行动作
-    if let Some(item_idx) = st.tab_context_menu.hit_test(mouse_x, mouse_y) {
+    if let Some(item_idx) = st.context_menus.tab.hit_test(mouse_x, mouse_y) {
         // disabled 项不响应
         let enabled = st
-            .tab_context_menu
+            .context_menus
+            .tab
             .items
             .get(item_idx)
             .map(|i| i.enabled)
@@ -494,9 +491,9 @@ pub(super) unsafe fn lbd_tab_context_menu(
         if !enabled {
             return Some(LRESULT(0));
         }
-        let cmd = st.tab_context_menu.items[item_idx].command;
-        let tab_idx = st.tab_context_menu.tab_index;
-        st.tab_context_menu.hide();
+        let cmd = st.context_menus.tab.items[item_idx].command;
+        let tab_idx = st.context_menus.tab.tab_index;
+        st.context_menus.tab.hide();
         drop(st);
         // 执行命令（需要单独借用）
         let mut st = state.borrow_mut();
@@ -521,14 +518,24 @@ pub(super) unsafe fn lbd_tab_context_menu(
             }
             crate::tab_context_menu::TabContextMenuCommand::CopyPath => {
                 if let Some(idx) = tab_idx {
-                    if let Some(path) = st.tabs.get(idx).and_then(|t| t.file_path().cloned()) {
+                    if let Some(path) = st
+                        .tab_bar
+                        .tabs
+                        .get(idx)
+                        .and_then(|t| t.file_path().cloned())
+                    {
                         st.copy_text_to_clipboard(&path.to_string_lossy());
                     }
                 }
             }
             crate::tab_context_menu::TabContextMenuCommand::RevealInExplorer => {
                 if let Some(idx) = tab_idx {
-                    if let Some(path) = st.tabs.get(idx).and_then(|t| t.file_path().cloned()) {
+                    if let Some(path) = st
+                        .tab_bar
+                        .tabs
+                        .get(idx)
+                        .and_then(|t| t.file_path().cloned())
+                    {
                         let _ = std::process::Command::new("explorer.exe")
                             .args(["/select,", &path.to_string_lossy()])
                             .spawn();
@@ -542,7 +549,7 @@ pub(super) unsafe fn lbd_tab_context_menu(
         return Some(LRESULT(0));
     }
     // 点击菜单外部 → 关闭菜单
-    st.tab_context_menu.hide();
+    st.context_menus.tab.hide();
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -559,13 +566,14 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
     mouse_y: f32,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    if !st.activity_bar_context_menu.visible {
+    if !st.context_menus.activity_bar.visible {
         return None;
     }
     // 命中菜单项 → 执行动作
-    if let Some(item_idx) = st.activity_bar_context_menu.hit_test(mouse_x, mouse_y) {
+    if let Some(item_idx) = st.context_menus.activity_bar.hit_test(mouse_x, mouse_y) {
         let enabled = st
-            .activity_bar_context_menu
+            .context_menus
+            .activity_bar
             .items
             .get(item_idx)
             .map(|i| i.enabled)
@@ -573,8 +581,8 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
         if !enabled {
             return Some(LRESULT(0));
         }
-        let cmd = st.activity_bar_context_menu.items[item_idx].command;
-        st.activity_bar_context_menu.hide();
+        let cmd = st.context_menus.activity_bar.items[item_idx].command;
+        st.context_menus.activity_bar.hide();
         drop(st);
         // 执行命令（需要单独借用）
         let mut st = state.borrow_mut();
@@ -618,7 +626,7 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
         return Some(LRESULT(0));
     }
     // 点击菜单外部 → 关闭菜单
-    st.activity_bar_context_menu.hide();
+    st.context_menus.activity_bar.hide();
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -639,18 +647,25 @@ pub(super) unsafe fn lbd_submenu(
     let submenu_y = titlebar_region.y + titlebar_region.height;
     let sub_idx = st
         .menu_bar
-        .hit_test_submenu(active_idx, mouse_x, mouse_y, submenu_x, submenu_y)?;
-    if let Some(item) = st.menu_bar.items.get(active_idx) {
-        if let Some(menu_item) = item.items.get(sub_idx) {
-            if menu_item.enabled && menu_item.command_id != crate::menu_bar::CommandId::None {
-                let cmd = menu_item.command_id;
-                st.menu_bar.close_all();
-                drop(st);
-                state.borrow_mut().execute_command(cmd, hwnd);
-                invalidate_window(hwnd);
-                return Some(LRESULT(0));
+        .hit_test_submenu(active_idx, mouse_x, mouse_y, submenu_x, submenu_y);
+    if let Some(sub_idx) = sub_idx {
+        if let Some(item) = st.menu_bar.items.get(active_idx) {
+            if let Some(menu_item) = item.items.get(sub_idx) {
+                if menu_item.enabled && menu_item.command_id != crate::menu_bar::CommandId::None {
+                    let cmd = menu_item.command_id;
+                    st.menu_bar.close_all();
+                    drop(st);
+                    state.borrow_mut().execute_command(cmd, hwnd);
+                    invalidate_window(hwnd);
+                    return Some(LRESULT(0));
+                }
             }
         }
     }
-    None
+    // 菜单处于展开状态，但点击未命中任何有效菜单项：
+    // 关闭菜单并消费事件，防止穿透到欢迎页/编辑器等背景元素
+    st.menu_bar.close_all();
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }

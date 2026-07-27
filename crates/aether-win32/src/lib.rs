@@ -20,6 +20,7 @@ pub mod auto_save;
 pub mod bitmap_loader;
 pub mod command_palette;
 pub mod context_menu;
+pub mod crash_guard;
 pub mod cursor;
 pub mod dialogs;
 pub mod editor;

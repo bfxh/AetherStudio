@@ -242,7 +242,7 @@ impl EditorState {
         self.content.buffer.insert(pos, &text);
         self.content.cursor_col += ch.len_utf8();
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -259,7 +259,7 @@ impl EditorState {
         );
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp_notify_change();
+        self.lsp.notify_change(&self.content);
     }
     /// P1-4: 尝试自动配对括号。
     /// 返回 true 表示已处理（调用方不应再执行默认插入）。
@@ -348,7 +348,7 @@ impl EditorState {
                 Some((end_line, end_col + open_shift + close_ch.len_utf8()));
 
             self.content.is_dirty = true;
-            if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
                 tab.mark_dirty();
             }
             self.content.buffer_version += 1;
@@ -376,7 +376,7 @@ impl EditorState {
         self.content.cursor_col += ch.len_utf8();
 
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -405,7 +405,7 @@ impl EditorState {
         self.content.buffer.insert(pos, tab_text);
         self.content.cursor_col += tab_text.len();
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -465,7 +465,7 @@ impl EditorState {
         self.content.cursor_line += 1;
         self.content.cursor_col = full_indent.len();
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -482,7 +482,7 @@ impl EditorState {
         );
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp_notify_change();
+        self.lsp.notify_change(&self.content);
     }
     pub fn delete_char(&mut self) {
         if self.content.cursor_col > 0 {
@@ -497,7 +497,7 @@ impl EditorState {
                 self.content.buffer.delete(prev_pos, pos);
                 self.content.cursor_col -= pos - prev_pos;
                 self.content.is_dirty = true;
-                if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
                     tab.mark_dirty();
                 }
                 self.content.buffer_version += 1;
@@ -535,7 +535,7 @@ impl EditorState {
                     self.content.cursor_line = prev_line;
                     self.content.cursor_col = prev_len;
                     self.content.is_dirty = true;
-                    if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                    if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
                         tab.mark_dirty();
                     }
                     self.content.buffer_version += 1;
@@ -556,7 +556,7 @@ impl EditorState {
                 }
             }
         }
-        self.lsp_notify_change();
+        self.lsp.notify_change(&self.content);
     }
     pub fn delete_forward(&mut self) {
         let pos = self.cursor_byte_pos();
@@ -569,7 +569,7 @@ impl EditorState {
 
             self.content.buffer.delete(pos, next_pos);
             self.content.is_dirty = true;
-            if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
                 tab.mark_dirty();
             }
             self.content.buffer_version += 1;
@@ -588,7 +588,7 @@ impl EditorState {
             self.status_message = "已修改".to_string();
             self.emit_edit_events();
         }
-        self.lsp_notify_change();
+        self.lsp.notify_change(&self.content);
     }
     /// 多光标编辑操作广播
     /// 将插入、删除等操作应用到所有光标位置
@@ -638,7 +638,7 @@ impl EditorState {
         }
 
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -721,7 +721,7 @@ impl EditorState {
         }
 
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -773,7 +773,7 @@ impl EditorState {
         }
 
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
@@ -863,7 +863,7 @@ impl EditorState {
         }
 
         self.content.is_dirty = true;
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
             tab.mark_dirty();
         }
         self.content.buffer_version += 1;
