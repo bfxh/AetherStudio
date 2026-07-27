@@ -281,38 +281,38 @@ pub mod colors {
     use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 
     pub fn editor_bg() -> D2D1_COLOR_F {
-        color_f(0.118, 0.118, 0.118, 1.0)
-    } // #1E1E1E
+        color_f(0.122, 0.122, 0.122, 1.0)
+    } // #1F1F1F（最浅层：内容区）
     pub fn line_highlight() -> D2D1_COLOR_F {
-        color_f(0.15, 0.15, 0.15, 1.0)
-    } // #262626
+        color_f(0.145, 0.145, 0.145, 1.0)
+    } // #252525
     pub fn line_number_fg() -> D2D1_COLOR_F {
         color_f(0.52, 0.52, 0.52, 1.0)
     } // #858585
     pub fn line_number_bg() -> D2D1_COLOR_F {
-        color_f(0.118, 0.118, 0.118, 1.0)
-    } // #1E1E1E
+        color_f(0.122, 0.122, 0.122, 1.0)
+    } // #1F1F1F
     pub fn selection_bg() -> D2D1_COLOR_F {
-        color_f(0.18, 0.36, 0.55, 1.0)
-    } // #2E638C
+        color_f(0.0, 0.47, 0.83, 0.50)
+    } // #0078D4 @50%（统一强调色）
     pub fn cursor() -> D2D1_COLOR_F {
-        color_f(0.8, 0.8, 0.8, 1.0)
-    } // #CCCCCC
+        color_f(0.85, 0.85, 0.85, 1.0)
+    } // #D9D9D9
     pub fn text_default() -> D2D1_COLOR_F {
         color_f(0.83, 0.83, 0.83, 1.0)
     } // #D4D4D4
     pub fn sidebar_bg() -> D2D1_COLOR_F {
-        color_f(0.145, 0.145, 0.149, 1.0)
-    } // #252526
+        color_f(0.106, 0.106, 0.110, 1.0)
+    } // #1B1B1C（中间层：导航区）
     pub fn statusbar_bg() -> D2D1_COLOR_F {
-        color_f(0.0, 0.47, 0.83, 1.0)
-    } // #0078D4
+        color_f(0.106, 0.106, 0.110, 1.0)
+    } // #1B1B1C（去高饱和蓝，与侧边栏同层）
     pub fn tab_active() -> D2D1_COLOR_F {
-        color_f(0.118, 0.118, 0.118, 1.0)
-    } // #1E1E1E
+        color_f(0.122, 0.122, 0.122, 1.0)
+    } // #1F1F1F（与编辑区同层）
     pub fn tab_inactive() -> D2D1_COLOR_F {
-        color_f(0.145, 0.145, 0.149, 1.0)
-    } // #252526
+        color_f(0.106, 0.106, 0.110, 1.0)
+    } // #1B1B1C
 
     // 语法高亮颜色
     pub fn keyword() -> D2D1_COLOR_F {
@@ -375,9 +375,9 @@ mod tests {
         assert!(color_eq(
             colors::editor_bg(),
             D2D1_COLOR_F {
-                r: 0.118,
-                g: 0.118,
-                b: 0.118,
+                r: 0.122,
+                g: 0.122,
+                b: 0.122,
                 a: 1.0
             },
             0.001

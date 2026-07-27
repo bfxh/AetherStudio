@@ -176,22 +176,18 @@ unsafe fn lbd_titlebar_controls(
     mouse_x: f32,
     titlebar_region: &crate::layout::Region,
 ) -> Option<LRESULT> {
-    let btn_width = 40.0;
-    let close_x = titlebar_region.x + titlebar_region.width - btn_width;
-    let maximize_x = close_x - btn_width;
-    let minimize_x = maximize_x - btn_width;
-
-    let tool_btn_size = 28.0f32;
-    let tool_btn_gap = 2.0f32;
-    let user_btn_size = 24.0f32;
-    let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
-    let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
-    let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-    let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-    let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
-    let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
-    let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
-    let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+    // 与 render_title_bar / 悬停共用单一布局源，命中区域与绘制位置严格一致
+    let tb = crate::layout::TitlebarButtons::compute(titlebar_region.x, titlebar_region.width);
+    let close_x = tb.close_x;
+    let maximize_x = tb.maximize_x;
+    let minimize_x = tb.minimize_x;
+    let user_btn_x = tb.user_btn_x;
+    let settings_btn_x = tb.settings_btn_x;
+    let right_panel_btn_x = tb.right_panel_btn_x;
+    let bottom_panel_btn_x = tb.bottom_panel_btn_x;
+    let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+    let forward_btn_x = tb.forward_btn_x;
+    let back_btn_x = tb.back_btn_x;
 
     let mut st = state.borrow_mut();
     if mouse_x >= minimize_x {

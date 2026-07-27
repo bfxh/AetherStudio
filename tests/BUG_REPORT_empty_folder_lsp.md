@@ -129,3 +129,25 @@ stable 工具链**未安装 rust-analyzer 组件**。shim 会先花约 10 秒解
 改用 `& $exe --aether-launch-args $json` 直接调用（pwsh 自动补引号），并以
 `settings.json` 中 `last_workspace` 是否变为目标路径确认参数生效。
 
+## 八、叠加风险修复记录（2026-07-27）：崩溃可观测性
+
+第四节"叠加风险"（`panic = "abort"` + `strip = true` 下进程无痕迹消失）已修复，
+新增 `crates/aether-win32/src/crash_guard.rs` 崩溃守卫模块，补齐三层可观测性：
+
+1. **SEH 未处理异常过滤器**（`SetUnhandledExceptionFilter`）：捕获 Rust panic hook
+   覆盖不到的 FFI/原生崩溃（Direct2D/DirectWrite 访问违例、C 库 abort 等），
+   崩溃时写文本标记（异常码+地址）与 minidump 到 `%TEMP%/Aether/crashes/`；
+2. **会话哨兵文件**：启动时写入 `session.sentinel`、消息循环正常退出时删除；
+   下次启动检测到残留即在日志中 WARN"检测到上次会话未正常退出"，并附最近一次
+   原生崩溃标记详情——覆盖 panic abort、原生崩溃、强杀等所有消失路径；
+3. 与 `logging.rs` 现有 panic hook 互补：panic 由 hook 记日志后 abort，
+   哨兵在下次启动兜底审计。
+
+### 验证结果
+
+- 单元测试 3 项全过（含真实 `MiniDumpWriteDump` FFI 调用产出非空 dmp）；
+- 端到端：启动 → 强杀（模拟崩溃）→ 再启动，日志出现
+  `WARN 检测到上次会话未正常退出（哨兵残留）previous_session=pid=44136`；
+  随后正常关闭，日志出现 `会话正常退出，已清除哨兵`，哨兵文件消失。
+
+

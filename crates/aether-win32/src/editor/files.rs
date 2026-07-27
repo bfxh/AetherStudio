@@ -334,9 +334,9 @@ impl EditorState {
         }
         // 同步终端工作目录到新工作区
         self.terminal_panel.cwd = path.to_string_lossy().to_string();
-        // 立即持久化 last_workspace，避免仅在窗口关闭时保存导致下次启动恢复的是旧工作区
+        // 立即持久化 last_workspace（读盘改写，避免其它窗口的陈旧副本覆写）
         self.app_settings.ui.last_workspace = self.current_folder.clone();
-        if let Err(e) = self.app_settings.save() {
+        if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(Some(&path)) {
             eprintln!("警告: 保存 last_workspace 失败: {}", e);
         }
         self.status_message = format!("正在扫描: {}...", path.display());
@@ -346,6 +346,11 @@ impl EditorState {
         self.dirty_tracker.mark_full_window();
 
         // 初始化 LSP 客户端（启动 rust-analyzer 等语言服务器）
+        // 先清空旧工作区的诊断表/补全结果：诊断按 Url 存储，
+        // 不清理会随切换过的工作区只增不减地驻留内存
+        self.lsp.diagnostics.clear();
+        self.lsp.completion_items.clear();
+        self.lsp.completion_visible = false;
         self.lsp.init(&path);
 
         let hwnd = self.hwnd;
@@ -437,6 +442,11 @@ impl EditorState {
     pub fn close_workspace(&mut self) {
         self.file_tree = None;
         self.current_folder = None;
+        // 同步清空持久化的 last_workspace，避免下次启动重新打开已被用户主动关闭的工作区
+        self.app_settings.ui.last_workspace = None;
+        if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(None) {
+            eprintln!("警告: 清除 last_workspace 失败: {}", e);
+        }
         self.content.file_path = None;
         self.content.buffer = PieceTable::from_string(String::new());
         self.content.cursor_line = 0;
@@ -453,6 +463,10 @@ impl EditorState {
         self.tab_bar.active_tab = 0;
         self.selected_file_node = None;
         self.welcome_focus_action = None;
+        // 释放旧工作区的 LSP 诊断与补全缓存（否则随 Url key 永久驻留）
+        self.lsp.diagnostics.clear();
+        self.lsp.completion_items.clear();
+        self.lsp.completion_visible = false;
         self.git.detect(std::path::Path::new("."));
         self.status_bar.update_git_branch(None);
         self.status_message = "已关闭工作区".to_string();

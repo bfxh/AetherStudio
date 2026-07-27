@@ -2,7 +2,7 @@ use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 
 use aether_core::lexer::TokenKind;
 
-use crate::d2d::factory::{color_f, colors};
+use crate::d2d::factory::color_f;
 
 /// 主题系统
 #[derive(Clone, Copy)]
@@ -148,62 +148,64 @@ impl SyntaxColors {
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            editor_bg: colors::editor_bg(),
-            line_highlight_bg: colors::line_highlight(),
-            line_number_fg: colors::line_number_fg(),
-            line_number_bg: colors::line_number_bg(),
-            selection_bg: colors::selection_bg(),
-            cursor_color: colors::cursor(),
-            sidebar_bg: colors::sidebar_bg(),
-            statusbar_bg: colors::statusbar_bg(),
-            tab_active_bg: colors::tab_active(),
-            tab_inactive_bg: colors::tab_inactive(),
-            text_default: colors::text_default(),
-            // Glass effect fields — opaque fallback values
-            titlebar_bg: color_f(0.137, 0.137, 0.137, 1.0),
-            activity_bar_bg: color_f(0.137, 0.137, 0.137, 1.0),
-            panel_border: color_f(0.2, 0.2, 0.2, 1.0),
+            // 同 glass 层级设计，但全部不透明
+            editor_bg: color_f(0.122, 0.122, 0.122, 1.0), // #1F1F1F
+            line_highlight_bg: color_f(0.145, 0.145, 0.145, 1.0), // 当前行
+            line_number_fg: color_f(0.52, 0.52, 0.52, 1.0),
+            line_number_bg: color_f(0.122, 0.122, 0.122, 1.0),
+            selection_bg: color_f(0.0, 0.47, 0.83, 0.50), // #0078D4 @50%
+            cursor_color: color_f(0.85, 0.85, 0.85, 1.0),
+            sidebar_bg: color_f(0.106, 0.106, 0.110, 1.0), // #1B1B1C
+            statusbar_bg: color_f(0.55, 0.85, 0.51, 1.0),  // 浅亮绿 #8CD982
+            tab_active_bg: color_f(0.122, 0.122, 0.122, 1.0),
+            tab_inactive_bg: color_f(0.106, 0.106, 0.110, 1.0),
+            text_default: color_f(0.83, 0.83, 0.83, 1.0),
+            titlebar_bg: color_f(0.106, 0.106, 0.110, 1.0),
+            activity_bar_bg: color_f(0.078, 0.078, 0.078, 1.0), // #141414 最深
+            panel_border: color_f(1.0, 1.0, 1.0, 0.10),
             shadow: color_f(0.0, 0.0, 0.0, 0.0),
-            glow_selection: color_f(0.18, 0.36, 0.55, 1.0),
-            command_palette_bg: color_f(0.18, 0.18, 0.18, 1.0),
-            submenu_bg: color_f(0.18, 0.18, 0.18, 1.0),
+            glow_selection: color_f(0.0, 0.47, 0.83, 0.45),
+            command_palette_bg: color_f(0.14, 0.14, 0.14, 1.0),
+            submenu_bg: color_f(0.14, 0.14, 0.14, 1.0),
             glass_enabled: false,
-            // REQ-P2-08: 使用共享 SyntaxColors 构造方法，消除重复代码
             syntax: SyntaxColors::shared(),
         }
     }
 
     /// 毛玻璃主题（Apple-level Acrylic）
     /// 半透明面板 + 柔和边框 + 光晕选择效果
+    ///
+    /// 层级设计：由外向内、由深到浅，色彩天然划分区域：
+    ///   活动栏 #141414 (0.078) → 侧边栏/标题栏/状态栏 #1B1B1C (0.106)
+    ///   → 编辑区 #1F1F1F (0.122)，视觉重心自然落在中央内容区
     pub fn glass() -> Self {
         Self {
-            // 编辑器区域：非常微妙的半透明，确保文本可读性
-            editor_bg: color_f(0.118, 0.118, 0.118, 0.95), // #1E1E1E @ 95%
-            line_highlight_bg: color_f(0.15, 0.15, 0.15, 0.90), // 当前行高亮，半透明
-            line_number_fg: color_f(0.52, 0.52, 0.52, 1.0), // 行号保持完全不透明，确保可读
-            line_number_bg: color_f(0.118, 0.118, 0.118, 0.95), // 行号背景与编辑器一致
-            // 选择高亮：柔和蓝色光晕
-            selection_bg: color_f(0.25, 0.50, 0.75, 0.50), // 半透明白光晕
-            cursor_color: color_f(0.8, 0.8, 0.8, 1.0),     // 光标保持不透明
-            // 侧边栏：半透明，让背后内容轻微透出
-            sidebar_bg: color_f(0.145, 0.145, 0.149, 0.80), // #252526 @ 80%
-            // 状态栏：半透明活跃强调色
-            statusbar_bg: color_f(0.0, 0.478, 0.8, 0.70), // #007ACC @ 70%
+            // 编辑器区域：最浅层（视觉重心）
+            editor_bg: color_f(0.122, 0.122, 0.122, 0.95), // #1F1F1F @95%
+            line_highlight_bg: color_f(0.145, 0.145, 0.145, 0.90), // 当前行高亮
+            line_number_fg: color_f(0.52, 0.52, 0.52, 1.0), // 行号保持完全不透明
+            line_number_bg: color_f(0.122, 0.122, 0.122, 0.95), // 行号背景与编辑区一致
+            // 选择高亮：统一为 #0078D4 强调色体系
+            selection_bg: color_f(0.0, 0.47, 0.83, 0.50), // #0078D4 @50%
+            cursor_color: color_f(0.85, 0.85, 0.85, 1.0), // 光标不透明
+            // 侧边栏：中间层（导航区）
+            sidebar_bg: color_f(0.106, 0.106, 0.110, 0.80), // #1B1B1C @80%
+            // 状态栏：浅亮绿色（配合深色文字，作为底部轻量点缀色）
+            statusbar_bg: color_f(0.55, 0.85, 0.51, 0.92), // #8CD982 @92%
             // 标签栏
-            tab_active_bg: color_f(0.145, 0.145, 0.149, 0.85), // 活跃标签稍亮
-            tab_inactive_bg: color_f(0.118, 0.118, 0.118, 0.70), // 非活跃标签更透明
-            // 文本始终不透明，保证可读性
+            tab_active_bg: color_f(0.122, 0.122, 0.122, 0.90), // 活跃标签与编辑区同层
+            tab_inactive_bg: color_f(0.106, 0.106, 0.110, 0.70), // 非活跃标签与侧边栏同层
+            // 文本始终不透明
             text_default: color_f(0.83, 0.83, 0.83, 1.0), // #D4D4D4
-            // Glass-specific additions
-            titlebar_bg: color_f(0.118, 0.118, 0.118, 0.85), // 标题栏半透明暗色
-            activity_bar_bg: color_f(0.118, 0.118, 0.118, 0.80), // 活动栏半透明
-            panel_border: color_f(1.0, 1.0, 1.0, 0.06),      // 柔和白色边框
+            // Glass-specific
+            titlebar_bg: color_f(0.106, 0.106, 0.110, 0.85), // 标题栏与侧边栏同层
+            activity_bar_bg: color_f(0.078, 0.078, 0.078, 0.85), // #141414 @85% — 最深层
+            panel_border: color_f(1.0, 1.0, 1.0, 0.10),      // 白 10%，增强区块边界感
             shadow: color_f(0.0, 0.0, 0.0, 0.25),            // 柔和阴影
-            glow_selection: color_f(0.2, 0.5, 0.8, 0.45),    // 柔和蓝色光晕
-            command_palette_bg: color_f(0.18, 0.18, 0.18, 0.92), // 命令面板
-            submenu_bg: color_f(0.20, 0.20, 0.20, 0.92),     // 子菜单
+            glow_selection: color_f(0.0, 0.47, 0.83, 0.45),  // #0078D4 @45%
+            command_palette_bg: color_f(0.14, 0.14, 0.14, 0.92), // 命令面板
+            submenu_bg: color_f(0.14, 0.14, 0.14, 0.92),     // 子菜单
             glass_enabled: true,
-            // REQ-P2-08: 使用共享 SyntaxColors 构造方法，消除重复代码
             syntax: SyntaxColors::shared(),
         }
     }

@@ -9,9 +9,10 @@
 //!   新建文件 / 新建文件夹 / 分隔符 / 刷新 / 分隔符 /
 //!   在文件资源管理器中打开 / 分隔符 / 复制路径
 //!
-//! 文件节点菜单项：
-//!   重命名 / 删除 / 分隔符 /
-//!   在文件资源管理器中打开 / 复制路径
+//! 文件节点菜单项（按节点类型动态组装）：
+//!   文件夹：新建文件 / 新建文件夹 / 分隔符 / 重命名 / 删除 / 分隔符 /
+//!           在文件资源管理器中打开 / 复制路径 / 复制相对路径
+//!   文件：重命名 / 删除 / 分隔符 / 在文件资源管理器中打开 / 复制路径 / 复制相对路径
 
 /// 资源管理器空白区域上下文菜单项
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,26 +54,52 @@ impl ExplorerContextMenuItem {
 /// 文件节点上下文菜单项（文件/文件夹右键）
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileNodeContextMenuItem {
+    /// 在目标文件夹内新建文件（仅文件夹节点）
+    NewFileInside,
+    /// 在目标文件夹内新建文件夹（仅文件夹节点）
+    NewFolderInside,
+    Separator0,
     Rename,
     Delete,
     Separator1,
     RevealInExplorer,
     CopyPath,
+    CopyRelativePath,
 }
 
 impl FileNodeContextMenuItem {
     pub fn label(&self) -> &'static str {
         match self {
+            FileNodeContextMenuItem::NewFileInside => "新建文件",
+            FileNodeContextMenuItem::NewFolderInside => "新建文件夹",
+            FileNodeContextMenuItem::Separator0 => "",
             FileNodeContextMenuItem::Rename => "重命名",
             FileNodeContextMenuItem::Delete => "删除",
             FileNodeContextMenuItem::Separator1 => "",
             FileNodeContextMenuItem::RevealInExplorer => "在文件资源管理器中打开",
             FileNodeContextMenuItem::CopyPath => "复制路径",
+            FileNodeContextMenuItem::CopyRelativePath => "复制相对路径",
         }
     }
 
     pub fn is_separator(&self) -> bool {
-        matches!(self, FileNodeContextMenuItem::Separator1)
+        matches!(
+            self,
+            FileNodeContextMenuItem::Separator0 | FileNodeContextMenuItem::Separator1
+        )
+    }
+
+    /// 右侧快捷键提示文本（无则返回空串）
+    pub fn shortcut_hint(&self) -> &'static str {
+        match self {
+            FileNodeContextMenuItem::Rename => "F2",
+            _ => "",
+        }
+    }
+
+    /// 危险操作项（红色样式）
+    pub fn is_danger(&self) -> bool {
+        matches!(self, FileNodeContextMenuItem::Delete)
     }
 }
 
@@ -255,13 +282,7 @@ impl FileNodeContextMenu {
         Self {
             is_open: false,
             hover_index: None,
-            items: vec![
-                FileNodeContextMenuItem::Rename,
-                FileNodeContextMenuItem::Delete,
-                FileNodeContextMenuItem::Separator1,
-                FileNodeContextMenuItem::RevealInExplorer,
-                FileNodeContextMenuItem::CopyPath,
-            ],
+            items: Self::items_for(false),
             menu_rect: None,
             origin_x: 0.0,
             origin_y: 0.0,
@@ -269,10 +290,38 @@ impl FileNodeContextMenu {
         }
     }
 
-    pub fn open(&mut self, x: f32, y: f32, window_width: f32, window_height: f32, node_idx: u32) {
+    /// 根据节点类型组装菜单项：文件夹节点额外提供“在其内新建”入口
+    fn items_for(is_dir: bool) -> Vec<FileNodeContextMenuItem> {
+        let mut items = Vec::new();
+        if is_dir {
+            items.push(FileNodeContextMenuItem::NewFileInside);
+            items.push(FileNodeContextMenuItem::NewFolderInside);
+            items.push(FileNodeContextMenuItem::Separator0);
+        }
+        items.extend([
+            FileNodeContextMenuItem::Rename,
+            FileNodeContextMenuItem::Delete,
+            FileNodeContextMenuItem::Separator1,
+            FileNodeContextMenuItem::RevealInExplorer,
+            FileNodeContextMenuItem::CopyPath,
+            FileNodeContextMenuItem::CopyRelativePath,
+        ]);
+        items
+    }
+
+    pub fn open(
+        &mut self,
+        x: f32,
+        y: f32,
+        window_width: f32,
+        window_height: f32,
+        node_idx: u32,
+        is_dir: bool,
+    ) {
         self.is_open = true;
         self.hover_index = None;
         self.target_node = Some(node_idx);
+        self.items = Self::items_for(is_dir);
         let max_x = (window_width - Self::MENU_WIDTH).max(4.0);
         let menu_h = self.menu_height();
         let max_y = (window_height - menu_h).max(4.0);
@@ -533,16 +582,41 @@ mod tests {
         assert!(m.items.contains(&FileNodeContextMenuItem::Delete));
         assert!(m.items.contains(&FileNodeContextMenuItem::RevealInExplorer));
         assert!(m.items.contains(&FileNodeContextMenuItem::CopyPath));
+        assert!(m.items.contains(&FileNodeContextMenuItem::CopyRelativePath));
+        // 默认（文件）菜单不含新建入口
+        assert!(!m.items.contains(&FileNodeContextMenuItem::NewFileInside));
     }
 
     #[test]
     fn test_file_node_menu_open_close() {
         let mut m = FileNodeContextMenu::new();
-        m.open(100.0, 200.0, 1280.0, 800.0, 5);
+        m.open(100.0, 200.0, 1280.0, 800.0, 5, false);
         assert!(m.is_open);
         assert_eq!(m.target_node, Some(5));
+        assert!(!m.items.contains(&FileNodeContextMenuItem::NewFileInside));
         m.close();
         assert!(!m.is_open);
         assert_eq!(m.target_node, None);
+    }
+
+    #[test]
+    fn test_file_node_menu_dir_has_new_entries() {
+        let mut m = FileNodeContextMenu::new();
+        m.open(100.0, 200.0, 1280.0, 800.0, 3, true);
+        // 文件夹节点：包含新建文件/新建文件夹，且排在最前
+        assert_eq!(m.items[0], FileNodeContextMenuItem::NewFileInside);
+        assert_eq!(m.items[1], FileNodeContextMenuItem::NewFolderInside);
+        assert!(m.items[2].is_separator());
+        // 再次以文件节点打开 → 新建入口消失（菜单按节点类型重建）
+        m.open(100.0, 200.0, 1280.0, 800.0, 7, false);
+        assert!(!m.items.contains(&FileNodeContextMenuItem::NewFileInside));
+    }
+
+    #[test]
+    fn test_file_node_menu_shortcut_and_danger() {
+        assert_eq!(FileNodeContextMenuItem::Rename.shortcut_hint(), "F2");
+        assert_eq!(FileNodeContextMenuItem::Delete.shortcut_hint(), "");
+        assert!(FileNodeContextMenuItem::Delete.is_danger());
+        assert!(!FileNodeContextMenuItem::Rename.is_danger());
     }
 }

@@ -82,9 +82,19 @@ impl PathParser {
         if matches!(self.peek(), Some('+') | Some('-')) {
             self.pos += 1;
         }
+        // SVG 紧凑语法：一个数字至多一个小数点，第二个 '.' 属于下一个数字
+        // （如 Lucide 路径中的 "1.704.706" = 1.704 与 0.706），
+        // 否则会吐出 "1.704.706" 导致 parse 失败、整条路径被丢弃
+        let mut seen_dot = false;
         while self.pos < self.chars.len() {
             let c = self.chars[self.pos];
-            if c.is_ascii_digit() || c == '.' {
+            if c.is_ascii_digit() {
+                self.pos += 1;
+            } else if c == '.' {
+                if seen_dot {
+                    break;
+                }
+                seen_dot = true;
                 self.pos += 1;
             } else if c == 'e' || c == 'E' {
                 self.pos += 1;
@@ -334,8 +344,13 @@ where
                     let ccy = sin_phi * cxp + cos_phi * cyp + (cy + pp.1) / 2.0;
                     let ux = (x1p - cxp) / rx;
                     let uy = (y1p - cyp) / ry;
+                    // 规范 F.6.5.6：扫掠角 = angle(u, v)，v 是终点单位向量。
+                    // 旧实现误用 -u（angle(u,-u) 恒为 180°），所有圆角弧
+                    // 都被展开成半圆，图标四角卷曲成钩状。
+                    let vx = (-x1p - cxp) / rx;
+                    let vy = (-y1p - cyp) / ry;
                     let theta1 = vec_angle(1.0, 0.0, ux, uy);
-                    let mut dtheta = vec_angle(ux, uy, -ux, -uy);
+                    let mut dtheta = vec_angle(ux, uy, vx, vy);
                     let tau = std::f32::consts::TAU;
                     if !sweep && dtheta > 0.0 {
                         dtheta -= tau;
@@ -651,6 +666,48 @@ pub(crate) fn build_def(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SVG 紧凑小数语法："1.704.706" 必须解析为两个数字 1.704 与 0.706，
+    /// 否则 Lucide 图标（如 file-plus/folder-open）的主轮廓路径会整条丢失
+    #[test]
+    fn path_parses_compact_decimal_pairs() {
+        let mut cmds: Vec<(char, Vec<f32>)> = Vec::new();
+        parse_svg_path("M14 2a2.4 2.4 0 0 1 1.704.706l1 2", |c, args| {
+            cmds.push((c, args.to_vec()));
+            Ok(())
+        })
+        .expect("紧凑小数路径应解析成功");
+        // M + 弧线展开的若干 C + 末尾 L，至少 3 条命令
+        assert!(cmds.len() >= 3, "实际命令数: {}", cmds.len());
+        assert_eq!(cmds[0].0, 'M');
+        assert_eq!(cmds.last().unwrap().0, 'L');
+        // 末尾 l 1 2 的相对终点基于弧终点 (14+1.704, 2+0.706)
+        let end = cmds.last().unwrap().1.clone();
+        assert!((end[0] - 16.704).abs() < 0.01, "end.x = {}", end[0]);
+        assert!((end[1] - 4.706).abs() < 0.01, "end.y = {}", end[1]);
+    }
+
+    /// SVG 弧命令扫掠角（规范 F.6.5.6）：90° 圆角弧只应展开为 1 段贝塞尔。
+    /// 旧实现误用 angle(u,-u)=180°，会展成 2 段半圆把圆角卷成钩状。
+    #[test]
+    fn arc_quarter_circle_expands_to_single_bezier() {
+        let mut cmds: Vec<(char, Vec<f32>)> = Vec::new();
+        // 从 (0,0) 到 (2,2) 的 90° 圆弧（圆心 (0,2)，半径 2，顺时针）
+        parse_svg_path("M0 0a2 2 0 0 1 2 2", |c, args| {
+            cmds.push((c, args.to_vec()));
+            Ok(())
+        })
+        .expect("弧路径应解析成功");
+        assert_eq!(cmds.len(), 2, "M + 1 段 C，实际: {:?}", cmds);
+        assert_eq!(cmds[1].0, 'C');
+        let args = &cmds[1].1;
+        // 终点 (2,2)
+        assert!((args[4] - 2.0).abs() < 0.01, "end.x = {}", args[4]);
+        assert!((args[5] - 2.0).abs() < 0.01, "end.y = {}", args[5]);
+        // 控制点应在起点切线方向（x 正向）附近：cp1 ≈ (1.1, 0)
+        assert!(args[0] > 0.5 && args[0] < 1.5, "cp1.x = {}", args[0]);
+        assert!(args[1].abs() < 0.2, "cp1.y = {}", args[1]);
+    }
 
     #[test]
     fn hex_color_6() {

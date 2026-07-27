@@ -526,6 +526,8 @@ pub struct EditorState {
     pub git_panel: crate::git::GitIntegration,
     /// 脏矩形追踪器（用于局部重绘优化）
     pub dirty_tracker: crate::dirty_rect::DirtyRectTracker,
+    /// EndDraw 连续失败计数：限制失败后自动重绘的重试次数，防止忙循环
+    pub end_draw_fail_streak: u8,
     /// REQ-P0-05: 统一焦点管理器
     pub focus_manager: FocusManager,
     /// 事件队列（P1.1: 解耦模型改动与渲染）
@@ -777,6 +779,7 @@ impl EditorState {
             sidebar_scroll_y: 0.0,
             git_panel: crate::git::GitIntegration::new(),
             dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
+            end_draw_fail_streak: 0,
             focus_manager: FocusManager::new(),
             event_queue: crate::events::EventQueue::new(),
             inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
@@ -1017,12 +1020,23 @@ impl EditorState {
             crate::layout::SidebarContent::FileTree => {
                 let node_idx = self.hover_file_node?;
                 let tree = self.file_tree.as_ref()?;
-                let path = file_tree_node_path(tree, node_idx)?;
-                if path.is_empty() {
-                    None
-                } else {
-                    Some(path)
+                let relative = file_tree_node_path(tree, node_idx)?;
+                if relative.is_empty() {
+                    return None;
                 }
+                // 显示绝对路径：工作区根 + 相对路径，用平台原生分隔符
+                let abs = self
+                    .current_folder
+                    .as_ref()
+                    .map(|root| {
+                        let mut p = root.clone();
+                        for seg in relative.split('/') {
+                            p.push(seg);
+                        }
+                        p.to_string_lossy().to_string()
+                    })
+                    .unwrap_or(relative);
+                Some(abs)
             }
             crate::layout::SidebarContent::RemoteFileTree => {
                 self.remote.hover_node.clone().filter(|s| !s.is_empty())

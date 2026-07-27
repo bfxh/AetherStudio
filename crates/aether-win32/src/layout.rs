@@ -123,14 +123,80 @@ impl SidebarContent {
 }
 
 /// 布局常量
-pub const TITLE_BAR_HEIGHT: f32 = 32.0;
+pub const TITLE_BAR_HEIGHT: f32 = 28.0;
 pub const MENU_BAR_HEIGHT: f32 = 0.0; // 菜单栏合并到标题栏，高度为0
-pub const ACTIVITY_BAR_WIDTH: f32 = 48.0;
-pub const SIDEBAR_WIDTH: f32 = 250.0;
-pub const STATUS_BAR_HEIGHT: f32 = 22.0;
+pub const ACTIVITY_BAR_WIDTH: f32 = 40.0;
+pub const SIDEBAR_WIDTH: f32 = 200.0;
+pub const STATUS_BAR_HEIGHT: f32 = 16.0;
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
 pub const MIN_SIDEBAR_WIDTH: f32 = 150.0;
 pub const MAX_SIDEBAR_WIDTH: f32 = 500.0;
+
+/// 标题栏右侧按钮布局（单一事实源）。
+///
+/// 此前同一套公式在渲染/悬停/点击/菜单定位四处重复手写，
+/// 且已出现 user_btn_size 28/24 不一致的命中错位隐患；
+/// 现在统一从这里计算，改尺寸只动一处。
+#[derive(Clone, Copy, Debug)]
+pub struct TitlebarButtons {
+    /// 窗口控制按钮（最小化/最大化/关闭）宽度
+    pub btn_width: f32,
+    pub close_x: f32,
+    pub maximize_x: f32,
+    pub minimize_x: f32,
+    /// 工具按钮（面板开关/设置/用户等）边长
+    pub tool_btn_size: f32,
+    pub tool_btn_gap: f32,
+    /// 用户头像按钮边长（与工具按钮统一，消除历史不一致）
+    pub user_btn_size: f32,
+    pub user_btn_x: f32,
+    pub settings_btn_x: f32,
+    pub right_panel_btn_x: f32,
+    pub bottom_panel_btn_x: f32,
+    pub left_sidebar_btn_x: f32,
+    pub divider_x: f32,
+    pub forward_btn_x: f32,
+    pub back_btn_x: f32,
+}
+
+impl TitlebarButtons {
+    /// 从标题栏区域的 x/width 计算全部按钮位置（从右往左排列）
+    pub fn compute(titlebar_x: f32, titlebar_width: f32) -> Self {
+        // 紧凑排版：窗控按钮 34px，工具按钮 24px，间距 2px
+        let btn_width = 34.0;
+        let tool_btn_size = 24.0;
+        let tool_btn_gap = 2.0;
+        let user_btn_size = tool_btn_size;
+        let close_x = titlebar_x + titlebar_width - btn_width;
+        let maximize_x = close_x - btn_width;
+        let minimize_x = maximize_x - btn_width;
+        let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
+        let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
+        let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
+        let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
+        let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
+        let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+        Self {
+            btn_width,
+            close_x,
+            maximize_x,
+            minimize_x,
+            tool_btn_size,
+            tool_btn_gap,
+            user_btn_size,
+            user_btn_x,
+            settings_btn_x,
+            right_panel_btn_x,
+            bottom_panel_btn_x,
+            left_sidebar_btn_x,
+            divider_x,
+            forward_btn_x,
+            back_btn_x,
+        }
+    }
+}
 /// 底部面板最小高度
 pub const MIN_BOTTOM_PANEL_HEIGHT: f32 = 100.0;
 /// 右侧面板最小宽度
@@ -164,6 +230,39 @@ pub struct LayoutManager {
     pub right_panel_resizing: bool,
     pub bottom_panel_resizing: bool,
     pub sidebar_resizing: bool,
+    /// 侧边栏宽度动画状态（None = 静态无动画）
+    pub sidebar_anim: Option<SidebarAnim>,
+}
+
+/// 侧边栏宽度动画：在 200ms 内线性插值从 start_width 到 end_width。
+/// end_width=0 表示收起（终态置 visible=false），>0 表示展开。
+#[derive(Clone, Copy, Debug)]
+pub struct SidebarAnim {
+    pub start_width: f32,
+    pub end_width: f32,
+    pub start_time: std::time::Instant,
+    pub duration_ms: u32,
+}
+
+impl SidebarAnim {
+    pub const DURATION: u32 = 200;
+
+    pub fn new(start: f32, end: f32) -> Self {
+        Self {
+            start_width: start,
+            end_width: end,
+            start_time: std::time::Instant::now(),
+            duration_ms: Self::DURATION,
+        }
+    }
+
+    /// 计算当前帧的插值宽度和是否完成
+    pub fn tick(&self) -> (f32, bool) {
+        let elapsed = self.start_time.elapsed().as_millis() as f32;
+        let t = (elapsed / self.duration_ms as f32).min(1.0);
+        let width = self.start_width + (self.end_width - self.start_width) * t;
+        (width, t >= 1.0)
+    }
 }
 
 impl LayoutManager {
@@ -188,6 +287,7 @@ impl LayoutManager {
             right_panel_resizing: false,
             bottom_panel_resizing: false,
             sidebar_resizing: false,
+            sidebar_anim: None,
         }
     }
 
@@ -380,6 +480,22 @@ impl LayoutManager {
         self.sidebar_width = new_width;
     }
 
+    /// 拖拽调宽侧边栏（VS Code 行为）：拖拽中实时跟手，低于阈值也只缩小不隐藏，
+    /// 用户松手后由 mouse_up 判断是否启动收起动画，避免拖拽中立即跳变。
+    /// 拖回时自动恢复可见（对应收起后的拖回操作）。
+    pub fn set_sidebar_width_or_collapse(&mut self, desired_width: f32) {
+        const COLLAPSE_THRESHOLD: f32 = MIN_SIDEBAR_WIDTH * 0.5;
+        if desired_width >= COLLAPSE_THRESHOLD {
+            // 超过阈值：恢复可见，钳制宽度
+            self.sidebar_visible = true;
+            self.sidebar_width = desired_width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+        } else {
+            // 低于阈值：拖拽中保持可见但宽度即时跟手（视觉反馈），
+            // 不立即隐藏——松手后由 mouse_up 启动动画平滑收起
+            self.sidebar_width = desired_width.max(0.0);
+        }
+    }
+
     /// 调整右侧面板宽度
     /// clamp: 最小 MIN_RIGHT_PANEL_WIDTH，最大 window_width * 0.8
     pub fn resize_right_panel(&mut self, delta: f32) {
@@ -396,9 +512,23 @@ impl LayoutManager {
         self.bottom_panel_height = new_height;
     }
 
-    /// 切换侧边栏可见性
+    /// 切换侧边栏可见性（带动画）
     pub fn toggle_sidebar(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
+        if self.sidebar_visible {
+            // 当前可见 → 启动收起动画
+            self.sidebar_anim = Some(SidebarAnim::new(self.sidebar_width, 0.0));
+        } else {
+            // 当前不可见 → 先置可见（宽度从 0 开始），启动展开动画
+            self.sidebar_visible = true;
+            let target = self.sidebar_width.max(SIDEBAR_WIDTH);
+            self.sidebar_width = 0.0;
+            self.sidebar_anim = Some(SidebarAnim::new(0.0, target));
+        }
+    }
+
+    /// 取消正在进行的侧边栏动画（拖拽开始时打断）
+    pub fn cancel_sidebar_anim(&mut self) {
+        self.sidebar_anim = None;
     }
 
     /// 显式设置侧边栏可见性
@@ -595,6 +725,14 @@ mod tests {
     fn test_layout_manager_hidden_sidebar() {
         let mut layout = LayoutManager::new(1280.0, 800.0);
         layout.toggle_sidebar();
+        // toggle 启动收起动画——模拟动画终态：跟渲染 tick 又中的逻辑一致
+        if let Some(anim) = layout.sidebar_anim {
+            if anim.end_width <= 0.0 {
+                layout.sidebar_visible = false;
+                layout.sidebar_width = SIDEBAR_WIDTH;
+            }
+            layout.sidebar_anim = None;
+        }
         assert!(!layout.sidebar_visible);
 
         let sidebar = layout.sidebar_region();

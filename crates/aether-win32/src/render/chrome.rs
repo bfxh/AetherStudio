@@ -17,7 +17,8 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &self.theme.statusbar_bg)
                 .unwrap();
-            let text_color = color_f(1.0, 1.0, 1.0, 1.0);
+            // 状态栏浅亮绿底：深绿黑文字保证对比度
+            let text_color = color_f(0.08, 0.16, 0.07, 1.0);
             let text_brush = self
                 .render_ctx
                 .brush_cache
@@ -60,28 +61,42 @@ impl EditorState {
                 );
             }
 
-            // 更新状态栏数据
+            // 更新状态栏数据（跳过已隐藏的分区，避免无用计算）
             let mut status = self.status_bar.clone();
-            // P2-1: 状态栏列号显示视觉列（字符数）而非字节偏移
-            let visual_col = self
-                .content
-                .buffer
-                .get_line(self.content.cursor_line)
-                .map(|line| {
-                    // 把字节偏移转换为字符索引（对齐到不超出的最大字符边界）
-                    let byte_pos = self.content.cursor_col.min(line.len());
-                    let mut count = 0usize;
-                    for (i, _) in line.char_indices() {
-                        if i >= byte_pos {
-                            break;
+            // 行列号分区已隐藏（width=0），跳过每帧的字节→字符转换（消除卡顿源）
+            if status
+                .sections
+                .get(crate::status_bar::StatusBarIndex::CursorPos as usize)
+                .map(|s| s.width > 0.0)
+                .unwrap_or(false)
+            {
+                let visual_col = self
+                    .content
+                    .buffer
+                    .get_line(self.content.cursor_line)
+                    .map(|line| {
+                        let byte_pos = self.content.cursor_col.min(line.len());
+                        let mut count = 0usize;
+                        for (i, _) in line.char_indices() {
+                            if i >= byte_pos {
+                                break;
+                            }
+                            count += 1;
                         }
-                        count += 1;
-                    }
-                    count
-                })
-                .unwrap_or(self.content.cursor_col);
-            status.update_cursor_position(self.content.cursor_line, visual_col);
-            status.update_status(&self.status_message);
+                        count
+                    })
+                    .unwrap_or(self.content.cursor_col);
+                status.update_cursor_position(self.content.cursor_line, visual_col);
+            }
+            // 状态消息分区已隐藏（width=0），跳过更新
+            if status
+                .sections
+                .get(crate::status_bar::StatusBarIndex::Status as usize)
+                .map(|s| s.width > 0.0)
+                .unwrap_or(false)
+            {
+                status.update_status(&self.status_message);
+            }
             let lang_name = match self.content.language {
                 Language::PlainText => "Plain Text",
                 Language::C => "C",
@@ -106,6 +121,7 @@ impl EditorState {
             };
             status.update_git_branch(branch.as_deref());
 
+            // 段落垂直居中：文字在状态栏内上下间距严格一致（不再用固定顶部偏移）
             let text_format = self
                 .render_ctx
                 .text_format_cache
@@ -113,7 +129,7 @@ impl EditorState {
                     12.0,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
                 )
                 .unwrap();
 
@@ -125,8 +141,8 @@ impl EditorState {
                 status.update_widths(cache_ref, 12.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32);
             }
 
-            // SubTask 10.1: hover 背景画刷（RGBA(255,255,255,30) 半透明白色）
-            let hover_color = color_f(1.0, 1.0, 1.0, 30.0 / 255.0);
+            // SubTask 10.1: hover 背景画刷（浅绿底上黑 @10% 柔和反馈）
+            let hover_color = color_f(0.0, 0.0, 0.0, 0.10);
             let hover_brush = self
                 .render_ctx
                 .brush_cache
@@ -172,9 +188,10 @@ impl EditorState {
                     }
 
                     let wide: Vec<u16> = section.label.encode_utf16().chain(Some(0)).collect();
+                    // 全高矩形 + 段落居中：上下间距一致
                     let text_rect = D2D_RECT_F {
                         left: text_left,
-                        top: y + 3.0,
+                        top: y,
                         right: x + rx + rw,
                         bottom: y + height,
                     };
@@ -392,33 +409,24 @@ impl EditorState {
                 );
             }
 
-            // 按钮宽度
-            let btn_width = 40.0;
+            // 按钮布局：单一事实源（与悬停/点击命中共用，改尺寸只动 layout.rs）
+            let tb = crate::layout::TitlebarButtons::compute(x, width);
+            let btn_width = tb.btn_width;
             let btn_height = height;
-            let close_x = x + width - btn_width;
-            let maximize_x = close_x - btn_width;
-            let minimize_x = maximize_x - btn_width;
-
-            // 右侧自定义工具栏按钮（在窗口控制按钮左侧）
-            let tool_btn_size = 28.0f32;
-            let tool_btn_gap = 2.0f32;
-
-            // 从右往左计算位置：关闭/最大化/最小化 → 用户 → 设置 → 面板按钮 → 分隔线 → 前进/返回
-            // 用户按钮与其他工具按钮统一为 28px（行业标准一致尺寸）
-            let user_btn_size = tool_btn_size;
-            let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
+            let close_x = tb.close_x;
+            let maximize_x = tb.maximize_x;
+            let minimize_x = tb.minimize_x;
+            let tool_btn_size = tb.tool_btn_size;
+            let user_btn_size = tb.user_btn_size;
+            let user_btn_x = tb.user_btn_x;
             let user_btn_y = y + (height - user_btn_size) / 2.0;
-
-            let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
-
-            let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-            let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-            let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
-
-            let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
-
-            let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
-            let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+            let settings_btn_x = tb.settings_btn_x;
+            let right_panel_btn_x = tb.right_panel_btn_x;
+            let bottom_panel_btn_x = tb.bottom_panel_btn_x;
+            let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+            let divider_x = tb.divider_x;
+            let forward_btn_x = tb.forward_btn_x;
+            let back_btn_x = tb.back_btn_x;
 
             // 在标题栏中间显示当前工作区（打开的文件夹）或应用名
             // UI-T01: 不要显示“未命名”，优先显示打开的文件夹名
@@ -1107,7 +1115,8 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
-            let inactive_color = color_f(0.55, 0.55, 0.55, 1.0);
+            // 非激活图标提亮至 0.70：深底上保证小尺寸图标辨识度，仍与激活态拉开层次
+            let inactive_color = color_f(0.70, 0.70, 0.70, 1.0);
             let inactive_brush = self
                 .render_ctx
                 .brush_cache

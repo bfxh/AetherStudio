@@ -155,13 +155,6 @@ impl EditorState {
             let menu_height = self.context_menus.file_node.menu_height();
             let menu_x = self.context_menus.file_node.origin_x;
             let menu_y = self.context_menus.file_node.origin_y;
-            // 临时诊断：记录绘制位置与高亮索引（排查命中/绘制偏移）
-            tracing::info!(
-                menu_x,
-                menu_y,
-                hover = ?self.context_menus.file_node.hover_index,
-                "render_file_node_menu"
-            );
 
             // 背景
             let bg_color = if self.theme.glass_enabled {
@@ -230,6 +223,33 @@ impl EditorState {
                 Ok(b) => b,
                 Err(_) => return,
             };
+            // 危险项（删除）：红色文字；hover 时红底白字，与普通项蓝底区分
+            let danger_text = color_f(0.94, 0.42, 0.42, 1.0);
+            let danger_text_brush =
+                match self.render_ctx.brush_cache.get_brush(target, &danger_text) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+            let danger_hover_bg = color_f(0.78, 0.22, 0.22, 1.0);
+            let danger_hover_brush = match self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &danger_hover_bg)
+            {
+                Ok(b) => b,
+                Err(_) => return,
+            };
+            let white = color_f(1.0, 1.0, 1.0, 1.0);
+            let white_brush = match self.render_ctx.brush_cache.get_brush(target, &white) {
+                Ok(b) => b,
+                Err(_) => return,
+            };
+            // 快捷键提示：右对齐淡色小字
+            let hint_color = color_f(0.55, 0.55, 0.55, 1.0);
+            let hint_brush = match self.render_ctx.brush_cache.get_brush(target, &hint_color) {
+                Ok(b) => b,
+                Err(_) => return,
+            };
 
             let text_format = self
                 .render_ctx
@@ -238,6 +258,16 @@ impl EditorState {
                     13.0,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                )
+                .unwrap();
+            let hint_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_TRAILING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
                 )
                 .unwrap();
@@ -256,6 +286,7 @@ impl EditorState {
                     current_y += FileNodeContextMenu::SEPARATOR_HEIGHT;
                 } else {
                     let is_hover = self.context_menus.file_node.hover_index == Some(i);
+                    let is_danger = item.is_danger();
                     if is_hover {
                         let item_rect = D2D_RECT_F {
                             left: menu_x + 4.0,
@@ -263,9 +294,24 @@ impl EditorState {
                             right: menu_x + menu_width - 4.0,
                             bottom: current_y + FileNodeContextMenu::ITEM_HEIGHT,
                         };
-                        target.FillRectangle(&item_rect, &hover_brush);
+                        let bg = if is_danger {
+                            &danger_hover_brush
+                        } else {
+                            &hover_brush
+                        };
+                        target.FillRectangle(&item_rect, bg);
                     }
 
+                    // 危险项红字；hover 时白字提升对比度
+                    let label_brush = if is_danger {
+                        if is_hover {
+                            &white_brush
+                        } else {
+                            &danger_text_brush
+                        }
+                    } else {
+                        &text_brush
+                    };
                     let label_wide: Vec<u16> = item.label().encode_utf16().chain(Some(0)).collect();
                     let label_rect = D2D_RECT_F {
                         left: menu_x + 16.0,
@@ -277,10 +323,25 @@ impl EditorState {
                         &label_wide,
                         &text_format,
                         &label_rect,
-                        &text_brush,
+                        label_brush,
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
+
+                    // 右侧快捷键提示（如 F2）
+                    let hint = item.shortcut_hint();
+                    if !hint.is_empty() {
+                        let hint_wide: Vec<u16> = hint.encode_utf16().chain(Some(0)).collect();
+                        let hint_b = if is_hover { &white_brush } else { &hint_brush };
+                        target.DrawText(
+                            &hint_wide,
+                            &hint_format,
+                            &label_rect,
+                            hint_b,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
                     current_y += FileNodeContextMenu::ITEM_HEIGHT;
                 }
             }
