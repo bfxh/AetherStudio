@@ -92,12 +92,22 @@ pub(super) unsafe fn lbd_panel_resizing(
         && (mouse_y >= bottom_region.y - 4.0 && mouse_y <= bottom_region.y + 4.0)
         && mouse_x >= bottom_region.x
         && mouse_x < bottom_region.x + bottom_region.width;
-    // 侧边栏右侧调整区域
+    // 侧边栏调整区域（显示时：右边缘 ±4px；收起时：活动栏右缘拖回把手）
     let sidebar_region = layout.sidebar_region();
-    let sidebar_resize_zone = layout.sidebar_visible
-        && (mouse_x >= sidebar_region.right() - 4.0 && mouse_x <= sidebar_region.right() + 4.0)
-        && mouse_y >= sidebar_region.y
-        && mouse_y < sidebar_region.y + sidebar_region.height;
+    let sidebar_resize_zone = if layout.sidebar_visible {
+        (mouse_x >= sidebar_region.right() - 4.0 && mouse_x <= sidebar_region.right() + 4.0)
+            && mouse_y >= sidebar_region.y
+            && mouse_y < sidebar_region.y + sidebar_region.height
+    } else {
+        let edge = if layout.activity_bar_visible {
+            layout.activity_bar_width
+        } else {
+            0.0
+        };
+        (mouse_x >= edge - 2.0 && mouse_x <= edge + 4.0)
+            && mouse_y >= sidebar_region.y
+            && mouse_y < sidebar_region.y + sidebar_region.height
+    };
     let mut st = state.borrow_mut();
     if right_panel_resize_zone {
         st.layout.right_panel_resizing = true;
@@ -113,6 +123,8 @@ pub(super) unsafe fn lbd_panel_resizing(
     }
     if sidebar_resize_zone {
         st.layout.sidebar_resizing = true;
+        // 拖拽开始即打断可能正在进行的收起/展开动画
+        st.layout.cancel_sidebar_anim();
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
@@ -1557,6 +1569,23 @@ pub(super) unsafe fn lbd_welcome_or_editor(
         st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
         st.clear_selection();
         st.start_selection();
+        // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘，
+        // 点击落光标只需重绘编辑内容与状态栏行列信息
+        st.dirty_tracker.mark_region(
+            editor_content.x,
+            editor_content.y,
+            editor_content.width,
+            editor_content.height,
+            crate::dirty_rect::DirtyRegionType::EditorContent,
+        );
+        let sb = st.layout.status_bar_region();
+        st.dirty_tracker.mark_region(
+            sb.x,
+            sb.y,
+            sb.width,
+            sb.height,
+            crate::dirty_rect::DirtyRegionType::StatusBar,
+        );
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));

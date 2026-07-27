@@ -380,7 +380,35 @@ impl AppSettings {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        self.save_to(&Self::settings_path(), &Self::api_key_path())
+        let settings_path = Self::settings_path();
+        // 常规保存不携带 last_workspace：以磁盘现值为准。
+        // 各窗口持有创建时加载的整份内存副本，若任由 save() 写入该字段，
+        // 任何窗口的一次普通保存（切换模型、调整布局等）都会用陈旧值
+        // 覆写“最后打开的文件夹”，导致下次启动恢复错误的工作区。
+        // last_workspace 仅由 persist_last_workspace() 读改写维护。
+        let mut to_save = self.clone();
+        if let Some(disk_lw) = Self::read_disk_last_workspace(&settings_path) {
+            to_save.ui.last_workspace = disk_lw;
+        }
+        to_save.save_to(&settings_path, &Self::api_key_path())
+    }
+
+    /// 读取磁盘 settings.json 中的 last_workspace 字段。
+    /// 外层 None = 文件不存在/解析失败（保留调用方自身值）；
+    /// 内层 Option = 磁盘上的实际值（含显式 null）。
+    fn read_disk_last_workspace(settings_path: &std::path::Path) -> Option<Option<PathBuf>> {
+        let content = std::fs::read_to_string(settings_path).ok()?;
+        let parsed = serde_json::from_str::<AppSettings>(&content).ok()?;
+        Some(parsed.ui.last_workspace)
+    }
+
+    /// 单独持久化“最后打开的工作区”：读盘 → 改字段 → 写盘。
+    /// 与 save() 分离，避免各窗口的整份内存副本互相覆写该字段。
+    /// 仅由 open_folder（传 Some）与 close_workspace（传 None）调用。
+    pub fn persist_last_workspace(workspace: Option<&std::path::Path>) -> std::io::Result<()> {
+        let mut disk = Self::load();
+        disk.ui.last_workspace = workspace.map(|p| p.to_path_buf());
+        disk.save_to(&Self::settings_path(), &Self::api_key_path())
     }
 
     fn save_to(

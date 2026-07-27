@@ -147,6 +147,11 @@ pub fn run(args: LaunchArgs) {
         }
     }
 
+    // 崩溃守卫：SEH 过滤器捕获 FFI/原生崩溃写 minidump；会话哨兵审计异常退出。
+    // release 的 panic="abort"+strip 下 Rust panic hook 无法覆盖原生崩溃，
+    // 此处补齐（见 tests/BUG_REPORT_empty_folder_lsp.md 第四节"叠加风险"）。
+    crate::crash_guard::install();
+
     unsafe {
         // 设置 DPI 感知模式（Per-Monitor V2）
         set_dpi_awareness();
@@ -191,6 +196,9 @@ pub fn run(args: LaunchArgs) {
             DispatchMessageW(&msg);
         }
     }
+
+    // 消息循环正常退出：清除会话哨兵（崩溃/强杀不会走到这里，哨兵残留即异常）
+    crate::crash_guard::mark_clean_exit();
 }
 
 /// 创建一个新的编辑器窗口

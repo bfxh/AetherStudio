@@ -131,8 +131,9 @@ impl EditorState {
         let dwrite = self.text_renderer.dwrite_factory();
 
         unsafe {
+            // 背景统一为编辑区层级色：避免比周围面板更深的"黑洞"观感
             let bg_brush = target
-                .CreateSolidColorBrush(&color_f(0.09, 0.09, 0.09, 1.0), None)
+                .CreateSolidColorBrush(&self.theme.editor_bg, None)
                 .unwrap_or_else(|e| {
                     eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                     panic!("D2D device lost")
@@ -149,6 +150,13 @@ impl EditorState {
                     eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                     panic!("D2D device lost")
                 });
+            // 快捷键引导：淡灰色，填充负空间且不与主体信息争夺注意力
+            let hint_brush = target
+                .CreateSolidColorBrush(&color_f(0.48, 0.48, 0.48, 1.0), None)
+                .unwrap_or_else(|e| {
+                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    panic!("D2D device lost")
+                });
 
             // 背景填充
             let full_bg = D2D_RECT_F {
@@ -159,15 +167,17 @@ impl EditorState {
             };
             target.FillRectangle(&full_bg, &bg_brush);
 
-            // 居中显示 logo 和提示文字
+            // 居中显示 logo、提示文字与快捷键引导（整体垂直居中）
             let logo_size = 80.0f32;
             let center_x = x + width * 0.5;
             let center_y = y + height * 0.5;
             let logo_x = center_x - logo_size * 0.5;
-            // 文字在图片正下方，整体以图片+文字组合垂直居中
+            // 文字在图片正下方；引导区 3 行，提升空状态信息密度
             let text_h = 28.0f32;
             let gap = 20.0f32;
-            let total_h = logo_size + gap + text_h;
+            let hint_line_h = 26.0f32;
+            let hint_block_h = 16.0 + hint_line_h * 3.0;
+            let total_h = logo_size + gap + text_h + hint_block_h;
             let logo_y = center_y - total_h * 0.5;
             // 使用 PNG 位图，加载失败时回退到矢量图标
             if let Some(ref bitmap) = self.logo_bitmap {
@@ -232,6 +242,51 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
             );
+
+            // 快捷键引导（与 welcome_actions 的真实绑定一致，避免误导）
+            let hint_format = dwrite
+                .CreateTextFormat(
+                    windows::core::w!("Segoe UI"),
+                    None,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
+                    13.0,
+                    windows::core::w!("zh-CN"),
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    panic!("D2D device lost")
+                });
+            let _ = hint_format.SetTextAlignment(
+                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT_CENTER,
+            );
+            let _ = hint_format.SetParagraphAlignment(
+                windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+            );
+            let hints = [
+                "打开文件夹  Ctrl + K",
+                "新建项目  Ctrl + N",
+                "在资源管理器中双击文件开始编辑",
+            ];
+            let hints_top = title_rect.bottom + 16.0;
+            for (i, hint) in hints.iter().enumerate() {
+                let hint_wide: Vec<u16> = hint.encode_utf16().chain(Some(0)).collect();
+                let hint_rect = D2D_RECT_F {
+                    left: x,
+                    top: hints_top + i as f32 * hint_line_h,
+                    right: x + width,
+                    bottom: hints_top + (i + 1) as f32 * hint_line_h,
+                };
+                target.DrawText(
+                    &hint_wide,
+                    &hint_format,
+                    &hint_rect,
+                    &hint_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
         }
     }
 

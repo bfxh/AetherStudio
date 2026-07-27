@@ -268,8 +268,10 @@ impl IconCache {
         let scale = (rect_w / vb_w).min(rect_h / vb_h);
         let draw_w = vb_w * scale;
         let draw_h = vb_h * scale;
-        let tx = rect_left + (rect_w - draw_w) / 2.0 - vb_x * scale;
-        let ty = rect_top + (rect_h - draw_h) / 2.0 - vb_y * scale;
+        // 平移量对齐像素网格：任意小数偏移会让细描边被抗锯齿
+        // 劈到两排像素上，小尺寸图标发虚发歪；取整后笔画明显锐利
+        let tx = (rect_left + (rect_w - draw_w) / 2.0 - vb_x * scale).round();
+        let ty = (rect_top + (rect_h - draw_h) / 2.0 - vb_y * scale).round();
 
         let transform = Matrix3x2 {
             M11: scale,
@@ -299,9 +301,12 @@ impl IconCache {
                     }
                 }
             }
-            // 第二遍：描边层（fill = None 的几何），用传入 brush 描边
-            // 笔画宽度根据缩放调整（1.5 在 24x24 视口 ≈ 1.5 * scale 像素）
-            let stroke_w = 1.5 * scale;
+            // 第二遍：描边层（fill = None 的几何），用传入 brush 描边。
+            // D2D 的 strokeWidth 在几何坐标系，会随 world transform 自动缩放：
+            // 传 1.5 屏幕实际 = 1.5 * scale（Lucide 原始笔宽）。旧实现多乘了一次
+            // scale（屏幕 = 1.5 * scale²），小图标描边被压到亚像素几乎不可见。
+            // 另对小尺寸设下限：屏幕描边至少 1px，保证缩小后仍清晰。
+            let stroke_w = 1.5f32.max(1.0 / scale);
             for (geo, fill) in &self.layers[start..start + len] {
                 if fill.is_none() {
                     target.DrawGeometry(geo, brush, stroke_w, None);

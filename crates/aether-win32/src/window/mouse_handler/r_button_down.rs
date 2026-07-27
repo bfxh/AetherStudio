@@ -156,8 +156,8 @@ pub(crate) unsafe fn on_r_button_down(
     let sidebar_rel_y = mouse_y - sidebar_region.y;
     let sidebar_width = st.layout.sidebar_width;
 
-    // 命中文件/文件夹节点 → 弹出文件节点上下文菜单
-    let hit_node_idx: Option<u32> = st.file_tree.as_ref().and_then(|tree| {
+    // 命中文件/文件夹节点 → 弹出文件节点上下文菜单（携带节点类型，文件夹额外提供新建入口）
+    let hit_node: Option<(u32, bool)> = st.file_tree.as_ref().and_then(|tree| {
         let mut current_y = list_start_y;
         EditorState::find_tree_click_target(
             tree,
@@ -168,10 +168,15 @@ pub(crate) unsafe fn on_r_button_down(
             st.dpi_scale,
             &mut current_y,
         )
-        .map(|(node_idx, _, _)| node_idx)
+        .map(|(node_idx, kind, _)| {
+            (
+                node_idx,
+                kind == aether_core::workspace::file_tree::FileKind::Directory,
+            )
+        })
     });
 
-    if let Some(node_idx) = hit_node_idx {
+    if let Some((node_idx, is_dir)) = hit_node {
         // 节点命中：选中节点，关闭旧菜单，弹出节点级上下文菜单
         if st.context_menus.explorer.is_open {
             st.context_menus.explorer.close();
@@ -190,7 +195,7 @@ pub(crate) unsafe fn on_r_button_down(
         // 弹出文件节点上下文菜单
         st.context_menus
             .file_node
-            .open(mouse_x, mouse_y, window_w, window_h, node_idx);
+            .open(mouse_x, mouse_y, window_w, window_h, node_idx, is_dir);
         st.dirty_tracker.mark_full_window();
         drop(st);
         invalidate_window(hwnd);

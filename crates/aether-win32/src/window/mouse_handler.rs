@@ -37,7 +37,17 @@ pub(crate) unsafe fn on_l_button_up(
             // 结束面板拖拽
             st.layout.right_panel_resizing = false;
             st.layout.bottom_panel_resizing = false;
-            st.layout.sidebar_resizing = false;
+            // 侧边栏拖拽结束：当前宽度低于阈值且仍可见 → 启动平滑收起动画（而非立即跳变）
+            if st.layout.sidebar_resizing {
+                st.layout.sidebar_resizing = false;
+                let collapse_threshold = crate::layout::MIN_SIDEBAR_WIDTH * 0.5;
+                if st.layout.sidebar_visible && st.layout.sidebar_width < collapse_threshold {
+                    st.layout.sidebar_anim = Some(crate::layout::SidebarAnim::new(
+                        st.layout.sidebar_width,
+                        0.0,
+                    ));
+                }
+            }
             st.settings_panel.temp_slider_dragging = false;
             // 长按检测状态清理
             st.mouse_press.lbutton_down = false;

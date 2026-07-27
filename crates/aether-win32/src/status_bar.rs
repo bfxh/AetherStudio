@@ -33,9 +33,9 @@ impl StatusBar {
         Self {
             sections: vec![
                 StatusBarSection {
-                    label: "main".to_string(),
-                    width: 120.0,
-                    clickable: true,
+                    label: "".to_string(),
+                    width: 0.0, // 状态消息分区隐藏（“已打开文件夹”等冗余信息无需常驻显示）
+                    clickable: false,
                     icon: None,
                 },
                 StatusBarSection {
@@ -45,8 +45,8 @@ impl StatusBar {
                     icon: None,
                 },
                 StatusBarSection {
-                    label: "Ln 1, Col 1".to_string(),
-                    width: 80.0,
+                    label: "".to_string(),
+                    width: 0.0, // 行列号分区隐藏（精简状态栏，减少视觉噪声）
                     clickable: false,
                     icon: None,
                 },
@@ -200,19 +200,14 @@ mod tests {
         let bar = StatusBar::new();
         assert_eq!(bar.sections.len(), 6);
         assert_eq!(bar.hover_index, None);
-        assert_eq!(
-            bar.sections[StatusBarIndex::Status as usize].clickable,
-            true
-        );
-        assert_eq!(
-            bar.sections[StatusBarIndex::CursorPos as usize].clickable,
-            false
-        );
+        // Status 和 CursorPos 分区默认隐藏（width=0）
+        assert_eq!(bar.sections[StatusBarIndex::Status as usize].width, 0.0);
+        assert_eq!(bar.sections[StatusBarIndex::CursorPos as usize].width, 0.0);
     }
 
     #[test]
     fn test_section_regions_skips_zero_width() {
-        // GitBranch width=0 时，section_regions 不应生成该 region
+        // Status/CursorPos/GitBranch width=0 时，section_regions 不应生成该 region
         let mut bar = StatusBar::new();
         bar.update_git_branch(None);
         assert_eq!(bar.sections[StatusBarIndex::GitBranch as usize].width, 0.0);
@@ -225,14 +220,19 @@ mod tests {
                 .any(|(idx, _, _, _, _)| *idx == StatusBarIndex::GitBranch as usize),
             "GitBranch width=0 时不应生成 region"
         );
-        // 其他 5 个分区仍应存在
-        assert_eq!(regions.len(), 5);
+        // Status(0) + CursorPos(2) + GitBranch(5) 隐藏，剩余 3 个
+        assert_eq!(regions.len(), 3);
     }
 
     #[test]
     fn test_section_regions_includes_all_when_visible() {
         let mut bar = StatusBar::new();
         bar.update_git_branch(Some("main"));
+        // 手动激活 Status 和 CursorPos 分区
+        bar.sections[StatusBarIndex::Status as usize].label = "就绪".to_string();
+        bar.sections[StatusBarIndex::Status as usize].width = 80.0;
+        bar.sections[StatusBarIndex::CursorPos as usize].label = "Ln 1, Col 1".to_string();
+        bar.sections[StatusBarIndex::CursorPos as usize].width = 80.0;
         let regions = bar.section_regions(800.0);
         assert_eq!(regions.len(), 6);
         // GitBranch 索引（5）应存在

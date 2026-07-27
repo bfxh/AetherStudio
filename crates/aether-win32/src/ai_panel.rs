@@ -240,6 +240,14 @@ pub struct AiConversation {
     pub should_stop: Arc<AtomicBool>,
     /// 本轮注入过的 playbook 条目 ID（用于反馈归因）
     pub used_bullet_ids: Vec<String>,
+    /// 标签休眠：messages 已卸载（完整内容在 SQLite 温数据层），
+    /// 轻量现场（草稿/滚动/模式等）仍驻留内存；激活时同步水合
+    pub hibernated: bool,
+    /// 休眠两阶段握手：发起归档时记录当时 updated_at，
+    /// 归档成功回执且 updated_at 未变才真正卸载，防快照后新增消息丢失
+    pub hibernate_pending_at: Option<u64>,
+    /// 休眠前的消息数（供关闭时写历史元数据，免读库）
+    pub hibernated_msg_count: usize,
 }
 
 impl AiConversation {
@@ -263,7 +271,31 @@ impl AiConversation {
             stream_state: Arc::new(Mutex::new(AiStreamState::default())),
             should_stop: Arc::new(AtomicBool::new(false)),
             used_bullet_ids: Vec::new(),
+            hibernated: false,
+            hibernate_pending_at: None,
+            hibernated_msg_count: 0,
         }
+    }
+
+    /// 是否具备归档价值（含用户消息的真实对话，与归档/反思的判定一致）
+    pub fn is_archivable(&self) -> bool {
+        self.messages.len() > 1 && self.messages.iter().any(|m| m.role == AiRole::User)
+    }
+
+    /// 卸载消息体进入休眠态（调用方负责确认已安全落库）
+    fn enter_hibernation(&mut self) {
+        self.hibernated_msg_count = self.messages.len();
+        self.messages = Vec::new();
+        self.hibernated = true;
+        self.hibernate_pending_at = None;
+    }
+
+    /// 用温数据层读回的消息体退出休眠态
+    fn wake_with_messages(&mut self, messages: Vec<AiMessage>) {
+        self.messages = messages;
+        self.hibernated = false;
+        self.hibernate_pending_at = None;
+        self.hibernated_msg_count = 0;
     }
 
     fn add_assistant_message(&mut self, content: String) {
@@ -867,6 +899,8 @@ impl AiPanel {
                     if let Some(hot_store) = self.hot_data_store.as_mut() {
                         hot_store.clear_dirty(&conv_id);
                     }
+                    // 休眠两阶段握手：落库确认后才卸载对应标签的消息体
+                    self.finalize_hibernation(&conv_id);
                     if let Some(warm_store) = self.warm_data_store.as_ref() {
                         warm_store.request_remove_hot_log(conv_id);
                     }
@@ -931,11 +965,6 @@ impl AiPanel {
 
     // ===== 多会话（标签页 / 并发 / 历史）=====
 
-    /// 活动会话槽位下标越界保护后的引用
-    pub fn active_conversation(&self) -> Option<&AiConversation> {
-        self.conversations.get(self.active)
-    }
-
     /// 标签标题（活动会话取槽位标题，槽位标题在 sync_active_title 中维护）
     pub fn conv_title(&self, i: usize) -> &str {
         self.conversations
@@ -979,23 +1008,28 @@ impl AiPanel {
     }
 
     /// 把某槽位会话加载为活动会话的实时（扁平）状态。
+    /// 休眠槽位先从温数据层水合消息体，覆盖所有激活路径（切换/关闭接管/历史恢复）。
     fn load_slot_into_active(&mut self, idx: usize) {
         if idx >= self.conversations.len() {
             return;
         }
-        let slot = self.conversations[idx].clone();
-        self.messages = slot.messages;
-        self.input = slot.input;
+        self.wake_conversation(idx);
+        // 挪移大字段而非克隆：活动会话现场以扁平字段为唯一权威副本，
+        // 槽位在下一次 snapshot_active_into_slot 时回填，消除双份驻留。
+        // 所有读活动槽位重字段的路径（热同步/退出归档/关闭）均先 snapshot。
+        let slot = &mut self.conversations[idx];
+        self.messages = std::mem::take(&mut slot.messages);
+        self.input = std::mem::take(&mut slot.input);
         self.caret_pos = slot.caret_pos;
-        self.composition = slot.composition;
+        self.composition = slot.composition.take();
         self.is_generating = slot.is_generating;
         self.scroll_y = slot.scroll_y;
         self.content_height = slot.content_height;
         self.stick_to_bottom = slot.stick_to_bottom;
         self.mode = slot.mode;
-        self.attachments = slot.attachments;
-        self.stream_state = slot.stream_state;
-        self.should_stop = slot.should_stop;
+        self.attachments = std::mem::take(&mut slot.attachments);
+        self.stream_state = Arc::clone(&slot.stream_state);
+        self.should_stop = Arc::clone(&slot.should_stop);
         self.active = idx;
     }
 
@@ -1005,18 +1039,93 @@ impl AiPanel {
             return;
         }
         self.snapshot_active_into_slot();
+        let prev = self.active;
         self.load_slot_into_active(idx);
+        // 刚切走的旧标签：空闲且可归档时发起休眠（两阶段，落库成功才真正卸载）
+        self.request_hibernate(prev);
         self.model_menu_open = false;
         self.dismiss_history_dropdown();
+    }
+
+    /// 对指定空闲标签发起休眠请求：异步归档进 SQLite，落库成功回执后才卸载消息体。
+    /// 生成中、已休眠、活动标签、无归档价值的会话跳过。
+    fn request_hibernate(&mut self, idx: usize) {
+        if idx == self.active || idx >= self.conversations.len() {
+            return;
+        }
+        let conv = &self.conversations[idx];
+        if conv.hibernated || conv.is_generating || conv.hibernate_pending_at.is_some() {
+            return;
+        }
+        if !conv.is_archivable() {
+            return; // 空对话无需落库，直接常驻内存（成本极低）
+        }
+        let Some(store) = self.warm_data_store.as_ref() else {
+            return; // 无温数据层则不休眠，避免消息无处可存
+        };
+        let snapshot = conv.updated_at;
+        store.request_archive(conv.id.clone(), conv.clone());
+        self.conversations[idx].hibernate_pending_at = Some(snapshot);
+    }
+
+    /// 唤醒指定休眠标签：从温数据层读回消息体。读失败则退化为保留存根（避免 panic）。
+    fn wake_conversation(&mut self, idx: usize) {
+        if idx >= self.conversations.len() || !self.conversations[idx].hibernated {
+            return;
+        }
+        let id = self.conversations[idx].id.clone();
+        let loaded = self
+            .warm_data_store
+            .as_ref()
+            .and_then(|s| s.load_conversation(&id).ok())
+            .map(|c| c.messages);
+        match loaded {
+            Some(messages) => self.conversations[idx].wake_with_messages(messages),
+            None => {
+                // 温数据缺失（极端情况）：以欢迎语兜底，保证 UI 可用
+                self.conversations[idx].wake_with_messages(vec![AiMessage::new(
+                    AiRole::System,
+                    AI_WELCOME.to_string(),
+                )]);
+            }
+        }
+    }
+
+    /// 收割休眠归档回执：对已落库且 updated_at 未变的 pending 标签真正卸载消息体。
+    /// 在归档结果轮询（trigger_warm_archive）中调用，保证「落盘确认 → 卸载」的原子顺序。
+    fn finalize_hibernation(&mut self, archived_id: &str) {
+        let active = self.active;
+        for (i, conv) in self.conversations.iter_mut().enumerate() {
+            if conv.id != archived_id {
+                continue;
+            }
+            // 回执到达前用户已切回该标签：放弃本轮并清 pending，
+            // 否则残留的 pending 会永久屏蔽该标签后续的休眠发起
+            if i == active {
+                conv.hibernate_pending_at = None;
+                continue;
+            }
+            // 两阶段握手：仅当 pending 且期间无新消息（updated_at 未变）才卸载
+            if let Some(pending_at) = conv.hibernate_pending_at {
+                if pending_at == conv.updated_at && !conv.is_generating {
+                    conv.enter_hibernation();
+                } else {
+                    // 快照后又有新活动：放弃本轮休眠，等下次切走重新发起
+                    conv.hibernate_pending_at = None;
+                }
+            }
+        }
     }
 
     /// 新建一个空对话并激活
     pub fn new_conversation(&mut self) {
         self.snapshot_active_into_slot();
+        let prev = self.active;
         let conv = AiConversation::new(gen_conversation_id(), "新对话".to_string());
         self.conversations.push(conv);
         let idx = self.conversations.len() - 1;
         self.load_slot_into_active(idx);
+        self.request_hibernate(prev);
         self.input_focused = true;
         self.model_menu_open = false;
         self.dismiss_history_dropdown();
@@ -1028,14 +1137,28 @@ impl AiPanel {
         if idx >= self.conversations.len() {
             return;
         }
+        // 关闭活动标签：先把扁平现场回填槽位，保证下面读到的是最新消息
+        if idx == self.active {
+            self.snapshot_active_into_slot();
+        }
         self.conversations[idx]
             .should_stop
             .store(true, Ordering::SeqCst);
-        // 归档到历史（仅非空对话）
+        // 归档到历史（仅非空对话）；休眠标签已落库，只补内存历史元数据不重复归档
         let conv = &self.conversations[idx];
         let msg_count = conv.messages.len();
         let has_user_msg = conv.messages.iter().any(|m| m.role == AiRole::User);
-        if has_user_msg && msg_count > 1 {
+        if conv.hibernated {
+            let meta = ConversationMeta {
+                id: conv.id.clone(),
+                title: conv.title.clone(),
+                updated_at: conv.updated_at,
+                message_count: conv.hibernated_msg_count,
+                preview: String::new(),
+                mode: format!("{:?}", conv.mode),
+            };
+            self.upsert_history_meta(meta);
+        } else if has_user_msg && msg_count > 1 {
             let preview = conv
                 .messages
                 .iter()
@@ -1058,20 +1181,11 @@ impl AiPanel {
                 preview,
                 mode: format!("{:?}", conv.mode),
             };
-            // 去重：同 id 替换旧记录
-            if let Some(pos) = self.history.iter().position(|h| h.id == meta.id) {
-                self.history.remove(pos);
-            }
-            self.history.insert(0, meta);
-            // 限制内存历史条数（避免无限增长）
-            const MAX_HISTORY: usize = 50;
-            if self.history.len() > MAX_HISTORY {
-                self.history.truncate(MAX_HISTORY);
-            }
             // 持久化：异步归档进 SQLite（温数据层，含向量索引）
             if let Some(warm_store) = self.warm_data_store.as_ref() {
                 warm_store.request_archive(conv.id.clone(), conv.clone());
             }
+            self.upsert_history_meta(meta);
         }
         if idx == self.active {
             self.conversations.remove(idx);
@@ -1095,6 +1209,18 @@ impl AiPanel {
         self.dismiss_history_dropdown();
     }
 
+    /// 历史元数据去重插入（同 id 替换旧记录），并限制内存条数
+    fn upsert_history_meta(&mut self, meta: ConversationMeta) {
+        if let Some(pos) = self.history.iter().position(|h| h.id == meta.id) {
+            self.history.remove(pos);
+        }
+        self.history.insert(0, meta);
+        const MAX_HISTORY: usize = 50;
+        if self.history.len() > MAX_HISTORY {
+            self.history.truncate(MAX_HISTORY);
+        }
+    }
+
     /// 从历史记录中恢复指定会话为新的活动标签页
     pub fn restore_from_history(&mut self, hist_idx: usize) {
         if hist_idx >= self.history.len() {
@@ -1112,6 +1238,7 @@ impl AiPanel {
         }
         // 否则尝试从 SQLite 加载完整会话，失败则创建占位会话
         self.snapshot_active_into_slot();
+        let prev = self.active;
         let conv = self
             .warm_data_store
             .as_ref()
@@ -1124,6 +1251,7 @@ impl AiPanel {
         self.conversations.push(conv);
         let new_idx = self.conversations.len() - 1;
         self.load_slot_into_active(new_idx);
+        self.request_hibernate(prev);
         self.dismiss_history_dropdown();
     }
 
@@ -2502,6 +2630,113 @@ mod tests {
     fn drain_background_pending_when_idle() {
         let mut conv = AiConversation::new("c1".into(), "t".into());
         assert_eq!(conv.drain_background(), DrainEdge::Pending);
+    }
+
+    // ===== 标签休眠：两阶段卸载 / 唤醒 / 关闭补元数据 =====
+
+    /// 造一个含用户消息的可归档会话
+    fn archivable_conv(id: &str) -> AiConversation {
+        let mut c = AiConversation::new(id.to_string(), format!("会话{}", id));
+        c.messages.push(AiMessage::new(AiRole::User, "问题".into()));
+        c.messages
+            .push(AiMessage::new(AiRole::Assistant, "回答".into()));
+        c
+    }
+
+    #[test]
+    fn hibernate_finalize_two_phase_unloads_messages() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h1"));
+        // 模拟已发起归档：pending 快照 = 当前 updated_at
+        let at = p.conversations[1].updated_at;
+        p.conversations[1].hibernate_pending_at = Some(at);
+        let msg_count = p.conversations[1].messages.len();
+        p.finalize_hibernation("h1");
+        let c = &p.conversations[1];
+        assert!(c.hibernated, "落库确认后应进入休眠态");
+        assert!(c.messages.is_empty(), "消息体应卸载");
+        assert_eq!(c.hibernated_msg_count, msg_count);
+        assert_eq!(c.hibernate_pending_at, None);
+    }
+
+    #[test]
+    fn hibernate_finalize_aborts_when_updated_after_snapshot() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h2"));
+        // 快照早于当前 updated_at（归档后又有新消息）
+        let at = p.conversations[1].updated_at;
+        p.conversations[1].hibernate_pending_at = Some(at.saturating_sub(10));
+        p.finalize_hibernation("h2");
+        let c = &p.conversations[1];
+        assert!(!c.hibernated, "快照过期不得卸载，否则丢新消息");
+        assert!(!c.messages.is_empty());
+        assert_eq!(c.hibernate_pending_at, None, "应清 pending 供下次重新发起");
+    }
+
+    #[test]
+    fn hibernate_finalize_on_active_only_clears_pending() {
+        let mut p = test_panel();
+        // 活动标签（下标 0）收到回执：不卸载，只清 pending
+        let at = p.conversations[0].updated_at;
+        p.conversations[0].hibernate_pending_at = Some(at);
+        let id = p.conversations[0].id.clone();
+        p.finalize_hibernation(&id);
+        assert!(!p.conversations[0].hibernated);
+        assert_eq!(p.conversations[0].hibernate_pending_at, None);
+    }
+
+    #[test]
+    fn request_hibernate_skips_generating_and_without_store() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h3"));
+        p.conversations[1].is_generating = true;
+        p.request_hibernate(1);
+        assert_eq!(
+            p.conversations[1].hibernate_pending_at, None,
+            "生成中的会话不得发起休眠"
+        );
+        p.conversations[1].is_generating = false;
+        p.request_hibernate(1);
+        assert_eq!(
+            p.conversations[1].hibernate_pending_at, None,
+            "无温数据层时不得发起休眠（消息无处可存）"
+        );
+    }
+
+    #[test]
+    fn wake_without_store_falls_back_to_welcome() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h4"));
+        p.conversations[1].enter_hibernation();
+        p.switch_to(1);
+        assert!(!p.conversations[1].hibernated, "切入必须退出休眠态");
+        assert!(!p.messages.is_empty(), "水合失败应以欢迎语兜底，不得空白");
+    }
+
+    #[test]
+    fn close_hibernated_conv_inserts_meta_without_messages() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h5"));
+        let msg_count = p.conversations[1].messages.len();
+        p.conversations[1].enter_hibernation();
+        p.close_conversation(1);
+        assert_eq!(p.conversations.len(), 1);
+        let meta = p.history.first().expect("休眠标签关闭后应补历史元数据");
+        assert_eq!(meta.id, "h5");
+        assert_eq!(meta.message_count, msg_count, "应使用休眠前记录的消息数");
+    }
+
+    #[test]
+    fn load_slot_takes_heavy_fields_out_of_slot() {
+        let mut p = test_panel();
+        p.conversations.push(archivable_conv("h6"));
+        p.switch_to(1);
+        // 挪移而非克隆：激活后槽位重字段应已清空（单份驻留）
+        assert!(p.conversations[1].messages.is_empty());
+        assert!(!p.messages.is_empty(), "扁平现场持有唯一副本");
+        // 切回时 snapshot 回填，数据不丢
+        p.switch_to(0);
+        assert!(!p.conversations[1].messages.is_empty(), "切走应回填槽位");
     }
 
     #[test]

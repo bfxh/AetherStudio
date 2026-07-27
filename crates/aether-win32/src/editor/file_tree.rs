@@ -32,11 +32,16 @@ impl EditorState {
         };
         base + input_offset_y - self.sidebar_scroll_y
     }
-    /// 开始文件树内联输入（新建文件/文件夹/重命名）
+    /// 开始文件树内联输入（新建文件/文件夹/重命名），在工作区根目录创建
     pub fn start_file_tree_input(&mut self, kind: FileTreeInputKind) {
+        self.start_file_tree_input_in(kind, None);
+    }
+    /// 开始文件树内联输入，可指定父文件夹节点（新建时在其内创建；
+    /// None 则在工作区根目录）。重命名忽略 parent_node，仍使用选中节点。
+    pub fn start_file_tree_input_in(&mut self, kind: FileTreeInputKind, parent_node: Option<u32>) {
         let (default_name, target_node) = match kind {
-            FileTreeInputKind::NewFile => ("新建文件.txt".to_string(), None),
-            FileTreeInputKind::NewFolder => ("新建文件夹".to_string(), None),
+            FileTreeInputKind::NewFile => ("新建文件.txt".to_string(), parent_node),
+            FileTreeInputKind::NewFolder => ("新建文件夹".to_string(), parent_node),
             FileTreeInputKind::Rename => {
                 let node_idx = self.selected_file_node;
                 let name = node_idx.and_then(|idx| {
@@ -110,8 +115,20 @@ impl EditorState {
             return;
         }
 
-        let target = base_path.join(name);
-        if target.exists() {
+        // 新建目标基准目录：指定了父文件夹节点则在其内创建，否则在工作区根目录
+        let create_base = if matches!(input.kind, FileTreeInputKind::Rename) {
+            base_path.clone()
+        } else {
+            input
+                .target_node
+                .and_then(|idx| self.get_node_path(idx))
+                .filter(|p| p.is_dir())
+                .unwrap_or_else(|| base_path.clone())
+        };
+        let target = create_base.join(name);
+        // 重命名的重名检查在 Rename 分支内基于旧路径父目录完成，
+        // 此处仅对新建操作检查，避免子目录重命名被根目录同名项误拦
+        if !matches!(input.kind, FileTreeInputKind::Rename) && target.exists() {
             self.status_message = format!("{} 已存在", name);
             self.dirty_tracker.mark_region(
                 self.layout.sidebar_region().x,
@@ -370,6 +387,24 @@ impl EditorState {
             self.status_message = "复制路径失败".to_string();
         }
     }
+    /// 复制文件节点相对工作区根目录的路径到剪贴板（无法取相对则回退绝对路径）。
+    pub fn copy_node_relative_path(&mut self, node_idx: u32) {
+        let Some(path) = self.get_node_path(node_idx) else {
+            self.status_message = "无法获取文件路径".to_string();
+            return;
+        };
+        let rel = self
+            .current_folder
+            .as_ref()
+            .and_then(|root| path.strip_prefix(root).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        if Self::set_clipboard_text(&rel) {
+            self.status_message = format!("已复制相对路径: {}", rel);
+        } else {
+            self.status_message = "复制路径失败".to_string();
+        }
+    }
     /// 在文件资源管理器中打开/定位指定节点。
     /// - 文件：用 `explorer /select` 打开其所在文件夹并选中该文件
     ///   （不能用默认程序打开文件本身，否则等同于双击运行）；
@@ -397,7 +432,7 @@ impl EditorState {
             }
         }
     }
-    /// 删除文件节点（文件或文件夹）。
+    /// 删除文件节点（文件或文件夹），删除前弹窗确认防误操作。
     pub fn delete_file_node(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
             self.status_message = "无法获取文件路径".to_string();
@@ -411,6 +446,25 @@ impl EditorState {
         };
         let is_dir = node.kind == aether_core::workspace::file_tree::FileKind::Directory;
         let name = tree.get_name(node).to_string();
+
+        // 删除不可撤销，先弹窗确认（文件夹额外提示会连同内容一并删除）
+        let msg = if is_dir {
+            format!(
+                "确定要删除文件夹 \"{}\" 及其全部内容吗？\n\n{}\n\n此操作不可撤销。",
+                name,
+                path.display()
+            )
+        } else {
+            format!(
+                "确定要删除文件 \"{}\" 吗？\n\n{}\n\n此操作不可撤销。",
+                name,
+                path.display()
+            )
+        };
+        if !Dialogs::confirm_yes_no(self.hwnd, "删除确认", &msg) {
+            self.status_message = "已取消删除".to_string();
+            return;
+        }
 
         let result = if is_dir {
             std::fs::remove_dir_all(&path)
@@ -461,6 +515,16 @@ impl EditorState {
     ) -> bool {
         use crate::context_menu::FileNodeContextMenuItem as Item;
         match item {
+            Item::NewFileInside => {
+                self.selected_file_node = Some(node_idx);
+                self.start_file_tree_input_in(FileTreeInputKind::NewFile, Some(node_idx));
+                true
+            }
+            Item::NewFolderInside => {
+                self.selected_file_node = Some(node_idx);
+                self.start_file_tree_input_in(FileTreeInputKind::NewFolder, Some(node_idx));
+                true
+            }
             Item::Rename => {
                 self.selected_file_node = Some(node_idx);
                 self.start_file_tree_input(FileTreeInputKind::Rename);
@@ -476,6 +540,10 @@ impl EditorState {
             }
             Item::CopyPath => {
                 self.copy_node_path(node_idx);
+                true
+            }
+            Item::CopyRelativePath => {
+                self.copy_node_relative_path(node_idx);
                 true
             }
             _ => false,

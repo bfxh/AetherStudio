@@ -182,11 +182,16 @@ pub(crate) fn compute_restored_window_rect(
 /// 持久化内容:
 /// - `window_maximized`: 当前是否最大化
 /// - `window_x/y/width/height`: 仅在非最大化时更新(最大化时保留上次的正常矩形)
-/// - `last_workspace`: 当前打开的工作区路径(若有)
+///
+/// `last_workspace` 由 open_folder/close_workspace 即时读改写持久化，
+/// 退出时不再用本窗口的 current_folder 覆写，避免多窗口场景下
+/// 主窗口退出把其它窗口更晚打开的工作区顶掉。
 ///
 /// 保存失败仅打印警告,不阻塞退出流程。
 pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
-    let mut settings = state.app_settings.clone();
+    // 以磁盘最新值为基底，避免本窗口创建时加载的陈旧副本
+    // 覆写其它窗口退出后保存的设置（模型配置、布局顺序等）
+    let mut settings = aether_shared::settings::AppSettings::load();
 
     // 获取窗口矩形(屏幕坐标,包含非客户区)
     let mut rect = RECT::default();
@@ -207,9 +212,6 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
         }
         settings.ui.window_maximized = state.is_maximized;
     }
-
-    // 持久化当前工作区(若已打开文件夹)
-    settings.ui.last_workspace = state.current_folder.clone();
 
     if let Err(e) = settings.save() {
         eprintln!("警告: 持久化窗口状态失败: {}", e);
