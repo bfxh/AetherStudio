@@ -456,6 +456,8 @@ impl EditorState {
         self.content.selection_end = None;
         self.content.is_dirty = false;
         self.content.cached_lines.clear();
+        self.content.line_cache_versions.clear();
+        self.content.cache_window_start = 0;
         self.content.cached_tokens.clear();
         self.content.language = Language::PlainText;
         self.tab_bar.tabs.clear();
