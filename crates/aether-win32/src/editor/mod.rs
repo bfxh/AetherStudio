@@ -7,7 +7,7 @@ pub(crate) use std::sync::Arc;
 pub(crate) use windows::core::Result;
 pub(crate) use windows::Win32::Foundation::HWND;
 
-pub(crate) use aether_core::buffer::history::{CursorPosition, OpType};
+pub(crate) use aether_core::buffer::history::CursorPosition;
 pub(crate) use aether_core::buffer::piece_table::PieceTable;
 pub(crate) use aether_core::buffer::text_buffer::{Cursor, MultiCursorState};
 pub(crate) use aether_core::char_width::char_width as unicode_char_width;
@@ -427,8 +427,6 @@ pub struct EditorState {
     /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
     pub content: TabContent,
     pub is_selecting: bool,
-    /// 行号 UTF-16 预缓存（避免每帧 format! + encode_utf16 分配）
-    pub(crate) cached_line_numbers: Vec<Vec<u16>>,
     /// 标签栏状态
     pub tab_bar: TabBarState,
     // 查找与替换状态
@@ -493,6 +491,17 @@ pub struct EditorState {
     pub selected_file_node: Option<u32>,
     /// 文件树中鼠标悬停的节点索引
     pub hover_file_node: Option<u32>,
+    /// 文件树根目录行（工作区文件夹名）是否展开
+    pub file_tree_root_expanded: bool,
+    /// P5-1: 文件树可见行数组（按显示顺序的节点索引，不含根目录行），
+    /// 仅在展开/折叠/懒加载/刷新时重建，命中测试由递归遍历降为 O(1) 行定位
+    pub(crate) file_tree_visible_rows: Vec<u32>,
+    /// 可见行数组需要重建的标志（展开状态变化时置位）
+    pub(crate) file_tree_rows_dirty: bool,
+    /// 上次构建可见行数组时的节点总数（节点增减时自动触发重建，防遗漏置脏）
+    pub(crate) file_tree_rows_tree_len: usize,
+    /// 文件树根目录行的鼠标悬停状态
+    pub hover_file_tree_root: bool,
     /// 文件树内联输入状态（新建文件/文件夹）
     pub file_tree_input: Option<FileTreeInput>,
     /// 文件树标题栏按钮区域（用于点击检测）
@@ -700,7 +709,6 @@ impl EditorState {
             theme,
             content: TabContent::new(),
             is_selecting: false,
-            cached_line_numbers: Vec::new(),
             tab_bar: TabBarState::default(),
             find: FindState::default(),
             file_tree: None,
@@ -765,6 +773,11 @@ impl EditorState {
             hover_sidebar_resize: false,
             selected_file_node: None,
             hover_file_node: None,
+            file_tree_root_expanded: true,
+            file_tree_visible_rows: Vec::new(),
+            file_tree_rows_dirty: true,
+            file_tree_rows_tree_len: 0,
+            hover_file_tree_root: false,
             file_tree_input: None,
             file_tree_new_file_btn: None,
             file_tree_new_folder_btn: None,

@@ -288,10 +288,49 @@ impl EditorState {
             || self.remote.clone_dialog.visible
             || self.command_palette.visible;
 
-        // 标签页切换会改变标签栏高亮、编辑器内容、状态栏等多个区域，
-        // 局部裁剪容易遗漏旧像素导致重影，强制全量重绘。
+        // P5-2: 标签页切换只影响标签栏高亮、编辑器内容、状态栏三个区域，
+        // 侧边栏/活动栏/AI 面板与活动标签无关，改为精确标记省去 ~60% 绘制面积。
+        // 仅当新旧标签涉及 Welcome/Settings 等特殊页类型时保留全窗口重绘
+        //（欢迎页跳过侧边栏等面板渲染，局部裁剪会留下残影）
         if active_tab_changed {
-            self.dirty_tracker.mark_full_window();
+            let is_special = |idx: usize| -> bool {
+                self.tab_bar
+                    .tabs
+                    .get(idx)
+                    .map(|t| !t.is_file())
+                    .unwrap_or(true)
+            };
+            if is_special(self.prev.active_tab)
+                || is_special(self.tab_bar.active_tab)
+                || self.show_welcome()
+            {
+                self.dirty_tracker.mark_full_window();
+            } else {
+                let show_tab_bar = self.show_tab_bar();
+                let tab_region = self.layout.tab_bar_region(show_tab_bar);
+                self.dirty_tracker.mark_region(
+                    tab_region.x,
+                    tab_region.y,
+                    tab_region.width,
+                    tab_region.height,
+                    crate::dirty_rect::DirtyRegionType::TabBar,
+                );
+                let editor_region = self.layout.editor_region();
+                self.dirty_tracker.mark_region(
+                    editor_region.x,
+                    editor_region.y,
+                    editor_region.width,
+                    editor_region.height,
+                    crate::dirty_rect::DirtyRegionType::EditorContent,
+                );
+                let status_region = self.layout.status_bar_region();
+                self.dirty_tracker.mark_status_bar(
+                    status_region.x,
+                    status_region.y,
+                    status_region.width,
+                    status_region.height,
+                );
+            }
         }
 
         // 底部面板可见性变化属于重大布局变更，强制全量重绘以保证编辑器区域正确刷新
