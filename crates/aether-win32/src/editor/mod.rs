@@ -266,7 +266,7 @@ pub enum FileTreeInputKind {
     Rename,
 }
 
-/// 文件树内联输入状态（用于新建文件/文件夹或重命名时）
+/// 文件树内联输入状态（新建文件/文件夹或重命名时，以树内行形式展示）
 #[derive(Clone, Debug)]
 pub struct FileTreeInput {
     pub kind: FileTreeInputKind,
@@ -274,7 +274,7 @@ pub struct FileTreeInput {
     pub caret_visible: bool,
     /// IME 合成串（中文输入法预编辑文本），渲染时显示在 value 之后
     pub composition: Option<String>,
-    /// 重命名时记录目标节点索引
+    /// 新建时 = 目标父目录节点（None = 工作区根）；重命名时 = 被重命名节点
     pub target_node: Option<u32>,
 }
 

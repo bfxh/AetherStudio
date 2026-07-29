@@ -510,19 +510,22 @@ impl EditorState {
                 );
             } else if self.file_tree_input.is_some() {
                 let sidebar = self.layout.sidebar_region();
-                let ft_input_y = sidebar.y + 28.0 + 6.0; // header_h + margin
-                let ft_value_x = sidebar.x + 10.0 + 6.0; // input_rect.left + padding
-                                                         // 估算 value 宽度（近似，IME 候选窗口只需大致位置）
-                let value_chars = self
-                    .file_tree_input
-                    .as_ref()
-                    .map(|i| i.value.chars().count())
-                    .unwrap_or(0);
-                let ft_cursor_x = ft_value_x + value_chars as f32 * 7.0;
-                self.ime.set_candidate_window_position(
-                    (ft_cursor_x * self.dpi_scale) as i32,
-                    ((ft_input_y + 26.0) * self.dpi_scale) as i32, // input_h
-                );
+                // 候选窗口跟随树内输入行（几何与渲染共用 file_tree_input_row_geom）
+                if let Some((top_rel, _, text_left_rel)) = self.file_tree_input_row_geom() {
+                    let s = self.dpi_scale;
+                    let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+                    // 估算 value 宽度（近似，IME 候选窗口只需大致位置）
+                    let value_chars = self
+                        .file_tree_input
+                        .as_ref()
+                        .map(|i| i.value.chars().count())
+                        .unwrap_or(0);
+                    let ft_cursor_x = sidebar.x + text_left_rel + value_chars as f32 * 6.0 * s;
+                    self.ime.set_candidate_window_position(
+                        (ft_cursor_x * self.dpi_scale) as i32,
+                        ((sidebar.y + top_rel + row_h) * self.dpi_scale) as i32,
+                    );
+                }
             } else if self.ai_panel.input_focused {
                 // AI 面板输入框聚焦时，IME 候选窗口定位到 AI 输入框
                 let rp = self.layout.right_panel_region();

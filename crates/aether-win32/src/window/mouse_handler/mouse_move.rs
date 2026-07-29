@@ -1048,21 +1048,22 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         }
 
         // 10. 文件树内联输入框（新建文件/文件夹/重命名时显示）→ IBeam
-        // 几何与 render_tree_nodes 的输入框绘制保持一致（header_h + 6，高 26，左右 10 边距）
+        // 几何与 file_tree_input_row_geom（树内联行）保持一致
         if layout.sidebar_visible
             && st.sidebar_content == crate::layout::SidebarContent::FileTree
             && st.file_tree_input.is_some()
         {
             let sidebar = layout.sidebar_region();
             let s = st.dpi_scale;
-            let input_top = sidebar.y + 28.0 * s + 6.0 * s;
-            let input_h = 26.0 * s;
-            if mouse_x >= sidebar.x + 10.0 * s
-                && mouse_x < sidebar.x + sidebar.width - 10.0 * s
-                && mouse_y >= input_top
-                && mouse_y < input_top + input_h
-            {
-                return CursorType::IBeam;
+            if let Some((top_rel, _, text_left_rel)) = st.file_tree_input_row_geom() {
+                let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+                if mouse_x >= sidebar.x + text_left_rel - 3.0 * s
+                    && mouse_x < sidebar.x + sidebar.width - 6.0 * s
+                    && mouse_y >= sidebar.y + top_rel
+                    && mouse_y < sidebar.y + top_rel + row_h
+                {
+                    return CursorType::IBeam;
+                }
             }
         }
 

@@ -36,15 +36,13 @@ pub(crate) unsafe fn on_r_button_down(
 
     let mut st = state.borrow_mut();
 
-    // 记录用户右键那一帧的树节点列表起始 Y（根目录行之下，含内联输入框偏移）。
-    // 必须在 cancel_file_tree_input 之前读取：用户是按屏幕上已渲染的
-    //（带输入框、节点整体下移）布局点击的，若取消后再算偏移会错位约两行。
-    let nodes_start_y = st.file_tree_nodes_start_y();
-
-    // 若正在内联输入，右键先取消输入（与左键逻辑一致）
+    // 若正在内联输入，右键视为失焦提交（与左键点击其他区域一致；
+    // 空名时 confirm 内部等效取消）。输入行已内联进树，提交/取消
+    // 不再整体位移布局，因此起始 Y 在处理之后读取即可。
     if st.file_tree_input.is_some() {
-        st.cancel_file_tree_input();
+        st.confirm_file_tree_input();
     }
+    let nodes_start_y = st.file_tree_nodes_start_y();
 
     // SubTask 9.3: 标签右键——检测是否命中标签栏的某个标签
     let show_tab_bar = st.show_tab_bar();
