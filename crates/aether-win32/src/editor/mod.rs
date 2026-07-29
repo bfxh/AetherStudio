@@ -172,6 +172,10 @@ pub struct MousePressState {
     pub lpress_index: usize,
     /// 当前鼠标左键是否按下（用于 WM_TIMER 判定）
     pub lbutton_down: bool,
+    /// 文件树拖拽：按下时命中的节点索引（None 表示未在文件树按下）
+    pub file_tree_drag_node: Option<u32>,
+    /// 文件树拖拽：是否已进入拖拽模式（超过阈值）
+    pub file_tree_dragging: bool,
 }
 
 /// 上一帧快照（脏追踪，从 EditorState 聚类抽取）
@@ -557,6 +561,8 @@ pub struct EditorState {
     pub context_menus: ContextMenusState,
     /// 鼠标按键/长按检测状态
     pub mouse_press: MousePressState,
+    /// 文件树拖拽状态（放置目标 + 浮标绘制信息）
+    pub file_drag: crate::file_drag_drop::FileDragDropState,
     /// P0-2: IME 合成串（pre-edit text），中文/日文输入过程中显示在光标处
     pub composition: Option<String>,
     /// 后台语法高亮器（独立线程，避免阻塞 UI 输入）
@@ -813,6 +819,7 @@ impl EditorState {
                     crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
             },
             mouse_press: MousePressState::default(),
+            file_drag: crate::file_drag_drop::FileDragDropState::default(),
             composition: None,
             bg_highlighter: aether_tree_sitter::BackgroundHighlighter::new(),
             hl_request_version: 0,
