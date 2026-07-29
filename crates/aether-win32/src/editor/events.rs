@@ -424,8 +424,11 @@ impl EditorState {
         // poll 逻辑已移至签名检查之前，确保空闲帧也能消费后台结果。
         // 此处仅在 buffer_version 变化时发送新请求。
         if let Some(lang) = ts_lang {
+            // 冰冻态唤醒后 tokens_trimmed 置位：即使 buffer_version 未变也强制重新请求，
+            // 否则被裁剪的高亮 token 永远不会重建（后台高亮仅在版本变化时请求）
             if !self.content.is_large_file
-                && self.content.buffer_version != self.hl_request_version
+                && (self.content.buffer_version != self.hl_request_version
+                    || self.content.tokens_trimmed)
                 && !self.bg_highlighter.has_pending()
             {
                 // P1-C: 传递轻量快照（Arc pieces），全文物化移到后台线程，
@@ -439,6 +442,7 @@ impl EditorState {
                     .unwrap_or_else(|| "untitled".to_string());
                 self.bg_highlighter.request(&doc_id, lang, snapshot);
                 self.hl_request_version = self.content.buffer_version;
+                self.content.tokens_trimmed = false;
             }
         }
 

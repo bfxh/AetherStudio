@@ -239,7 +239,7 @@ impl EditorState {
             .record_insert(pos, &text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     /// P1-4: 尝试自动配对括号。
     /// 返回 true 表示已处理（调用方不应再执行默认插入）。
@@ -439,7 +439,7 @@ impl EditorState {
             .record_insert(pos, &insert_text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     pub fn delete_char(&mut self) {
         if self.content.cursor_col > 0 {
@@ -505,7 +505,7 @@ impl EditorState {
                 }
             }
         }
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     pub fn delete_forward(&mut self) {
         let pos = self.cursor_byte_pos();
@@ -530,7 +530,7 @@ impl EditorState {
             self.status_message = "已修改".to_string();
             self.emit_edit_events();
         }
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     /// 多光标编辑操作广播
     /// 将插入、删除等操作应用到所有光标位置

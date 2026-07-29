@@ -48,6 +48,8 @@ pub struct TabContent {
     pub(crate) line_y_offsets: Vec<f32>,
     /// P3.1: 当前内联补全建议
     pub(crate) inline_completion: Option<crate::inline_completion::InlineCompletion>,
+    /// 冰冻态标记：cached_tokens 已被裁剪，需强制重新请求后台高亮
+    pub(crate) tokens_trimmed: bool,
     // 语言类型
     pub(crate) language: Language,
 }
@@ -77,6 +79,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language: Language::PlainText,
         }
     }
@@ -110,6 +113,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language,
         })
     }
@@ -151,8 +155,33 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language,
         }
+    }
+
+    /// 冰冻态：释放渲染缓存（行文本/高亮 token/行偏移），PieceTable 本体保留。
+    /// 唤醒后由 rebuild_cache 签名机制按可见窗口自动重建；
+    /// tokens_trimmed 置位使 tree-sitter 语言强制重新请求后台高亮。
+    pub(crate) fn trim_caches(&mut self) {
+        self.cache_window_start = 0;
+        self.cached_lines = Vec::new();
+        self.cached_tokens = Vec::new();
+        self.line_cache_versions = Vec::new();
+        self.line_y_offsets = Vec::new();
+        self.last_cache_signature = (0, 0, 0, 0);
+        self.tokens_trimmed = true;
+    }
+
+    /// 渲染缓存的近似字节数（内存遥测用）
+    pub(crate) fn cache_bytes(&self) -> usize {
+        let lines: usize = self.cached_lines.iter().map(|l| l.len()).sum();
+        let tokens: usize = self
+            .cached_tokens
+            .iter()
+            .map(|t| t.len() * std::mem::size_of::<LexemeSpan>())
+            .sum();
+        lines + tokens + self.line_y_offsets.len() * std::mem::size_of::<f32>()
     }
 
     /// 读取缓存窗口内指定全局行的文本；窗口外返回 None（调用方回退 buffer.get_line）
