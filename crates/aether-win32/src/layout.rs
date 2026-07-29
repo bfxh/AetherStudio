@@ -207,9 +207,14 @@ pub const SIDEBAR_RESIZE_GRAB: f32 = 4.0;
 pub const ACTIVITY_BAR_BUTTON_SIZE: f32 = 40.0;
 /// 文件树行高（逻辑像素，乘 dpi_scale 后使用）。
 /// 渲染、命中测试、滚动高度估算共用同一常量，改行高只动这一处。
-pub const FILE_TREE_ROW_HEIGHT: f32 = 18.0;
+pub const FILE_TREE_ROW_HEIGHT: f32 = 15.0;
 /// 文件树每级缩进宽度（逻辑像素）
-pub const FILE_TREE_INDENT: f32 = 16.0;
+pub const FILE_TREE_INDENT: f32 = 12.0;
+/// 文件树章节标题栏（"资源管理器"）高度（逻辑像素），
+/// 渲染、file_tree_list_start_y、输入框悬停、IME 定位共用。
+pub const FILE_TREE_HEADER_HEIGHT: f32 = 24.0;
+/// 文件树 chevron/文件图标列宽（逻辑像素），渲染与命中测试共用
+pub const FILE_TREE_ARROW_COL: f32 = 12.0;
 
 /// 布局管理器 - 计算和管理所有 UI 区域的几何布局
 #[derive(Clone, Debug)]
