@@ -4,6 +4,7 @@
 pub mod conpty;
 pub mod dirty_rect;
 pub mod events;
+pub mod file_drag_drop;
 pub mod focus_manager;
 pub mod launch;
 pub mod render_context;
@@ -40,6 +41,7 @@ pub mod memory_store;
 pub mod menu_bar;
 pub mod new_project_dialog;
 pub mod open_tabs;
+pub mod power;
 pub mod recent_projects;
 pub mod reflector;
 pub mod render;

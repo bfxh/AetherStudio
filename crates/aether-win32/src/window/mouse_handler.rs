@@ -53,6 +53,11 @@ pub(crate) unsafe fn on_l_button_up(
             st.mouse_press.lbutton_down = false;
             st.mouse_press.lpress_target = None;
             st.mouse_press.lpress_start = None;
+            // 文件树拖拽：拖拽中则以释放位置执行移动，否则仅清理按下候选
+            let file_drag_handled = {
+                let dpi_scale = st.dpi_scale;
+                st.file_drag_finish(raw_x / dpi_scale, raw_y / dpi_scale)
+            };
             // 自定义模式下：完成拖拽重排 + 持久化
             let persist_activity =
                 st.activity_bar.customize_mode && st.activity_bar.drag_index.is_some();
@@ -102,7 +107,7 @@ pub(crate) unsafe fn on_l_button_up(
                 false
             };
             // 仅在用户实际开始拖拽时才重绘
-            if persist_activity || persist_menu || tab_handled {
+            if persist_activity || persist_menu || tab_handled || file_drag_handled {
                 drop(st);
                 invalidate_window(hwnd);
             }

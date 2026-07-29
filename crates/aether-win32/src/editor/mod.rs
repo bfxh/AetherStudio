@@ -7,7 +7,7 @@ pub(crate) use std::sync::Arc;
 pub(crate) use windows::core::Result;
 pub(crate) use windows::Win32::Foundation::HWND;
 
-pub(crate) use aether_core::buffer::history::{CursorPosition, OpType};
+pub(crate) use aether_core::buffer::history::CursorPosition;
 pub(crate) use aether_core::buffer::piece_table::PieceTable;
 pub(crate) use aether_core::buffer::text_buffer::{Cursor, MultiCursorState};
 pub(crate) use aether_core::char_width::char_width as unicode_char_width;
@@ -92,6 +92,8 @@ pub struct LspState {
     pub(crate) completion_trigger_col: usize,
     // Phase H: 悬停 tooltip 状态
     pub(crate) hover_content: Option<String>,
+    /// 冰冻态：语言服务器已关停，首次编辑/打开文件时延迟重启
+    pub(crate) frozen: bool,
 }
 
 /// 远程开发子系统状态（SSH/远程文件树/克隆，从 EditorState 聚类抽取）
@@ -170,6 +172,10 @@ pub struct MousePressState {
     pub lpress_index: usize,
     /// 当前鼠标左键是否按下（用于 WM_TIMER 判定）
     pub lbutton_down: bool,
+    /// 文件树拖拽：按下时命中的节点索引（None 表示未在文件树按下）
+    pub file_tree_drag_node: Option<u32>,
+    /// 文件树拖拽：是否已进入拖拽模式（超过阈值）
+    pub file_tree_dragging: bool,
 }
 
 /// 上一帧快照（脏追踪，从 EditorState 聚类抽取）
@@ -427,8 +433,6 @@ pub struct EditorState {
     /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
     pub content: TabContent,
     pub is_selecting: bool,
-    /// 行号 UTF-16 预缓存（避免每帧 format! + encode_utf16 分配）
-    pub(crate) cached_line_numbers: Vec<Vec<u16>>,
     /// 标签栏状态
     pub tab_bar: TabBarState,
     // 查找与替换状态
@@ -493,6 +497,17 @@ pub struct EditorState {
     pub selected_file_node: Option<u32>,
     /// 文件树中鼠标悬停的节点索引
     pub hover_file_node: Option<u32>,
+    /// 文件树根目录行（工作区文件夹名）是否展开
+    pub file_tree_root_expanded: bool,
+    /// P5-1: 文件树可见行数组（按显示顺序的节点索引，不含根目录行），
+    /// 仅在展开/折叠/懒加载/刷新时重建，命中测试由递归遍历降为 O(1) 行定位
+    pub(crate) file_tree_visible_rows: Vec<u32>,
+    /// 可见行数组需要重建的标志（展开状态变化时置位）
+    pub(crate) file_tree_rows_dirty: bool,
+    /// 上次构建可见行数组时的节点总数（节点增减时自动触发重建，防遗漏置脏）
+    pub(crate) file_tree_rows_tree_len: usize,
+    /// 文件树根目录行的鼠标悬停状态
+    pub hover_file_tree_root: bool,
     /// 文件树内联输入状态（新建文件/文件夹）
     pub file_tree_input: Option<FileTreeInput>,
     /// 文件树标题栏按钮区域（用于点击检测）
@@ -538,12 +553,16 @@ pub struct EditorState {
     pub hover: HoverState,
     /// 上一帧快照（脏追踪，用于检测各类 UI 变化）
     pub prev: PrevFrameState,
+    /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
+    pub power: crate::power::PowerManager,
     /// 用户菜单
     pub user_menu: crate::user_menu::UserMenu,
     /// 各处右键上下文菜单状态
     pub context_menus: ContextMenusState,
     /// 鼠标按键/长按检测状态
     pub mouse_press: MousePressState,
+    /// 文件树拖拽状态（放置目标 + 浮标绘制信息）
+    pub file_drag: crate::file_drag_drop::FileDragDropState,
     /// P0-2: IME 合成串（pre-edit text），中文/日文输入过程中显示在光标处
     pub composition: Option<String>,
     /// 后台语法高亮器（独立线程，避免阻塞 UI 输入）
@@ -700,7 +719,6 @@ impl EditorState {
             theme,
             content: TabContent::new(),
             is_selecting: false,
-            cached_line_numbers: Vec::new(),
             tab_bar: TabBarState::default(),
             find: FindState::default(),
             file_tree: None,
@@ -742,6 +760,7 @@ impl EditorState {
                 completion_trigger_line: 0,
                 completion_trigger_col: 0,
                 hover_content,
+                frozen: false,
             },
             settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
             tabs_panel: crate::open_tabs::TabsPanel::new(),
@@ -765,6 +784,11 @@ impl EditorState {
             hover_sidebar_resize: false,
             selected_file_node: None,
             hover_file_node: None,
+            file_tree_root_expanded: true,
+            file_tree_visible_rows: Vec::new(),
+            file_tree_rows_dirty: true,
+            file_tree_rows_tree_len: 0,
+            hover_file_tree_root: false,
             file_tree_input: None,
             file_tree_new_file_btn: None,
             file_tree_new_folder_btn: None,
@@ -785,6 +809,7 @@ impl EditorState {
             inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
             hover: HoverState::default(),
             prev: PrevFrameState::default(),
+            power: crate::power::PowerManager::new(),
             user_menu: crate::user_menu::UserMenu::new(),
             context_menus: ContextMenusState {
                 explorer: crate::context_menu::ExplorerContextMenu::new(),
@@ -794,6 +819,7 @@ impl EditorState {
                     crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
             },
             mouse_press: MousePressState::default(),
+            file_drag: crate::file_drag_drop::FileDragDropState::default(),
             composition: None,
             bg_highlighter: aether_tree_sitter::BackgroundHighlighter::new(),
             hl_request_version: 0,
@@ -1118,6 +1144,14 @@ fn language_to_ts_str(lang: Language) -> Option<&'static str> {
         Language::Java => Some("java"),
         // Markdown/Html/Css/PlainText/Image → None，fallback 到手写 lexer
         _ => None,
+    }
+}
+
+impl EditorState {
+    /// 当前活跃标签是否依赖后台 tree-sitter 高亮（冰冻态唤醒时用于判断
+    /// 是否需要强制重请求高亮并启动高亮刷新定时器）
+    pub(crate) fn needs_bg_highlight(&self) -> bool {
+        language_to_ts_str(self.content.language).is_some() && !self.content.is_large_file
     }
 }
 

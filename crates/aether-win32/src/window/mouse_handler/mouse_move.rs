@@ -88,6 +88,45 @@ pub(crate) unsafe fn on_mouse_move(
         }
         return LRESULT(0);
     }
+    // 文件树拖拽：按下候选节点后处理阈值判定与放置目标/浮标更新。
+    // 进入拖拽后独占本次消息（跳过 hover/tooltip 更新，避免高亮叠加）。
+    if is_dragging && state.borrow().mouse_press.file_tree_drag_node.is_some() {
+        let mut st = state.borrow_mut();
+        let changed = st.file_drag_update(mouse_x, mouse_y);
+        let dragging_now = st.mouse_press.file_tree_dragging;
+        drop(st);
+        if dragging_now {
+            // 拖出侧边栏 → 转交系统 OLE 拖放（CF_HDROP + CF_UNICODETEXT），
+            // Explorer 收文件对象，输入框收绝对路径文本。内部拖拽状态
+            // 必须先清空并释放 RefCell 借用，再进入 DoDragDrop 模态循环。
+            if !layout.sidebar_region().contains(mouse_x, mouse_y) {
+                let paths = {
+                    let st = state.borrow();
+                    st.file_drag_external_source_path().map(|p| vec![p])
+                };
+                if let Some(paths) = paths {
+                    state.borrow_mut().file_drag_abort_internal();
+                    // 先擦掉侧边栏内的浮标/高亮，再进入阻塞式模态循环
+                    invalidate_window(hwnd);
+                    let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+                    let _ = crate::file_drag_drop::start_ole_file_drag(paths);
+                    return LRESULT(0);
+                }
+            }
+            if changed {
+                invalidate_window(hwnd);
+                // 同文本拖拽选区思路绕过消息队列立即重绘，但高回报率鼠标
+                // 下每条 WM_MOUSEMOVE 都同步重绘会压垮管线产生卡顿感，
+                // 故节流至 ~120fps；被跳过的帧由后续 WM_PAINT 合并补齐
+                let mut st = state.borrow_mut();
+                if st.file_drag_should_sync_paint() {
+                    drop(st);
+                    let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+                }
+            }
+            return LRESULT(0);
+        }
+    }
     // 悬停状态更新（每个辅助函数返回是否有变化）
     let titlebar_changed = omm_titlebar_menu_hover(&state, mouse_x, mouse_y, &layout);
     let (tab_changed, _editor_content) = omm_activity_tab_hover(&state, mouse_x, mouse_y, &layout);
@@ -479,7 +518,8 @@ unsafe fn omm_file_tree_hover(
         }
     } else {
         let old = st.hover_file_node.take();
-        old.is_some()
+        let old_root = std::mem::take(&mut st.hover_file_tree_root);
+        old.is_some() || old_root
     }
 }
 
