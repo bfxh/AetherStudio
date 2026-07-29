@@ -92,6 +92,8 @@ pub struct LspState {
     pub(crate) completion_trigger_col: usize,
     // Phase H: 悬停 tooltip 状态
     pub(crate) hover_content: Option<String>,
+    /// 冰冻态：语言服务器已关停，首次编辑/打开文件时延迟重启
+    pub(crate) frozen: bool,
 }
 
 /// 远程开发子系统状态（SSH/远程文件树/克隆，从 EditorState 聚类抽取）
@@ -547,6 +549,8 @@ pub struct EditorState {
     pub hover: HoverState,
     /// 上一帧快照（脏追踪，用于检测各类 UI 变化）
     pub prev: PrevFrameState,
+    /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
+    pub power: crate::power::PowerManager,
     /// 用户菜单
     pub user_menu: crate::user_menu::UserMenu,
     /// 各处右键上下文菜单状态
@@ -750,6 +754,7 @@ impl EditorState {
                 completion_trigger_line: 0,
                 completion_trigger_col: 0,
                 hover_content,
+                frozen: false,
             },
             settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
             tabs_panel: crate::open_tabs::TabsPanel::new(),
@@ -798,6 +803,7 @@ impl EditorState {
             inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
             hover: HoverState::default(),
             prev: PrevFrameState::default(),
+            power: crate::power::PowerManager::new(),
             user_menu: crate::user_menu::UserMenu::new(),
             context_menus: ContextMenusState {
                 explorer: crate::context_menu::ExplorerContextMenu::new(),
@@ -1131,6 +1137,14 @@ fn language_to_ts_str(lang: Language) -> Option<&'static str> {
         Language::Java => Some("java"),
         // Markdown/Html/Css/PlainText/Image → None，fallback 到手写 lexer
         _ => None,
+    }
+}
+
+impl EditorState {
+    /// 当前活跃标签是否依赖后台 tree-sitter 高亮（冰冻态唤醒时用于判断
+    /// 是否需要强制重请求高亮并启动高亮刷新定时器）
+    pub(crate) fn needs_bg_highlight(&self) -> bool {
+        language_to_ts_str(self.content.language).is_some() && !self.content.is_large_file
     }
 }
 
