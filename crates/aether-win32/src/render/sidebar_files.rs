@@ -312,7 +312,10 @@ impl EditorState {
                 // handle_file_tree_click / update_local_tree_hover 共用同一公式，
                 // 避免 dpi_scale / scroll / inline input 不一致时焦点错位）
                 let root_top = y + self.file_tree_list_start_y();
-                if self.hover_file_tree_root {
+                // 拖拽放置目标为工作区根目录时高亮根目录行（填充 + 边框）
+                let root_drop = self.mouse_press.file_tree_dragging
+                    && self.file_drag.drop_target == Some(crate::file_drag_drop::DropTarget::Root);
+                if self.hover_file_tree_root || root_drop {
                     let hover_rect = D2D_RECT_F {
                         left: x,
                         top: root_top,
@@ -320,6 +323,9 @@ impl EditorState {
                         bottom: root_top + node_h,
                     };
                     target.FillRectangle(&hover_rect, &hover_brush);
+                    if root_drop {
+                        target.DrawRectangle(&hover_rect, &sel_brush, 1.0 * s, None);
+                    }
                 }
                 let chevron = if self.file_tree_root_expanded {
                     crate::icons::IconKind::ChevronDown
@@ -402,6 +408,62 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
+            }
+
+            // 拖拽浮标：跟随鼠标的文件名标签（仅在侧边栏内绘制，
+            // 保证脏矩形只涉及侧边栏区域，不在编辑器区域留残影）
+            if self.mouse_press.file_tree_dragging && !self.file_drag.drag_label.is_empty() {
+                let gx = self.file_drag.cur_x;
+                let gy = self.file_drag.cur_y;
+                if gx >= x && gx < x + width && gy >= y && gy < y + height {
+                    let label = self.file_drag.drag_label.as_str();
+                    // 宽度用进入拖拽时的缓存值（避免每帧 DirectWrite 测量）
+                    let text_w = self
+                        .file_drag
+                        .drag_label_width
+                        .max(12.0 * s)
+                        .min(width * 0.7);
+                    let pad = 6.0 * s;
+                    let ghost_h = 20.0 * s;
+                    let ghost_w = text_w + pad * 2.0;
+                    // 限制在侧边栏可视范围内，避免溢出到相邻区域
+                    let left = (gx + 12.0 * s).min(x + width - ghost_w).max(x);
+                    let top = (gy + 10.0 * s).min(y + height - ghost_h).max(y);
+                    let ghost_rect = D2D_RECT_F {
+                        left,
+                        top,
+                        right: left + ghost_w,
+                        bottom: top + ghost_h,
+                    };
+                    let ghost_bg = color_f(0.15, 0.15, 0.15, 0.95);
+                    let ghost_bg_brush = self
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &ghost_bg)
+                        .unwrap();
+                    target.FillRectangle(&ghost_rect, &ghost_bg_brush);
+                    target.DrawRectangle(&ghost_rect, &sel_brush, 1.0 * s, None);
+                    if let Ok(layout) = self.render_ctx.text_layout_cache.create_ellipsis_layout(
+                        label,
+                        &tree_format,
+                        text_w.max(1.0),
+                        ghost_h,
+                    ) {
+                        let _ = layout.SetParagraphAlignment(
+                            windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+                        );
+                        let point = D2D_POINT_2F {
+                            x: left + pad,
+                            y: top,
+                        };
+                        target.DrawTextLayout(
+                            point,
+                            &layout,
+                            text_brush,
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                        );
+                    }
+                }
             }
         }
     }
@@ -496,6 +558,24 @@ impl EditorState {
                     };
                     unsafe {
                         target.FillRectangle(&sel_rect, sel_brush);
+                    }
+                }
+
+                // 拖拽放置目标目录：填充 + 边框高亮（拖拽视觉反馈，
+                // 绘在选中高亮之后，确保目标边框不被选中填充覆盖）
+                let is_drop_target = self.mouse_press.file_tree_dragging
+                    && self.file_drag.drop_target
+                        == Some(crate::file_drag_drop::DropTarget::Directory(idx));
+                if is_drop_target {
+                    let drop_rect = D2D_RECT_F {
+                        left: row_left,
+                        top: *current_y,
+                        right: row_right,
+                        bottom: *current_y + node_height,
+                    };
+                    unsafe {
+                        target.FillRectangle(&drop_rect, hover_brush);
+                        target.DrawRectangle(&drop_rect, sel_brush, 1.0 * s, None);
                     }
                 }
 

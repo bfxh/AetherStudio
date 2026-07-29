@@ -151,6 +151,23 @@ pub(super) unsafe fn lbd_sidebar(
     }
     let sidebar_rel_x = mouse_x - sidebar_region.x;
     let sidebar_rel_y = mouse_y - sidebar_region.y;
+    // 文件树拖拽候选：按下命中节点名称区域时记录（超过阈值后才进入拖拽，
+    // 普通点击行为不受影响）；必须在 handle_sidebar_click 之前命中测试，
+    // 因为点击可能展开/折叠目录改变可见行布局
+    if st.sidebar_content == crate::layout::SidebarContent::FileTree
+        && st.file_tree_root_expanded
+        && st.file_tree_input.is_none()
+    {
+        let nodes_start_y = st.file_tree_nodes_start_y();
+        let sidebar_width = st.layout.sidebar_width;
+        if let Some((node_idx, _, part)) =
+            st.file_tree_hit_test(sidebar_rel_x, sidebar_rel_y, nodes_start_y, sidebar_width)
+        {
+            if part == crate::editor::FileTreeClickPart::Label {
+                st.file_drag_begin_press(node_idx, mouse_x, mouse_y);
+            }
+        }
+    }
     if st.handle_sidebar_click(sidebar_rel_x, sidebar_rel_y) {
         drop(st);
         invalidate_window(hwnd);
