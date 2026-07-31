@@ -93,6 +93,7 @@ impl FileNodeContextMenuItem {
     pub fn shortcut_hint(&self) -> &'static str {
         match self {
             FileNodeContextMenuItem::Rename => "F2",
+            FileNodeContextMenuItem::Delete => "Delete",
             _ => "",
         }
     }
@@ -615,7 +616,7 @@ mod tests {
     #[test]
     fn test_file_node_menu_shortcut_and_danger() {
         assert_eq!(FileNodeContextMenuItem::Rename.shortcut_hint(), "F2");
-        assert_eq!(FileNodeContextMenuItem::Delete.shortcut_hint(), "");
+        assert_eq!(FileNodeContextMenuItem::Delete.shortcut_hint(), "Delete");
         assert!(FileNodeContextMenuItem::Delete.is_danger());
         assert!(!FileNodeContextMenuItem::Rename.is_danger());
     }

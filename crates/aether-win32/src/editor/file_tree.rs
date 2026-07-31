@@ -537,38 +537,26 @@ impl EditorState {
         let Some(node) = tree.get_node(node_idx) else {
             return;
         };
-        let is_dir = node.kind == aether_core::workspace::file_tree::FileKind::Directory;
         let name = tree.get_name(node).to_string();
 
-        // 删除不可撤销，先弹窗确认（文件夹额外提示会连同内容一并删除）
-        let msg = if is_dir {
-            format!(
-                "确定要删除文件夹 \"{}\" 及其全部内容吗？\n\n{}\n\n此操作不可撤销。",
-                name,
-                path.display()
-            )
-        } else {
-            format!(
-                "确定要删除文件 \"{}\" 吗？\n\n{}\n\n此操作不可撤销。",
-                name,
-                path.display()
-            )
-        };
-        if !Dialogs::confirm_yes_no(self.hwnd, "删除确认", &msg) {
-            self.status_message = "已取消删除".to_string();
-            return;
-        }
+        // 直接移至回收站，无确认对话框（VS Code 行为）。
+        // 用户可通过 Ctrl+Z 撤销或从系统回收站还原。
 
-        let result = if is_dir {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-
-        match result {
+        // 使用 Windows 回收站 API（可由系统回收站恢复）
+        match crate::recycle_bin::move_to_recycle_bin(&path) {
             Ok(()) => {
-                self.status_message = format!("已删除: {}", name);
-                // 如果删除的文件当前已打开，关闭对应的标签页
+                self.status_message = format!("已删除: {} (可从回收站恢复)", name);
+                // 记录删除操作以支持 Ctrl+Z 撤销
+                self.delete_undo_stack
+                    .push(crate::undo_delete::DeleteRecord {
+                        original_path: path.clone(),
+                        timestamp: std::time::Instant::now(),
+                    });
+                // 淡汰超过 20 条的旧记录
+                if self.delete_undo_stack.len() > 20 {
+                    self.delete_undo_stack.remove(0);
+                }
+                // 关闭已删除文件的标签页
                 let path_str = path.to_string_lossy().to_string();
                 let mut tabs_to_close: Vec<usize> = Vec::new();
                 for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
@@ -578,11 +566,9 @@ impl EditorState {
                         }
                     }
                 }
-                // 从后往前关闭，避免索引偏移
                 for idx in tabs_to_close.into_iter().rev() {
                     self.close_tab(idx);
                 }
-                // 如果当前活动文件被删除，清空编辑器
                 if let Some(ref active_path) = self.content.file_path {
                     if active_path.to_string_lossy() == path_str {
                         self.content.buffer =
@@ -592,7 +578,8 @@ impl EditorState {
                     }
                 }
                 self.selected_file_node = None;
-                self.refresh_file_tree();
+                // 轻量刷新：保留展开状态，不重启 LSP
+                self.refresh_file_tree_light();
             }
             Err(e) => {
                 self.status_message = format!("删除失败: {}", e);

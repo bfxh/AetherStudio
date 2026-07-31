@@ -120,6 +120,20 @@ impl EditorState {
             );
             return;
         }
+        // 沙盒评测页输入框聚焦时，IME 提交文本进入对应字段
+        if self.sandbox_eval.active_field.is_some() {
+            self.sandbox_eval.paste_text(&text);
+            self.sandbox_eval.caret_visible = true;
+            let region = self.layout.editor_region().clone();
+            self.dirty_tracker.mark_region(
+                region.x,
+                region.y,
+                region.width,
+                region.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
+            );
+            return;
+        }
         for ch in text.chars() {
             self.broadcast_insert_char(ch);
         }

@@ -36,6 +36,8 @@
 Unicode true
 SetCompressor /SOLID lzma
 RequestExecutionLevel user
+; 静默更新时从注册表读取上次安装路径，避免用户自定义目录丢失
+InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 Name "${APP_NAME}"
 OutFile "${OUTPUT_EXE}"

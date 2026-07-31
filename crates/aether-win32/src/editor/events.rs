@@ -296,6 +296,9 @@ impl EditorState {
             crate::menu_bar::CommandId::RunDebug => {
                 self.status_message = "调试功能即将推出".to_string();
             }
+            crate::menu_bar::CommandId::RunSandboxEval => {
+                self.open_sandbox_eval_tab();
+            }
             crate::menu_bar::CommandId::SearchGlobal => {
                 self.search_panel.toggle();
                 if self.search_panel.visible {

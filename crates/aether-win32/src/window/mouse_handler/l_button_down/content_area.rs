@@ -1112,6 +1112,21 @@ pub(super) unsafe fn lbd_settings_page(
         return Some(LRESULT(0));
     }
 
+    // 4b. 更新页："立即检查更新"按钮（独立于 AI/模型页的按钮检测门槛）
+    if st.settings_panel.active_tab == crate::settings::SettingsTab::Update {
+        if let Some(crate::settings::SettingsButton::CheckUpdate) =
+            st.settings_panel.hit_test_button(mouse_x, mouse_y)
+        {
+            let hwnd_val = st.hwnd;
+            crate::updater::start_check(hwnd_val, true);
+            st.status_message = "正在检查更新...".to_string();
+            st.update_checking = true;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+
     // 5. 模型编辑表单（AI 配置）：显隐按钮 / 温度滑块 / 保存 / 测试连接 / 返回列表
     // AI 配置已并入「模型」页，仅在 model_editing 编辑态下展示与响应。
     if st.settings_panel.active_tab == crate::settings::SettingsTab::Ai
@@ -1133,10 +1148,83 @@ pub(super) unsafe fn lbd_settings_page(
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
+        // 思考强度分段切换（DeepSeek 思考模式专属）
+        if let Some(effort) = st.settings_panel.hit_test_effort(mouse_x, mouse_y) {
+            st.settings_panel.reasoning_effort = effort.to_string();
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
         // 温度滑块：点击轨道即定位，并进入拖拽
         if let Some(v) = st.settings_panel.hit_test_temp_slider(mouse_x, mouse_y) {
             st.settings_panel.temperature = format!("{:.1}", v);
             st.settings_panel.temp_slider_dragging = true;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // Top-p 滑块：点击轨道即定位，并进入拖拽
+        if let Some(v) = st.settings_panel.hit_test_top_p_slider(mouse_x, mouse_y) {
+            st.settings_panel.top_p = format!("{:.2}", v);
+            st.settings_panel.top_p_slider_dragging = true;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 开发者参数区：标题点击展开/折叠
+        if st
+            .settings_panel
+            .hit_test_dev_params_toggle(mouse_x, mouse_y)
+        {
+            st.settings_panel.dev_params_expanded = !st.settings_panel.dev_params_expanded;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 响应格式分段切换（文本 / JSON）
+        if let Some(fmt) = st.settings_panel.hit_test_response_format(mouse_x, mouse_y) {
+            st.settings_panel.response_format = fmt.to_string();
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // logprobs 调试开关切换
+        if st.settings_panel.hit_test_logprobs_toggle(mouse_x, mouse_y) {
+            st.settings_panel.logprobs = !st.settings_panel.logprobs;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 流式用量统计开关切换
+        if st
+            .settings_panel
+            .hit_test_include_usage_toggle(mouse_x, mouse_y)
+        {
+            st.settings_panel.include_usage = !st.settings_panel.include_usage;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 频率惩罚滑块：点击轨道即定位，并进入拖拽
+        if let Some(v) = st.settings_panel.hit_test_freq_slider(mouse_x, mouse_y) {
+            st.settings_panel.frequency_penalty = format!("{:.1}", v);
+            st.settings_panel.freq_slider_dragging = true;
+            st.settings_panel.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 存在惩罚滑块：点击轨道即定位，并进入拖拽
+        if let Some(v) = st.settings_panel.hit_test_pres_slider(mouse_x, mouse_y) {
+            st.settings_panel.presence_penalty = format!("{:.1}", v);
+            st.settings_panel.pres_slider_dragging = true;
             st.settings_panel.active_field = None;
             drop(st);
             invalidate_window(hwnd);
@@ -1153,6 +1241,12 @@ pub(super) unsafe fn lbd_settings_page(
                 }
                 crate::settings::SettingsButton::TestConnection => {
                     st.start_ai_test_connection();
+                }
+                crate::settings::SettingsButton::CheckUpdate => {
+                    // 手动触发更新检查
+                    let hwnd_val = st.hwnd;
+                    crate::updater::start_check(hwnd_val, true);
+                    st.status_message = "正在检查更新...".to_string();
                 }
             }
             let started_test = st.settings_panel.is_testing;
@@ -1201,6 +1295,26 @@ pub(super) unsafe fn lbd_settings_page(
                 crate::settings::ModelButton::ToggleEnabled => {
                     st.settings_panel.toggle_model_enabled(&model_id);
                     st.persist_models();
+                }
+                crate::settings::ModelButton::Eval => {
+                    // 从该模型的配置生成 AiSettings 并跳转到沙盒评测页
+                    let model_name = st
+                        .settings_panel
+                        .models
+                        .iter()
+                        .find(|m| m.id == model_id)
+                        .map(|m| {
+                            if m.display_name.is_empty() {
+                                m.name.clone()
+                            } else {
+                                m.display_name.clone()
+                            }
+                        })
+                        .unwrap_or_else(|| model_id.clone());
+                    st.sandbox_eval.target_model_id = Some(model_id.clone());
+                    st.sandbox_eval.target_model_name = Some(model_name);
+                    st.sandbox_eval.reset_for_new_round();
+                    st.open_sandbox_eval_tab();
                 }
             }
             drop(st);
@@ -1671,4 +1785,194 @@ unsafe fn lbd_welcome_action(
             }
         }
     }
+}
+
+/// 智能体沙盒评测页点击（字段聚焦 / 参数选择 / 开始 / 终止 / 打分 / 导出）。
+///
+/// 沙盒评测页渲染在编辑区，各命中区由 render_sandbox_eval_page 以绝对坐标注册。
+pub(super) unsafe fn lbd_sandbox_page(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    layout: &crate::layout::LayoutManager,
+) -> Option<LRESULT> {
+    {
+        let st = state.borrow();
+        if !st.active_tab_is_sandbox_eval() {
+            return None;
+        }
+    }
+    let editor_region = layout.editor_region();
+    if !editor_region.contains(mouse_x, mouse_y) {
+        return None;
+    }
+
+    use crate::sandbox_eval::rect_hit;
+
+    let mut st = state.borrow_mut();
+    let regions = st.sandbox_eval.regions.clone();
+
+    // ---- 主题输入框聚焦 ----
+    if let Some(r) = regions.topic_field {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            st.sandbox_eval.active_field = Some(crate::sandbox_eval::SandboxField::Topic);
+            st.sandbox_eval.caret_visible = true;
+            let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 自定义任务数量输入框聚焦 ----
+    if let Some(r) = regions.custom_count_field {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            st.sandbox_eval.active_field = Some(crate::sandbox_eval::SandboxField::CustomCount);
+            st.sandbox_eval.caret_visible = true;
+            let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 任务数量 chip ----
+    for (n, r) in &regions.agent_chips {
+        if rect_hit(r, mouse_x, mouse_y) {
+            st.sandbox_eval.agent_count = *n;
+            st.sandbox_eval.custom_count.clear();
+            st.sandbox_eval.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 模式 chip ----
+    for (i, r) in &regions.mode_chips {
+        if rect_hit(r, mouse_x, mouse_y) {
+            st.sandbox_eval.mode = if *i == 1 {
+                crate::sandbox_eval::SandboxMode::Timed
+            } else {
+                crate::sandbox_eval::SandboxMode::Untimed
+            };
+            st.sandbox_eval.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 时长 chip ----
+    for (mins, r) in &regions.duration_chips {
+        if rect_hit(r, mouse_x, mouse_y) {
+            st.sandbox_eval.duration_min = *mins;
+            st.sandbox_eval.active_field = None;
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 开始评测 ----
+    if let Some(r) = regions.start_button {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            let app = st.app_settings.clone();
+            match st.sandbox_eval.start(&app) {
+                Ok(()) => {
+                    st.status_message = "沙盒评测已开始".to_string();
+                    let _ = SetTimer(
+                        hwnd,
+                        crate::window::SANDBOX_TIMER_ID,
+                        crate::window::SANDBOX_REFRESH_MS,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    st.sandbox_eval.error = Some(e);
+                }
+            }
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 终止评测 ----
+    if let Some(r) = regions.stop_button {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            st.sandbox_eval.stop();
+            st.status_message = "沙盒评测已终止".to_string();
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 打分 chip ----
+    for (task_idx, score, r) in &regions.score_chips {
+        if rect_hit(r, mouse_x, mouse_y) {
+            st.sandbox_eval.set_score(*task_idx, *score);
+            if let Some(avg) = st.sandbox_eval.average_score() {
+                st.status_message = format!("当前平均分 {:.1} / 10", avg);
+            }
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 打包导出 ----
+    if let Some(r) = regions.export_button {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            let topic = st.sandbox_eval.topic.trim().to_string();
+            drop(st);
+            let default_name = format!(
+                "沙盒评测-{}.zip",
+                if topic.is_empty() {
+                    "结果".to_string()
+                } else {
+                    crate::sandbox_eval::truncate_chars(&topic, 20).replace('…', "")
+                }
+            );
+            let dest = Dialogs::save_file_dialog(hwnd, "打包导出评测结果", &default_name);
+            let mut st = state.borrow_mut();
+            if let Some(dest) = dest {
+                match st.sandbox_eval.export(&dest) {
+                    Ok(msg) => {
+                        st.sandbox_eval.export_message = Some(msg.clone());
+                        st.status_message = msg;
+                    }
+                    Err(e) => {
+                        st.sandbox_eval.export_message = Some(format!("导出失败: {}", e));
+                        st.status_message = format!("导出失败: {}", e);
+                    }
+                }
+            }
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 再来一轮 ----
+    if let Some(r) = regions.restart_button {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            st.sandbox_eval.reset_for_new_round();
+            st.status_message = "已重置，可开始新一轮评测".to_string();
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // ---- 打开沙盒目录 ----
+    if let Some(r) = regions.open_dir_button {
+        if rect_hit(&r, mouse_x, mouse_y) {
+            if let Some(dir) = st.sandbox_eval.run_dir.clone() {
+                let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+            }
+            drop(st);
+            return Some(LRESULT(0));
+        }
+    }
+
+    // 点击空白处：取消输入焦点
+    if st.sandbox_eval.active_field.is_some() {
+        st.sandbox_eval.active_field = None;
+        drop(st);
+        invalidate_window(hwnd);
+    }
+    Some(LRESULT(0))
 }

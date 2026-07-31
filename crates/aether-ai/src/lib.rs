@@ -169,10 +169,30 @@ pub struct AiConfig {
     pub base_url: Option<String>,
     pub model: String,
     pub temperature: Option<f32>,
+    /// 核采样 top_p（0.0-1.0），None 表示不下发该参数
+    pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     pub system_prompt: Option<String>,
     /// 深度思考开关（仅 DeepSeek 生效），None 表示不下发该参数
     pub thinking: Option<bool>,
+    /// 思考强度（仅 DeepSeek 思考模式生效）："high"/"max"，None 表示不下发
+    pub reasoning_effort: Option<String>,
+    /// 频率惩罚（-2.0 ~ 2.0），思考模式下不生效，None 表示不下发
+    pub frequency_penalty: Option<f32>,
+    /// 存在惩罚（-2.0 ~ 2.0），思考模式下不生效，None 表示不下发
+    pub presence_penalty: Option<f32>,
+    /// 停止序列（最多 16 个），None/空表示不下发
+    pub stop: Option<Vec<String>>,
+    /// 响应格式：Some("json_object")=强制 JSON 输出
+    pub response_format: Option<String>,
+    /// 流式用量统计：Some(true) 时下发 stream_options.include_usage
+    pub include_usage: Option<bool>,
+    /// 返回输出 token 对数概率（调试用）
+    pub logprobs: Option<bool>,
+    /// 每位置候选 token 数（0-20，需 logprobs 开启）
+    pub top_logprobs: Option<u32>,
+    /// 业务侧用户标识，None/空表示不下发
+    pub user_id: Option<String>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -183,12 +203,22 @@ impl std::fmt::Debug for AiConfig {
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("temperature", &self.temperature)
+            .field("top_p", &self.top_p)
             .field("max_tokens", &self.max_tokens)
             .field(
                 "system_prompt",
                 &self.system_prompt.as_deref().map(|_| "[PRESENT]"),
             )
             .field("thinking", &self.thinking)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .field("frequency_penalty", &self.frequency_penalty)
+            .field("presence_penalty", &self.presence_penalty)
+            .field("stop", &self.stop)
+            .field("response_format", &self.response_format)
+            .field("include_usage", &self.include_usage)
+            .field("logprobs", &self.logprobs)
+            .field("top_logprobs", &self.top_logprobs)
+            .field("user_id", &self.user_id)
             .finish()
     }
 }
@@ -215,10 +245,26 @@ impl AiConfig {
             base_url,
             model,
             temperature: settings.temperature,
+            top_p: settings.top_p,
             max_tokens: settings.max_tokens,
             system_prompt: settings.system_prompt.clone(),
             thinking: settings.thinking,
+            reasoning_effort: settings.reasoning_effort.clone(),
+            frequency_penalty: settings.frequency_penalty,
+            presence_penalty: settings.presence_penalty,
+            stop: settings.stop.clone(),
+            response_format: settings.response_format.clone(),
+            include_usage: settings.include_usage,
+            logprobs: settings.logprobs,
+            top_logprobs: settings.top_logprobs,
+            user_id: settings.user_id.clone(),
         }
+    }
+
+    /// 是否处于 DeepSeek 思考模式（thinking 默认开启，None 视为开启）。
+    /// 思考模式下采样参数（temperature/top_p 等）不生效，不应下发。
+    pub fn deepseek_thinking_active(&self) -> bool {
+        matches!(self.provider, AiProvider::DeepSeek) && self.thinking.unwrap_or(true)
     }
 }
 
@@ -286,7 +332,10 @@ impl AiClient {
     }
 
     pub fn test_connection(&self) -> Result<String, AiError> {
-        self.complete("Hello, this is a test. Please reply with a simple greeting.")
+        // 轻量探活：极短提示 + 极小输出 + 显式关闭思考模式。
+        // DeepSeek V4 思考模式默认开启，若不关闭，测试请求也会先跑完整思维链
+        // 才返回，导致验证连接长达数十秒。
+        self.complete_openai_compatible("Hi", 8, true)
     }
 
     /// H-18: test_connection 的安全版本，错误信息经过脱敏处理，
@@ -534,14 +583,19 @@ impl AiClient {
 
     pub fn complete(&self, prompt: &str) -> Result<String, AiError> {
         // DeepSeek / Kimi / Custom 均为 OpenAI 兼容接口，统一走同一路径
-        self.complete_openai_compatible(prompt)
+        self.complete_openai_compatible(prompt, 100, false)
     }
 
     pub fn chat_completion(&self, messages: &[ChatMessage]) -> Result<String, AiError> {
         self.chat_openai_compatible(messages)
     }
 
-    fn complete_openai_compatible(&self, prompt: &str) -> Result<String, AiError> {
+    fn complete_openai_compatible(
+        &self,
+        prompt: &str,
+        max_tokens: u32,
+        disable_thinking: bool,
+    ) -> Result<String, AiError> {
         let base_url = self
             .config
             .base_url
@@ -561,11 +615,15 @@ impl AiClient {
         // 始终使用原始 base_url（含域名），TLS 证书验证才能匹配域名
         let url = format!("{}/chat/completions", base_url);
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100,
+            "max_tokens": max_tokens,
         });
+        // 探活请求：DeepSeek 显式关闭思考模式（否则默认思考链会显著拖慢响应）
+        if disable_thinking && matches!(self.config.provider, AiProvider::DeepSeek) {
+            body["thinking"] = serde_json::json!({ "type": "disabled" });
+        }
 
         let response = self
             .http
@@ -724,14 +782,63 @@ impl AiClient {
             "messages": body_messages,
             "stream": true,
         });
-        // 厂商差异：DeepSeek reasoner 早已并入 V4，V4 支持 temperature，故按配置正常发送
-        if let Some(t) = self.config.temperature {
-            body["temperature"] = serde_json::json!(t);
+        // 厂商差异：DeepSeek 思考模式下采样类参数（temperature/top_p/惩罚项）不生效，不下发；
+        // 非思考模式与其它厂商按配置正常发送
+        let thinking_active = self.config.deepseek_thinking_active();
+        if !thinking_active {
+            if let Some(t) = self.config.temperature {
+                body["temperature"] = serde_json::json!(t);
+            }
+            if let Some(p) = self.config.top_p {
+                body["top_p"] = serde_json::json!(p);
+            }
+            if let Some(fp) = self.config.frequency_penalty {
+                body["frequency_penalty"] = serde_json::json!(fp);
+            }
+            if let Some(pp) = self.config.presence_penalty {
+                body["presence_penalty"] = serde_json::json!(pp);
+            }
         }
         // 厂商差异：DeepSeek V4 用 thinking 参数控制深度思考（其它服务商不下发）
         self.apply_thinking_param(&mut body);
+        // DeepSeek 思考模式下可选下发思考强度 reasoning_effort（high/max）
+        if thinking_active {
+            if let Some(effort) = self.config.reasoning_effort.as_deref() {
+                if effort == "high" || effort == "max" {
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
+            }
+        }
         if let Some(m) = self.config.max_tokens {
             body["max_tokens"] = serde_json::json!(m);
+        }
+        // 停止序列（最多 16 个，空列表不下发）
+        if let Some(stop) = &self.config.stop {
+            if !stop.is_empty() {
+                let capped: Vec<&String> = stop.iter().take(16).collect();
+                body["stop"] = serde_json::json!(capped);
+            }
+        }
+        // JSON 输出模式（仅 json_object 时下发，文本模式用服务端默认）
+        if self.config.response_format.as_deref() == Some("json_object") {
+            body["response_format"] = serde_json::json!({ "type": "json_object" });
+        }
+        // 流式用量统计：末尾 chunk 附带 token 用量
+        if self.config.include_usage == Some(true) {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
+        }
+        // logprobs 调试参数（top_logprobs 需 logprobs 开启，上限 20）
+        if self.config.logprobs == Some(true) {
+            body["logprobs"] = serde_json::json!(true);
+            if let Some(n) = self.config.top_logprobs {
+                body["top_logprobs"] = serde_json::json!(n.min(20));
+            }
+        }
+        // 业务侧用户标识（空字符串不下发）
+        if let Some(uid) = self.config.user_id.as_deref() {
+            if !uid.is_empty() {
+                body["user_id"] = serde_json::json!(uid);
+            }
         }
 
         let response = self
@@ -1021,11 +1128,7 @@ mod tests {
             api_key: api_key.to_string(),
             base_url: base_url.map(|s| s.to_string()),
             model: model.to_string(),
-            temperature: None,
-            max_tokens: None,
-            max_input_tokens: None,
-            system_prompt: None,
-            thinking: None,
+            ..Default::default()
         }
     }
 
@@ -1078,9 +1181,19 @@ mod tests {
             base_url: Some("https://api.deepseek.com/v1".to_string()),
             model: "deepseek-v4-pro".to_string(),
             temperature: Some(0.7),
+            top_p: None,
             max_tokens: Some(100),
             system_prompt: Some("you are helpful".to_string()),
             thinking: None,
+            reasoning_effort: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            response_format: None,
+            include_usage: None,
+            logprobs: None,
+            top_logprobs: None,
+            user_id: None,
         };
         let out = format!("{:?}", config);
         assert!(!out.contains("super-secret"), "api_key leaked in Debug");
@@ -1116,9 +1229,9 @@ mod tests {
             model: "moonshot-v1-8k".to_string(),
             temperature: Some(0.5),
             max_tokens: Some(512),
-            max_input_tokens: None,
             system_prompt: Some("sys".to_string()),
             thinking: Some(true),
+            ..Default::default()
         };
         let client = AiClient::new(&settings);
         assert_eq!(client.config.provider, AiProvider::Kimi);
@@ -1282,11 +1395,7 @@ mod tests {
             api_key: "".to_string(),
             base_url: Some(base_url.to_string()),
             model: "model".to_string(),
-            temperature: None,
-            max_tokens: None,
-            max_input_tokens: None,
-            system_prompt: None,
-            thinking: None,
+            ..Default::default()
         };
         AiClient::new(&settings)
     }
@@ -1297,11 +1406,8 @@ mod tests {
             api_key: "k".to_string(),
             base_url: Some("https://1.1.1.1".to_string()),
             model: "m".to_string(),
-            temperature: None,
-            max_tokens: None,
-            max_input_tokens: None,
-            system_prompt: None,
             thinking,
+            ..Default::default()
         })
     }
 
@@ -1326,6 +1432,25 @@ mod tests {
         let mut body = serde_json::json!({});
         thinking_client("kimi", Some(true)).apply_thinking_param(&mut body);
         assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn deepseek_thinking_active_flag() {
+        // DeepSeek + thinking=None（服务端默认开启）/ Some(true) → 思考模式，采样参数不下发
+        assert!(thinking_client("deepseek", None)
+            .config
+            .deepseek_thinking_active());
+        assert!(thinking_client("deepseek", Some(true))
+            .config
+            .deepseek_thinking_active());
+        // DeepSeek + thinking=Some(false) → 非思考模式，采样参数正常下发
+        assert!(!thinking_client("deepseek", Some(false))
+            .config
+            .deepseek_thinking_active());
+        // 非 DeepSeek 厂商永不视为思考模式
+        assert!(!thinking_client("kimi", Some(true))
+            .config
+            .deepseek_thinking_active());
     }
 
     #[test]

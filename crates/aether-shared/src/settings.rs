@@ -14,6 +14,9 @@ pub struct AppSettings {
     /// 当前激活的模型 ID
     #[serde(default)]
     pub active_model_id: Option<String>,
+    /// 自动更新设置
+    #[serde(default)]
+    pub update: UpdateSettings,
 }
 
 impl std::fmt::Debug for AppSettings {
@@ -70,6 +73,10 @@ pub struct AiSettings {
     pub base_url: Option<String>,
     pub model: String,
     pub temperature: Option<f32>,
+    /// 核采样 top_p（0.0-1.0）：None 表示不下发该参数（用服务端默认 1.0）。
+    /// 注：DeepSeek 思考模式下采样参数（temperature/top_p）不生效。
+    #[serde(default)]
+    pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     /// 最大输入 Token（上下文窗口预算）：限制发送给模型的历史上下文量。
     /// None 表示用内置默认预算。
@@ -80,6 +87,34 @@ pub struct AiSettings {
     /// None=不下发该参数（用服务端默认，即开启）。
     #[serde(default)]
     pub thinking: Option<bool>,
+    /// 思考强度（仅 DeepSeek 思考模式生效）："high"（默认）或 "max"，
+    /// None=不下发该参数（服务端默认 high）。
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// 频率惩罚（-2.0 ~ 2.0，默认 0）：抑制逐字重复；思考模式下不生效
+    #[serde(default)]
+    pub frequency_penalty: Option<f32>,
+    /// 存在惩罚（-2.0 ~ 2.0，默认 0）：鼓励新话题；思考模式下不生效
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
+    /// 停止序列（最多 16 个）：生成遇到即停止；None/空=不下发
+    #[serde(default)]
+    pub stop: Option<Vec<String>>,
+    /// 响应格式：Some("json_object")=强制 JSON 输出；None=文本（默认）
+    #[serde(default)]
+    pub response_format: Option<String>,
+    /// 流式用量统计：Some(true)=SSE 末尾 chunk 返回 token 用量
+    #[serde(default)]
+    pub include_usage: Option<bool>,
+    /// 返回输出 token 的对数概率（调试用）
+    #[serde(default)]
+    pub logprobs: Option<bool>,
+    /// 每位置返回概率最高的候选 token 数（0-20，需 logprobs 开启）
+    #[serde(default)]
+    pub top_logprobs: Option<u32>,
+    /// 业务侧用户标识（内容安全/缓存隔离/限速调度）；None/空=不下发
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 impl std::fmt::Debug for AiSettings {
@@ -90,6 +125,7 @@ impl std::fmt::Debug for AiSettings {
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("temperature", &self.temperature)
+            .field("top_p", &self.top_p)
             .field("max_tokens", &self.max_tokens)
             .field("max_input_tokens", &self.max_input_tokens)
             .field(
@@ -97,6 +133,15 @@ impl std::fmt::Debug for AiSettings {
                 &self.system_prompt.as_deref().map(|_| "[PRESENT]"),
             )
             .field("thinking", &self.thinking)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .field("frequency_penalty", &self.frequency_penalty)
+            .field("presence_penalty", &self.presence_penalty)
+            .field("stop", &self.stop)
+            .field("response_format", &self.response_format)
+            .field("include_usage", &self.include_usage)
+            .field("logprobs", &self.logprobs)
+            .field("top_logprobs", &self.top_logprobs)
+            .field("user_id", &self.user_id)
             .finish()
     }
 }
@@ -113,6 +158,9 @@ pub struct AiModelProfile {
     pub base_url: Option<String>,
     pub model: String,
     pub temperature: Option<f32>,
+    /// 核采样 top_p（0.0-1.0），语义同 AiSettings::top_p
+    #[serde(default)]
+    pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     /// 最大输入 Token（上下文窗口预算），语义同 AiSettings::max_input_tokens
     #[serde(default)]
@@ -123,6 +171,33 @@ pub struct AiModelProfile {
     /// 深度思考开关（仅 DeepSeek V4 生效），语义同 AiSettings::thinking
     #[serde(default)]
     pub thinking: Option<bool>,
+    /// 思考强度（"high"/"max"），语义同 AiSettings::reasoning_effort
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// 频率惩罚，语义同 AiSettings::frequency_penalty
+    #[serde(default)]
+    pub frequency_penalty: Option<f32>,
+    /// 存在惩罚，语义同 AiSettings::presence_penalty
+    #[serde(default)]
+    pub presence_penalty: Option<f32>,
+    /// 停止序列，语义同 AiSettings::stop
+    #[serde(default)]
+    pub stop: Option<Vec<String>>,
+    /// 响应格式，语义同 AiSettings::response_format
+    #[serde(default)]
+    pub response_format: Option<String>,
+    /// 流式用量统计，语义同 AiSettings::include_usage
+    #[serde(default)]
+    pub include_usage: Option<bool>,
+    /// logprobs 调试开关，语义同 AiSettings::logprobs
+    #[serde(default)]
+    pub logprobs: Option<bool>,
+    /// top_logprobs 候选数，语义同 AiSettings::top_logprobs
+    #[serde(default)]
+    pub top_logprobs: Option<u32>,
+    /// 业务侧用户标识，语义同 AiSettings::user_id
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -141,10 +216,20 @@ impl AiModelProfile {
             base_url: self.base_url.clone(),
             model: self.model.clone(),
             temperature: self.temperature,
+            top_p: self.top_p,
             max_tokens: self.max_tokens,
             max_input_tokens: self.max_input_tokens,
             system_prompt: self.system_prompt.clone(),
             thinking: self.thinking,
+            reasoning_effort: self.reasoning_effort.clone(),
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
+            stop: self.stop.clone(),
+            response_format: self.response_format.clone(),
+            include_usage: self.include_usage,
+            logprobs: self.logprobs,
+            top_logprobs: self.top_logprobs,
+            user_id: self.user_id.clone(),
         }
     }
 
@@ -162,11 +247,21 @@ impl AiModelProfile {
             base_url: ai.base_url.clone(),
             model: ai.model.clone(),
             temperature: ai.temperature,
+            top_p: ai.top_p,
             max_tokens: ai.max_tokens,
             max_input_tokens: ai.max_input_tokens,
             system_prompt: ai.system_prompt.clone(),
             enabled: true,
             thinking: ai.thinking,
+            reasoning_effort: ai.reasoning_effort.clone(),
+            frequency_penalty: ai.frequency_penalty,
+            presence_penalty: ai.presence_penalty,
+            stop: ai.stop.clone(),
+            response_format: ai.response_format.clone(),
+            include_usage: ai.include_usage,
+            logprobs: ai.logprobs,
+            top_logprobs: ai.top_logprobs,
+            user_id: ai.user_id.clone(),
         }
     }
 }
@@ -181,6 +276,7 @@ impl std::fmt::Debug for AiModelProfile {
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("temperature", &self.temperature)
+            .field("top_p", &self.top_p)
             .field("max_tokens", &self.max_tokens)
             .field("max_input_tokens", &self.max_input_tokens)
             .field(
@@ -189,6 +285,15 @@ impl std::fmt::Debug for AiModelProfile {
             )
             .field("enabled", &self.enabled)
             .field("thinking", &self.thinking)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .field("frequency_penalty", &self.frequency_penalty)
+            .field("presence_penalty", &self.presence_penalty)
+            .field("stop", &self.stop)
+            .field("response_format", &self.response_format)
+            .field("include_usage", &self.include_usage)
+            .field("logprobs", &self.logprobs)
+            .field("top_logprobs", &self.top_logprobs)
+            .field("user_id", &self.user_id)
             .finish()
     }
 }
@@ -582,16 +687,27 @@ impl Default for AppSettings {
                 base_url: None,
                 model: "deepseek-v4-pro".to_string(),
                 temperature: Some(0.7),
+                top_p: None,
                 max_tokens: Some(8192),
                 max_input_tokens: None,
                 system_prompt: None,
                 thinking: None,
+                reasoning_effort: None,
+                frequency_penalty: None,
+                presence_penalty: None,
+                stop: None,
+                response_format: None,
+                include_usage: None,
+                logprobs: None,
+                top_logprobs: None,
+                user_id: None,
             },
             ui: UiSettings::default(),
             remote: RemoteSettings::default(),
             auto_save: AutoSaveSettings::default(),
             ai_models: Vec::new(),
             active_model_id: None,
+            update: UpdateSettings::default(),
         }
     }
 }
@@ -864,5 +980,48 @@ mod tests {
         assert_eq!(ui.activity_bar_order, vec!["files", "search"]);
         assert_eq!(ui.menu_bar_order, vec!["file", "edit"]);
         assert_eq!(ui.last_workspace, Some(PathBuf::from("C:\\proj")));
+    }
+}
+
+/// 自动更新策略
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePolicy {
+    /// 自动下载并静默安装（默认）
+    AutoInstall,
+    /// 仅通知用户有新版，不自动下载
+    NotifyOnly,
+    /// 关闭自动更新
+    Disabled,
+}
+
+impl Default for UpdatePolicy {
+    fn default() -> Self {
+        Self::AutoInstall
+    }
+}
+
+/// 自动更新设置（持久化到 settings.json）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// 更新策略
+    pub policy: UpdatePolicy,
+    /// 抑制天数：0=每次启动检查，1/7/30=N天内不再提醒
+    pub suppress_days: u32,
+    /// 上次检查时间（Unix 时间戳秒）
+    pub last_check_ts: u64,
+    /// 上次用户点击"稍后提醒"的时间戳
+    pub last_suppressed_ts: u64,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            policy: UpdatePolicy::AutoInstall,
+            suppress_days: 0,
+            last_check_ts: 0,
+            last_suppressed_ts: 0,
+        }
     }
 }

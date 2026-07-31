@@ -239,7 +239,7 @@ impl TabContent {
     }
 }
 
-/// 标签页类型 — 支持文件、设置、欢迎三种标签页
+/// 标签页类型 — 支持文件、设置、欢迎、沙盒评测四种标签页
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Tab {
@@ -249,6 +249,8 @@ pub enum Tab {
     Settings,
     /// 欢迎页标签页
     Welcome,
+    /// 智能体沙盒评测标签页
+    SandboxEval,
 }
 
 impl Tab {
@@ -277,6 +279,11 @@ impl Tab {
         matches!(self, Tab::Welcome)
     }
 
+    /// 判断是否为沙盒评测标签页
+    pub fn is_sandbox_eval(&self) -> bool {
+        matches!(self, Tab::SandboxEval)
+    }
+
     /// 获取文件路径（仅 File 类型）
     pub fn file_path(&self) -> Option<&PathBuf> {
         match self {
@@ -291,6 +298,7 @@ impl Tab {
             Tab::File(content) => content.file_name(),
             Tab::Settings => "设置".to_string(),
             Tab::Welcome => "欢迎".to_string(),
+            Tab::SandboxEval => "沙盒评测".to_string(),
         }
     }
 
@@ -335,6 +343,7 @@ impl Tab {
             Tab::File(content) => content.file_name(),
             Tab::Settings => "设置".to_string(),
             Tab::Welcome => "欢迎".to_string(),
+            Tab::SandboxEval => "沙盒评测".to_string(),
         }
     }
 }

@@ -58,6 +58,9 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             if let Some(r) = oc_settings_field(hwnd, c) {
                 return r;
             }
+            if let Some(r) = oc_sandbox_field(hwnd, c) {
+                return r;
+            }
             if let Some(r) = oc_search_panel(hwnd, c) {
                 return r;
             }
@@ -137,6 +140,27 @@ unsafe fn oc_settings_field(hwnd: HWND, c: char) -> Option<LRESULT> {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 state.borrow_mut().settings_panel.input_char(c);
+                invalidate_window(hwnd);
+            }
+        });
+        Some(LRESULT(0))
+    } else {
+        None
+    }
+}
+
+/// 沙盒评测页输入框激活时，输入字符进入对应字段
+unsafe fn oc_sandbox_field(hwnd: HWND, c: char) -> Option<LRESULT> {
+    let active = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| state.borrow().sandbox_eval.active_field.is_some())
+            .unwrap_or(false)
+    });
+    if active {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().sandbox_eval.input_char(c);
                 invalidate_window(hwnd);
             }
         });

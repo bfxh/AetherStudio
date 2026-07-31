@@ -365,9 +365,8 @@ unsafe fn omm_titlebar_menu_hover(
         let right_panel_btn_x = tb.right_panel_btn_x;
         let bottom_panel_btn_x = tb.bottom_panel_btn_x;
         let left_sidebar_btn_x = tb.left_sidebar_btn_x;
-        let forward_btn_x = tb.forward_btn_x;
-        let back_btn_x = tb.back_btn_x;
 
+        // 右侧工具按钮组悬停检测（从右往左）
         if mouse_x >= minimize_x {
             if mouse_x >= close_x {
                 st.titlebar_hover_button = Some(2);
@@ -386,12 +385,18 @@ unsafe fn omm_titlebar_menu_hover(
             st.titlebar_hover_button = Some(6);
         } else if mouse_x >= left_sidebar_btn_x {
             st.titlebar_hover_button = Some(7);
-        } else if mouse_x >= forward_btn_x {
-            st.titlebar_hover_button = Some(8);
-        } else if mouse_x >= back_btn_x {
-            st.titlebar_hover_button = Some(9);
         } else {
-            st.titlebar_hover_button = None;
+            // 左侧箭头按钮（位置动态计算，从渲染帧缓存读取）
+            let back_x = st.titlebar_back_btn_x;
+            let fwd_x = st.titlebar_forward_btn_x;
+            let btn_size = tb.tool_btn_size;
+            if mouse_x >= back_x && mouse_x < back_x + btn_size {
+                st.titlebar_hover_button = Some(9);
+            } else if mouse_x >= fwd_x && mouse_x < fwd_x + btn_size {
+                st.titlebar_hover_button = Some(8);
+            } else {
+                st.titlebar_hover_button = None;
+            }
         }
     } else {
         st.titlebar_hover_button = None;
@@ -606,6 +611,48 @@ unsafe fn omm_settings_hover(
             } else {
                 st.settings_panel.temp_slider_dragging = false;
             }
+        }
+        // Top-p 滑块拖拽：拖拽中根据鼠标 x 实时更新 top_p
+        if st.settings_panel.top_p_slider_dragging {
+            if is_dragging {
+                if st.settings_panel.set_top_p_from_slider_x(mouse_x) {
+                    changed = true;
+                }
+            } else {
+                st.settings_panel.top_p_slider_dragging = false;
+            }
+        }
+        // 频率惩罚滑块拖拽
+        if st.settings_panel.freq_slider_dragging {
+            if is_dragging {
+                if st.settings_panel.set_freq_from_slider_x(mouse_x) {
+                    changed = true;
+                }
+            } else {
+                st.settings_panel.freq_slider_dragging = false;
+            }
+        }
+        // 存在惩罚滑块拖拽
+        if st.settings_panel.pres_slider_dragging {
+            if is_dragging {
+                if st.settings_panel.set_pres_from_slider_x(mouse_x) {
+                    changed = true;
+                }
+            } else {
+                st.settings_panel.pres_slider_dragging = false;
+            }
+        }
+        // 思考强度分段悬停态
+        let new_effort_hover = st.settings_panel.hit_test_effort(mouse_x, mouse_y);
+        if st.settings_panel.hover_effort != new_effort_hover {
+            st.settings_panel.hover_effort = new_effort_hover;
+            changed = true;
+        }
+        // 响应格式分段悬停态
+        let new_fmt_hover = st.settings_panel.hit_test_response_format(mouse_x, mouse_y);
+        if st.settings_panel.hover_response_format != new_fmt_hover {
+            st.settings_panel.hover_response_format = new_fmt_hover;
+            changed = true;
         }
         changed
     }
@@ -1102,6 +1149,20 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
                     .hit_test_field(mouse_x, mouse_y)
                     .is_some_and(|f| f != crate::settings::SettingsField::Provider)
                 {
+                    return CursorType::IBeam;
+                }
+                return CursorType::Arrow;
+            }
+            // 沙盒评测页：仅文本输入字段 → IBeam，其余为 Arrow
+            if st.active_tab_is_sandbox_eval() {
+                let regions = &st.sandbox_eval.regions;
+                let in_field = regions
+                    .topic_field
+                    .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y))
+                    || regions
+                        .custom_count_field
+                        .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y));
+                if in_field {
                     return CursorType::IBeam;
                 }
                 return CursorType::Arrow;

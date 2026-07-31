@@ -11,6 +11,11 @@ impl EditorState {
         text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
         let s = self.dpi_scale;
+        // 动画收起期间侧边栏宽度缩小到无法显示内容时，直接跳过所有文字/图标渲染，
+        // 避免文字被挤压产生重影（仅保留背景填充，由 render_sidebar 处理）。
+        if width < 60.0 * s {
+            return;
+        }
         unsafe {
             // 确保矢量图标几何已创建（FilePython / FileJava / FileText）
             self.icons.ensure_created_from_target(target);

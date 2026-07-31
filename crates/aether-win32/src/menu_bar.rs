@@ -67,6 +67,8 @@ pub enum CommandId {
     // 运行
     RunStart,
     RunDebug,
+    /// 智能体沙盒评测
+    RunSandboxEval,
     // 终端
     TerminalNew,
     // 搜索
@@ -107,6 +109,7 @@ impl CommandId {
             CommandId::GotoLine => "转到行",
             CommandId::RunStart => "启动",
             CommandId::RunDebug => "调试",
+            CommandId::RunSandboxEval => "智能体沙盒评测",
             CommandId::TerminalNew => "新建终端",
             CommandId::SearchGlobal => "全局搜索",
             CommandId::AiFixDiagnostics => "AI 修复当前诊断",
@@ -236,6 +239,8 @@ impl MenuBar {
                     vec![
                         MenuItem::new("启动调试", CommandId::RunDebug).with_shortcut("F5"),
                         MenuItem::new("运行", CommandId::RunStart).with_shortcut("Ctrl+F5"),
+                        MenuItem::separator(),
+                        MenuItem::new("智能体沙盒评测", CommandId::RunSandboxEval),
                     ],
                 ),
                 MenuBarItem::new(

@@ -1,6 +1,248 @@
 use super::*;
 
 impl EditorState {
+    /// 渲染一个参数滑块（轨道 + 填充 + 旋钮）；disabled 时灰化。
+    /// 返回滑块轨道命中区 (x, y, w, h)。
+    unsafe fn render_param_slider(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        track_x: f32,
+        track_y: f32,
+        track_w: f32,
+        ratio: f32,
+        disabled: bool,
+    ) -> (f32, f32, f32, f32) {
+        let track_h = 4.0_f32;
+        let knob_cx = track_x + track_w * ratio.clamp(0.0, 1.0);
+        let track_bg = color_f(0.30, 0.30, 0.33, 1.0);
+        let track_bg_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &track_bg)
+            .unwrap();
+        target.FillRectangle(
+            &D2D_RECT_F {
+                left: track_x,
+                top: track_y,
+                right: track_x + track_w,
+                bottom: track_y + track_h,
+            },
+            &track_bg_brush,
+        );
+        let track_fill = if disabled {
+            color_f(0.40, 0.40, 0.43, 1.0)
+        } else {
+            color_f(0.0, 0.47, 0.83, 1.0)
+        };
+        let track_fill_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &track_fill)
+            .unwrap();
+        target.FillRectangle(
+            &D2D_RECT_F {
+                left: track_x,
+                top: track_y,
+                right: knob_cx,
+                bottom: track_y + track_h,
+            },
+            &track_fill_brush,
+        );
+        let knob_r = 8.0_f32;
+        let knob_color = if disabled {
+            color_f(0.55, 0.55, 0.58, 1.0)
+        } else {
+            color_f(0.95, 0.95, 0.95, 1.0)
+        };
+        let knob_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &knob_color)
+            .unwrap();
+        target.FillEllipse(
+            &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                point: windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
+                    x: knob_cx,
+                    y: track_y + track_h / 2.0,
+                },
+                radiusX: knob_r,
+                radiusY: knob_r,
+            },
+            &knob_brush,
+        );
+        (track_x, track_y, track_w, track_h)
+    }
+
+    /// 渲染一个胶囊开关 + 右侧标签；返回命中区（覆盖开关与标签一段）
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn render_pill_switch(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        y: f32,
+        checked: bool,
+        label: &str,
+        label_format: &IDWriteTextFormat,
+        text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
+    ) -> (f32, f32, f32, f32) {
+        let sw_w = 38.0_f32;
+        let sw_h = 20.0_f32;
+        let sw_bg = if checked {
+            color_f(0.0, 0.47, 0.83, 1.0)
+        } else {
+            color_f(0.34, 0.34, 0.37, 1.0)
+        };
+        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &sw_bg) {
+            let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect: D2D_RECT_F {
+                    left: x,
+                    top: y,
+                    right: x + sw_w,
+                    bottom: y + sw_h,
+                },
+                radiusX: sw_h / 2.0,
+                radiusY: sw_h / 2.0,
+            };
+            target.FillRoundedRectangle(&sw_rounded, &b);
+        }
+        let knob_r = 7.0_f32;
+        let knob_cx = if checked {
+            x + sw_w - knob_r - 3.0
+        } else {
+            x + knob_r + 3.0
+        };
+        if let Ok(kb) = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
+        {
+            target.FillEllipse(
+                &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                    point: windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
+                        x: knob_cx,
+                        y: y + sw_h / 2.0,
+                    },
+                    radiusX: knob_r,
+                    radiusY: knob_r,
+                },
+                &kb,
+            );
+        }
+        let lbl: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+        target.DrawText(
+            &lbl,
+            label_format,
+            &D2D_RECT_F {
+                left: x + sw_w + 10.0,
+                top: y,
+                right: x + sw_w + 10.0 + 360.0,
+                bottom: y + sw_h,
+            },
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+        (x, y, sw_w + 10.0 + 280.0, sw_h)
+    }
+
+    /// 渲染一个单行文本输入字段（标签 + 输入框 + 占位符），注册命中区；
+    /// 返回输入框底部 Y（调用方自行加 gap）
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn render_dev_text_input(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        margin: f32,
+        input_w: f32,
+        label_h: f32,
+        input_h: f32,
+        cy: f32,
+        label: &str,
+        value: &str,
+        placeholder: &str,
+        field: crate::settings::SettingsField,
+        valid: bool,
+        label_format: &IDWriteTextFormat,
+        input_format: &IDWriteTextFormat,
+        text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
+    ) -> f32 {
+        let lbl: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+        target.DrawText(
+            &lbl,
+            label_format,
+            &D2D_RECT_F {
+                left: x + margin,
+                top: cy,
+                right: x + margin + input_w,
+                bottom: cy + label_h,
+            },
+            text_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+        let box_y = cy + label_h;
+        let focused = self.settings_panel.active_field == Some(field);
+        let bg_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
+            .unwrap();
+        let border = if !valid {
+            color_f(0.85, 0.30, 0.30, 1.0)
+        } else if focused {
+            color_f(0.0, 0.47, 0.83, 1.0)
+        } else {
+            color_f(0.3, 0.3, 0.3, 1.0)
+        };
+        let border_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &border)
+            .unwrap();
+        target.FillRectangle(
+            &D2D_RECT_F {
+                left: x + margin,
+                top: box_y,
+                right: x + margin + input_w,
+                bottom: box_y + input_h,
+            },
+            &bg_brush,
+        );
+        draw_input_borders(target, x + margin, box_y, input_w, input_h, &border_brush);
+        let (display, is_placeholder) = if value.is_empty() {
+            (placeholder.to_string(), true)
+        } else {
+            (value.to_string(), false)
+        };
+        let text_color = if is_placeholder {
+            color_f(0.5, 0.5, 0.5, 1.0)
+        } else {
+            color_f(0.85, 0.85, 0.85, 1.0)
+        };
+        let value_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &text_color)
+            .unwrap();
+        let value_wide: Vec<u16> = display.encode_utf16().chain(Some(0)).collect();
+        target.DrawText(
+            &value_wide,
+            input_format,
+            &D2D_RECT_F {
+                left: x + margin + 6.0,
+                top: box_y,
+                right: x + margin + input_w - 6.0,
+                bottom: box_y + input_h,
+            },
+            &value_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+        self.settings_panel
+            .add_field_region(field, x + margin, box_y, input_w, input_h);
+        box_y + input_h
+    }
+
     /// 渲染 AI 接口设置字段（provider / key / url / model / 保存 / 测试连接）
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_ai_settings_fields(
@@ -411,66 +653,65 @@ impl EditorState {
                 );
             }
 
-            // 深度思考开关（DeepSeek 专属：thinking enabled/disabled）——勾选框 + 标签
+            // 深度思考开关（DeepSeek 专属：thinking enabled/disabled）——胶囊开关 + 标签
             if self.settings_panel.provider == "deepseek" {
-                let box_size = 18.0_f32;
-                let box_x = x + margin;
-                let box_y = cy;
+                let sw_w = 38.0_f32;
+                let sw_h = 20.0_f32;
+                let sw_x = x + margin;
+                let sw_y = cy;
                 let checked = self.settings_panel.thinking;
-                let box_bg = if checked {
+                let sw_bg = if checked {
                     color_f(0.0, 0.47, 0.83, 1.0)
                 } else {
-                    color_f(0.18, 0.18, 0.18, 1.0)
+                    color_f(0.34, 0.34, 0.37, 1.0)
                 };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &box_bg) {
-                    target.FillRectangle(
-                        &D2D_RECT_F {
-                            left: box_x,
-                            top: box_y,
-                            right: box_x + box_size,
-                            bottom: box_y + box_size,
+                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &sw_bg) {
+                    let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: sw_x,
+                            top: sw_y,
+                            right: sw_x + sw_w,
+                            bottom: sw_y + sw_h,
                         },
-                        &b,
-                    );
+                        radiusX: sw_h / 2.0,
+                        radiusY: sw_h / 2.0,
+                    };
+                    target.FillRoundedRectangle(&sw_rounded, &b);
                 }
-                if let Ok(bb) = self
+                let knob_r = 7.0_f32;
+                let knob_cx = if checked {
+                    sw_x + sw_w - knob_r - 3.0
+                } else {
+                    sw_x + knob_r + 3.0
+                };
+                if let Ok(kb) = self
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.3, 0.3, 0.3, 1.0))
+                    .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                 {
-                    draw_input_borders(target, box_x, box_y, box_size, box_size, &bb);
-                }
-                if checked {
-                    let check: Vec<u16> = "✓".encode_utf16().chain(Some(0)).collect();
-                    if let Ok(cbk) = self
-                        .render_ctx
-                        .brush_cache
-                        .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
-                    {
-                        target.DrawText(
-                            &check,
-                            &input_format,
-                            &D2D_RECT_F {
-                                left: box_x + 2.0,
-                                top: box_y,
-                                right: box_x + box_size,
-                                bottom: box_y + box_size,
+                    target.FillEllipse(
+                        &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                            point: windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
+                                x: knob_cx,
+                                y: sw_y + sw_h / 2.0,
                             },
-                            &cbk,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                    }
+                            radiusX: knob_r,
+                            radiusY: knob_r,
+                        },
+                        &kb,
+                    );
                 }
-                let lbl: Vec<u16> = "深度思考（推理模式，仅 DeepSeek）"
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect();
+                let lbl_text = if checked {
+                    "深度思考  已开启（输出思维链，回答更准确）"
+                } else {
+                    "深度思考  已关闭（直接回答，响应更快）"
+                };
+                let lbl: Vec<u16> = lbl_text.encode_utf16().chain(Some(0)).collect();
                 let lbl_rect = D2D_RECT_F {
-                    left: box_x + box_size + 8.0,
-                    top: box_y,
+                    left: sw_x + sw_w + 10.0,
+                    top: sw_y,
                     right: x + width - margin,
-                    bottom: box_y + box_size,
+                    bottom: sw_y + sw_h,
                 };
                 target.DrawText(
                     &lbl,
@@ -480,11 +721,102 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                // 命中区覆盖勾选框 + 标签一段，便于点击切换
+                // 命中区覆盖开关 + 标签一段，便于点击切换
                 self.settings_panel.thinking_toggle_region =
-                    Some((box_x, box_y, box_size + 8.0 + 200.0, box_size));
-                cy += box_size + gap;
+                    Some((sw_x, sw_y, sw_w + 10.0 + 240.0, sw_h));
+                cy += sw_h + gap;
+
+                // 思考强度分段（仅思考模式下显示）：high（默认）/ max
+                if checked {
+                    let effort_label: Vec<u16> = "思考强度".encode_utf16().chain(Some(0)).collect();
+                    target.DrawText(
+                        &effort_label,
+                        &label_format,
+                        &D2D_RECT_F {
+                            left: x + margin,
+                            top: cy,
+                            right: x + margin + 80.0,
+                            bottom: cy + 24.0,
+                        },
+                        text_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                    let seg_h = 24.0_f32;
+                    let seg_w = 84.0_f32;
+                    let seg_x0 = x + margin + 80.0;
+                    let segments: [(&'static str, &str); 2] =
+                        [("high", "高（默认）"), ("max", "最大")];
+                    for (i, (val, disp)) in segments.iter().enumerate() {
+                        let seg_x = seg_x0 + i as f32 * (seg_w + 8.0);
+                        let selected = self.settings_panel.reasoning_effort == *val;
+                        let hovered = self.settings_panel.hover_effort == Some(*val);
+                        let seg_bg = if selected {
+                            color_f(0.0, 0.47, 0.83, 1.0)
+                        } else if hovered {
+                            color_f(0.24, 0.24, 0.27, 1.0)
+                        } else {
+                            color_f(0.18, 0.18, 0.20, 1.0)
+                        };
+                        let seg_rect = D2D_RECT_F {
+                            left: seg_x,
+                            top: cy,
+                            right: seg_x + seg_w,
+                            bottom: cy + seg_h,
+                        };
+                        let seg_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                            rect: seg_rect,
+                            radiusX: 4.0,
+                            radiusY: 4.0,
+                        };
+                        if let Ok(sb) = self.render_ctx.brush_cache.get_brush(target, &seg_bg) {
+                            target.FillRoundedRectangle(&seg_rounded, &sb);
+                        }
+                        if !selected {
+                            if let Ok(bb) = self
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
+                            {
+                                target.DrawRoundedRectangle(&seg_rounded, &bb, 1.0, None);
+                            }
+                        }
+                        let seg_text_color = if selected {
+                            color_f(1.0, 1.0, 1.0, 1.0)
+                        } else {
+                            color_f(0.78, 0.78, 0.80, 1.0)
+                        };
+                        if let Ok(tb) = self
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &seg_text_color)
+                        {
+                            let seg_wide: Vec<u16> = disp.encode_utf16().chain(Some(0)).collect();
+                            target.DrawText(
+                                &seg_wide,
+                                &button_format,
+                                &seg_rect,
+                                &tb,
+                                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                        }
+                        self.settings_panel
+                            .effort_regions
+                            .push((val, seg_x, cy, seg_w, seg_h));
+                    }
+                    cy += seg_h + gap;
+                }
             }
+
+            // 采样参数禁用态：DeepSeek 思考模式下 temperature/top_p 不生效（官方文档）
+            let sampling_disabled = self.settings_panel.sampling_disabled_by_thinking();
+            let disabled_text_color = color_f(0.50, 0.50, 0.53, 1.0);
+            let disabled_text_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &disabled_text_color)
+                .unwrap();
 
             // 温度：滑块（0.0 - 2.0，步进 0.1）——比裸文本框更直观，且天然合法
             let temp_val = self
@@ -494,7 +826,11 @@ impl EditorState {
                 .parse::<f32>()
                 .unwrap_or(0.7)
                 .clamp(0.0, 2.0);
-            let temp_label_str = format!("温度  {:.1}   （越低越严谨，越高越发散）", temp_val);
+            let temp_label_str = if sampling_disabled {
+                format!("温度  {:.1}   （思考模式下不生效）", temp_val)
+            } else {
+                format!("温度  {:.1}   （越低越严谨，越高越发散）", temp_val)
+            };
             let temp_label: Vec<u16> = temp_label_str.encode_utf16().chain(Some(0)).collect();
             let temp_label_rect = D2D_RECT_F {
                 left: x + margin,
@@ -506,74 +842,91 @@ impl EditorState {
                 &temp_label,
                 &label_format,
                 &temp_label_rect,
-                text_brush,
+                if sampling_disabled {
+                    &disabled_text_brush
+                } else {
+                    text_brush
+                },
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h + 6.0;
-            let track_h = 4.0_f32;
             let track_x = x + margin + 8.0;
             let track_w = (input_w - 16.0).max(1.0);
             let track_y = cy + 8.0;
-            let ratio = (temp_val / 2.0).clamp(0.0, 1.0);
-            let knob_cx = track_x + track_w * ratio;
-            let track_bg = color_f(0.30, 0.30, 0.33, 1.0);
-            let track_bg_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &track_bg)
-                .unwrap();
-            target.FillRectangle(
-                &D2D_RECT_F {
-                    left: track_x,
-                    top: track_y,
-                    right: track_x + track_w,
-                    bottom: track_y + track_h,
-                },
-                &track_bg_brush,
+            let temp_region = self.render_param_slider(
+                target,
+                track_x,
+                track_y,
+                track_w,
+                temp_val / 2.0,
+                sampling_disabled,
             );
-            let track_fill = color_f(0.0, 0.47, 0.83, 1.0);
-            let track_fill_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &track_fill)
-                .unwrap();
-            target.FillRectangle(
-                &D2D_RECT_F {
-                    left: track_x,
-                    top: track_y,
-                    right: knob_cx,
-                    bottom: track_y + track_h,
+            // 禁用态不注册命中区，点击/拖拽自然失效
+            self.settings_panel.temp_slider_region = if sampling_disabled {
+                None
+            } else {
+                Some(temp_region)
+            };
+            cy += 24.0 + gap;
+
+            // Top-p：核采样滑块（0.0 - 1.0，步进 0.05），与温度二选一调节为宜
+            let top_p_val = self
+                .settings_panel
+                .top_p
+                .trim()
+                .parse::<f32>()
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0);
+            let top_p_label_str = if sampling_disabled {
+                format!("Top-p  {:.2}   （思考模式下不生效）", top_p_val)
+            } else {
+                format!("Top-p  {:.2}   （核采样，建议与温度二选一调整）", top_p_val)
+            };
+            let top_p_label: Vec<u16> = top_p_label_str.encode_utf16().chain(Some(0)).collect();
+            let top_p_label_rect = D2D_RECT_F {
+                left: x + margin,
+                top: cy,
+                right: x + width - margin,
+                bottom: cy + label_h,
+            };
+            target.DrawText(
+                &top_p_label,
+                &label_format,
+                &top_p_label_rect,
+                if sampling_disabled {
+                    &disabled_text_brush
+                } else {
+                    text_brush
                 },
-                &track_fill_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
             );
-            let knob_r = 8.0_f32;
-            let knob_color = color_f(0.95, 0.95, 0.95, 1.0);
-            let knob_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &knob_color)
-                .unwrap();
-            target.FillEllipse(
-                &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
-                    point: windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
-                        x: knob_cx,
-                        y: track_y + track_h / 2.0,
-                    },
-                    radiusX: knob_r,
-                    radiusY: knob_r,
-                },
-                &knob_brush,
+            cy += label_h + 6.0;
+            let top_p_track_y = cy + 8.0;
+            let top_p_region = self.render_param_slider(
+                target,
+                track_x,
+                top_p_track_y,
+                track_w,
+                top_p_val,
+                sampling_disabled,
             );
-            self.settings_panel.temp_slider_region = Some((track_x, track_y, track_w, track_h));
+            self.settings_panel.top_p_slider_region = if sampling_disabled {
+                None
+            } else {
+                Some(top_p_region)
+            };
             cy += 24.0 + gap;
 
             // 最大输入 Token（上下文预算，正整数）——限制发送给模型的历史上下文量
             let maxin_valid = self.settings_panel.max_input_tokens_valid();
-            let maxin_label: Vec<u16> = "最大输入 Token（上下文预算）"
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
+            let maxin_label_text = if self.settings_panel.provider == "deepseek" {
+                "最大输入 Token（上下文预算，DeepSeek V4 上下文上限 1M）"
+            } else {
+                "最大输入 Token（上下文预算）"
+            };
+            let maxin_label: Vec<u16> = maxin_label_text.encode_utf16().chain(Some(0)).collect();
             let maxin_label_rect = D2D_RECT_F {
                 left: x + margin,
                 top: cy,
@@ -692,10 +1045,12 @@ impl EditorState {
 
             // 最大输出 Token（回复长度，正整数）——带合法性校验
             let maxtok_valid = self.settings_panel.max_tokens_valid();
-            let maxtok_label: Vec<u16> = "最大输出 Token（回复长度）"
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
+            let maxtok_label_text = if self.settings_panel.provider == "deepseek" {
+                "最大输出 Token（回复长度，DeepSeek V4 输出上限 384K）"
+            } else {
+                "最大输出 Token（回复长度）"
+            };
+            let maxtok_label: Vec<u16> = maxtok_label_text.encode_utf16().chain(Some(0)).collect();
             let maxtok_label_rect = D2D_RECT_F {
                 left: x + margin,
                 top: cy,
@@ -897,6 +1252,384 @@ impl EditorState {
             );
             cy += sysp_h + gap + 8.0;
 
+            // ---- 开发者参数（可折叠）----
+            let dev_sep_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.28, 0.28, 0.30, 1.0))
+                .unwrap();
+            target.FillRectangle(
+                &D2D_RECT_F {
+                    left: x + margin,
+                    top: cy,
+                    right: x + margin + input_w,
+                    bottom: cy + 1.0,
+                },
+                &dev_sep_brush,
+            );
+            cy += 10.0;
+            let dev_expanded = self.settings_panel.dev_params_expanded;
+            let header_h = 24.0_f32;
+            // Lucide 风格矢量 chevron：折叠时 '>'，展开时 'v'（10px，1.5 描边）
+            let chev_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
+                .unwrap();
+            let chev_cx = x + margin + 5.0;
+            let chev_cy = cy + header_h / 2.0;
+            if dev_expanded {
+                target.DrawLine(
+                    D2D_POINT_2F {
+                        x: chev_cx - 4.0,
+                        y: chev_cy - 2.0,
+                    },
+                    D2D_POINT_2F {
+                        x: chev_cx,
+                        y: chev_cy + 2.0,
+                    },
+                    &chev_brush,
+                    1.5,
+                    None,
+                );
+                target.DrawLine(
+                    D2D_POINT_2F {
+                        x: chev_cx,
+                        y: chev_cy + 2.0,
+                    },
+                    D2D_POINT_2F {
+                        x: chev_cx + 4.0,
+                        y: chev_cy - 2.0,
+                    },
+                    &chev_brush,
+                    1.5,
+                    None,
+                );
+            } else {
+                target.DrawLine(
+                    D2D_POINT_2F {
+                        x: chev_cx - 2.0,
+                        y: chev_cy - 4.0,
+                    },
+                    D2D_POINT_2F {
+                        x: chev_cx + 2.0,
+                        y: chev_cy,
+                    },
+                    &chev_brush,
+                    1.5,
+                    None,
+                );
+                target.DrawLine(
+                    D2D_POINT_2F {
+                        x: chev_cx + 2.0,
+                        y: chev_cy,
+                    },
+                    D2D_POINT_2F {
+                        x: chev_cx - 2.0,
+                        y: chev_cy + 4.0,
+                    },
+                    &chev_brush,
+                    1.5,
+                    None,
+                );
+            }
+            let dev_title: Vec<u16> = "开发者参数（低频调参，一般无需修改）"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let dev_title_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.70, 0.70, 0.73, 1.0))
+                .unwrap();
+            target.DrawText(
+                &dev_title,
+                &label_format,
+                &D2D_RECT_F {
+                    left: x + margin + 16.0,
+                    top: cy,
+                    right: x + margin + input_w,
+                    bottom: cy + header_h,
+                },
+                &dev_title_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            self.settings_panel.dev_params_toggle_region =
+                Some((x + margin, cy, input_w, header_h));
+            cy += header_h + 8.0;
+
+            if dev_expanded {
+                // 频率惩罚滑块（-2.0 ~ 2.0，步进 0.1）
+                let freq_val = self
+                    .settings_panel
+                    .frequency_penalty
+                    .trim()
+                    .parse::<f32>()
+                    .unwrap_or(0.0)
+                    .clamp(-2.0, 2.0);
+                let freq_label_str = if sampling_disabled {
+                    format!("频率惩罚  {:.1}   （思考模式下不生效）", freq_val)
+                } else {
+                    format!("频率惩罚  {:.1}   （-2 ~ 2，越大越抑制逐字重复）", freq_val)
+                };
+                let freq_label: Vec<u16> = freq_label_str.encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &freq_label,
+                    &label_format,
+                    &D2D_RECT_F {
+                        left: x + margin,
+                        top: cy,
+                        right: x + width - margin,
+                        bottom: cy + label_h,
+                    },
+                    if sampling_disabled {
+                        &disabled_text_brush
+                    } else {
+                        text_brush
+                    },
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                cy += label_h + 6.0;
+                let freq_region = self.render_param_slider(
+                    target,
+                    track_x,
+                    cy + 8.0,
+                    track_w,
+                    (freq_val + 2.0) / 4.0,
+                    sampling_disabled,
+                );
+                self.settings_panel.freq_slider_region = if sampling_disabled {
+                    None
+                } else {
+                    Some(freq_region)
+                };
+                cy += 24.0 + gap;
+
+                // 存在惩罚滑块（-2.0 ~ 2.0，步进 0.1）
+                let pres_val = self
+                    .settings_panel
+                    .presence_penalty
+                    .trim()
+                    .parse::<f32>()
+                    .unwrap_or(0.0)
+                    .clamp(-2.0, 2.0);
+                let pres_label_str = if sampling_disabled {
+                    format!("存在惩罚  {:.1}   （思考模式下不生效）", pres_val)
+                } else {
+                    format!("存在惩罚  {:.1}   （-2 ~ 2，越大越鼓励新话题）", pres_val)
+                };
+                let pres_label: Vec<u16> = pres_label_str.encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &pres_label,
+                    &label_format,
+                    &D2D_RECT_F {
+                        left: x + margin,
+                        top: cy,
+                        right: x + width - margin,
+                        bottom: cy + label_h,
+                    },
+                    if sampling_disabled {
+                        &disabled_text_brush
+                    } else {
+                        text_brush
+                    },
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                cy += label_h + 6.0;
+                let pres_region = self.render_param_slider(
+                    target,
+                    track_x,
+                    cy + 8.0,
+                    track_w,
+                    (pres_val + 2.0) / 4.0,
+                    sampling_disabled,
+                );
+                self.settings_panel.pres_slider_region = if sampling_disabled {
+                    None
+                } else {
+                    Some(pres_region)
+                };
+                cy += 24.0 + gap;
+
+                // 停止序列（逗号分隔，最多 16 个）
+                let stop_value = self.settings_panel.stop.clone();
+                let stop_bottom = self.render_dev_text_input(
+                    target,
+                    x,
+                    margin,
+                    input_w,
+                    label_h,
+                    input_h,
+                    cy,
+                    "停止序列（逗号分隔，最多 16 个，可选）",
+                    &stop_value,
+                    "（无）",
+                    crate::settings::SettingsField::Stop,
+                    true,
+                    &label_format,
+                    &input_format,
+                    text_brush,
+                );
+                cy = stop_bottom + gap;
+
+                // 响应格式分段：文本 / JSON
+                let fmt_label: Vec<u16> = "响应格式".encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &fmt_label,
+                    &label_format,
+                    &D2D_RECT_F {
+                        left: x + margin,
+                        top: cy,
+                        right: x + margin + 80.0,
+                        bottom: cy + 24.0,
+                    },
+                    text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                let fmt_seg_h = 24.0_f32;
+                let fmt_seg_w = 84.0_f32;
+                let fmt_seg_x0 = x + margin + 80.0;
+                let fmt_segments: [(&'static str, &str); 2] =
+                    [("text", "文本（默认）"), ("json_object", "JSON")];
+                for (i, (val, disp)) in fmt_segments.iter().enumerate() {
+                    let seg_x = fmt_seg_x0 + i as f32 * (fmt_seg_w + 8.0);
+                    let selected = self.settings_panel.response_format == *val;
+                    let hovered = self.settings_panel.hover_response_format == Some(*val);
+                    let seg_bg = if selected {
+                        color_f(0.0, 0.47, 0.83, 1.0)
+                    } else if hovered {
+                        color_f(0.24, 0.24, 0.27, 1.0)
+                    } else {
+                        color_f(0.18, 0.18, 0.20, 1.0)
+                    };
+                    let seg_rect = D2D_RECT_F {
+                        left: seg_x,
+                        top: cy,
+                        right: seg_x + fmt_seg_w,
+                        bottom: cy + fmt_seg_h,
+                    };
+                    let seg_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: seg_rect,
+                        radiusX: 4.0,
+                        radiusY: 4.0,
+                    };
+                    if let Ok(sb) = self.render_ctx.brush_cache.get_brush(target, &seg_bg) {
+                        target.FillRoundedRectangle(&seg_rounded, &sb);
+                    }
+                    if !selected {
+                        if let Ok(bb) = self
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
+                        {
+                            target.DrawRoundedRectangle(&seg_rounded, &bb, 1.0, None);
+                        }
+                    }
+                    let seg_text_color = if selected {
+                        color_f(1.0, 1.0, 1.0, 1.0)
+                    } else {
+                        color_f(0.78, 0.78, 0.80, 1.0)
+                    };
+                    if let Ok(tb) = self
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &seg_text_color)
+                    {
+                        let seg_wide: Vec<u16> = disp.encode_utf16().chain(Some(0)).collect();
+                        target.DrawText(
+                            &seg_wide,
+                            &button_format,
+                            &seg_rect,
+                            &tb,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                    self.settings_panel
+                        .response_format_regions
+                        .push((val, seg_x, cy, fmt_seg_w, fmt_seg_h));
+                }
+                cy += fmt_seg_h + gap;
+
+                // logprobs 调试开关
+                let logprobs_on = self.settings_panel.logprobs;
+                let logprobs_region = self.render_pill_switch(
+                    target,
+                    x + margin,
+                    cy,
+                    logprobs_on,
+                    "logprobs  返回输出 token 概率（调试用）",
+                    &label_format,
+                    text_brush,
+                );
+                self.settings_panel.logprobs_toggle_region = Some(logprobs_region);
+                cy += 20.0 + gap;
+
+                // top_logprobs（仅 logprobs 开启时显示）
+                if logprobs_on {
+                    let top_lp_valid = self.settings_panel.top_logprobs_valid();
+                    let top_lp_value = self.settings_panel.top_logprobs.clone();
+                    let top_lp_bottom = self.render_dev_text_input(
+                        target,
+                        x,
+                        margin,
+                        input_w,
+                        label_h,
+                        input_h,
+                        cy,
+                        "top_logprobs（每位置候选 token 数 0-20，可选）",
+                        &top_lp_value,
+                        "（不下发）",
+                        crate::settings::SettingsField::TopLogprobs,
+                        top_lp_valid,
+                        &label_format,
+                        &input_format,
+                        text_brush,
+                    );
+                    cy = top_lp_bottom + gap;
+                }
+
+                // 流式用量统计开关
+                let usage_on = self.settings_panel.include_usage;
+                let usage_region = self.render_pill_switch(
+                    target,
+                    x + margin,
+                    cy,
+                    usage_on,
+                    "流式用量统计  末尾返回 token 用量（stream_options）",
+                    &label_format,
+                    text_brush,
+                );
+                self.settings_panel.include_usage_toggle_region = Some(usage_region);
+                cy += 20.0 + gap;
+
+                // 用户标识 user_id
+                let user_id_value = self.settings_panel.user_id.clone();
+                let uid_bottom = self.render_dev_text_input(
+                    target,
+                    x,
+                    margin,
+                    input_w,
+                    label_h,
+                    input_h,
+                    cy,
+                    "用户标识 user_id（内容安全/缓存隔离，可选）",
+                    &user_id_value,
+                    "（不下发）",
+                    crate::settings::SettingsField::UserId,
+                    true,
+                    &label_format,
+                    &input_format,
+                    text_brush,
+                );
+                cy = uid_bottom + gap;
+            }
+            cy += 4.0;
+
             // 未保存更改提示
             if self.settings_panel.is_dirty() {
                 let dot_color = color_f(0.95, 0.65, 0.20, 1.0);
@@ -937,11 +1670,14 @@ impl EditorState {
                 cy += 24.0;
             }
 
-            // 操作按钮：单个「保存」（点击时会先验证密钥连通性，通过后再保存）
+            // 操作按钮：左「保存」（验证密钥后写入）+ 右「测试连接」（只测不存，便于调参）
             let btn_h = 34.0_f32;
             let is_testing = self.settings_panel.is_testing;
+            let btn_gap = 10.0_f32;
             let save_x = x + margin;
-            let save_btn_w = input_w;
+            let save_btn_w = (input_w - btn_gap) * 0.62;
+            let test_btn_w = input_w - btn_gap - save_btn_w;
+            let test_x = save_x + save_btn_w + btn_gap;
 
             // 保存设置（主按钮；保存时会自动先测试密钥有效性）
             let save_hover =
@@ -964,8 +1700,13 @@ impl EditorState {
                 right: save_x + save_btn_w,
                 bottom: cy + btn_h,
             };
-            target.FillRectangle(&save_rect, &save_bg_brush);
-            let save_label = if is_testing {
+            let save_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect: save_rect,
+                radiusX: 4.0,
+                radiusY: 4.0,
+            };
+            target.FillRoundedRectangle(&save_rounded, &save_bg_brush);
+            let save_label = if is_testing && self.settings_panel.pending_save {
                 "验证并保存中…"
             } else {
                 "保存"
@@ -990,6 +1731,69 @@ impl EditorState {
                 save_x,
                 cy,
                 save_btn_w,
+                btn_h,
+            );
+
+            // 测试连接（次要描边按钮：只验证当前参数能否连通，不写入配置）
+            let test_hover = self.settings_panel.hover_button
+                == Some(crate::settings::SettingsButton::TestConnection);
+            let test_rect = D2D_RECT_F {
+                left: test_x,
+                top: cy,
+                right: test_x + test_btn_w,
+                bottom: cy + btn_h,
+            };
+            let test_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect: test_rect,
+                radiusX: 4.0,
+                radiusY: 4.0,
+            };
+            let test_bg = if (is_testing && !self.settings_panel.pending_save) || test_hover {
+                color_f(0.20, 0.24, 0.30, 1.0)
+            } else {
+                color_f(0.16, 0.16, 0.18, 1.0)
+            };
+            if let Ok(tb) = self.render_ctx.brush_cache.get_brush(target, &test_bg) {
+                target.FillRoundedRectangle(&test_rounded, &tb);
+            }
+            let test_border = if test_hover {
+                color_f(0.28, 0.56, 0.86, 1.0)
+            } else {
+                color_f(0.34, 0.34, 0.37, 1.0)
+            };
+            if let Ok(bb) = self.render_ctx.brush_cache.get_brush(target, &test_border) {
+                target.DrawRoundedRectangle(&test_rounded, &bb, 1.0, None);
+            }
+            let test_label = if is_testing && !self.settings_panel.pending_save {
+                "测试中…"
+            } else {
+                "测试连接"
+            };
+            let test_text: Vec<u16> = test_label.encode_utf16().chain(Some(0)).collect();
+            let test_text_color = if test_hover {
+                color_f(0.82, 0.90, 1.0, 1.0)
+            } else {
+                color_f(0.84, 0.86, 0.90, 1.0)
+            };
+            if let Ok(ttb) = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &test_text_color)
+            {
+                target.DrawText(
+                    &test_text,
+                    &button_format,
+                    &test_rect,
+                    &ttb,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+            self.settings_panel.add_button_region(
+                crate::settings::SettingsButton::TestConnection,
+                test_x,
+                cy,
+                test_btn_w,
                 btn_h,
             );
             cy += btn_h + 12.0;

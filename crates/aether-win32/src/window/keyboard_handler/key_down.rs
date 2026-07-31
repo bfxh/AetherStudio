@@ -65,6 +65,9 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if let Some(r) = okd_settings_field(hwnd, vk, shift) {
         return r;
     }
+    if let Some(r) = okd_sandbox_field(hwnd, vk) {
+        return r;
+    }
     if let Some(r) = okd_ssh_dialog(hwnd, vk, ctrl) {
         return r;
     }
@@ -120,6 +123,31 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                         st.file_tree_input.as_mut().unwrap().target_node = Some(node_idx);
                     }
                     drop(st);
+                    invalidate_window(hwnd);
+                }
+            });
+            return LRESULT(0);
+        }
+    }
+
+    // Delete: 文件树有选中节点时删除（移至回收站）
+    if vk == VK_DELETE {
+        let has_selection = EDITOR_STATE.with(|s| {
+            s.borrow()
+                .as_ref()
+                .map(|state| {
+                    let st = state.borrow();
+                    st.selected_file_node.is_some() && st.file_tree_input.is_none()
+                })
+                .unwrap_or(false)
+        });
+        if has_selection {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let node_idx = state.borrow().selected_file_node;
+                    if let Some(idx) = node_idx {
+                        state.borrow_mut().delete_file_node(idx);
+                    }
                     invalidate_window(hwnd);
                 }
             });
@@ -643,6 +671,55 @@ unsafe fn okd_settings_field(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) -> Option
         }
         _ => {
             // Prevent editor from processing other keys while field is active
+            Some(LRESULT(0))
+        }
+    }
+}
+
+/// 沙盒评测页输入字段激活时拦截键盘（Esc/Enter 退出焦点、Backspace 删除、Ctrl+V 粘贴）
+unsafe fn okd_sandbox_field(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
+    let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+    let active = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| state.borrow().sandbox_eval.active_field.is_some())
+            .unwrap_or(false)
+    });
+    if !active {
+        return None;
+    }
+    match vk {
+        VK_ESCAPE | VK_RETURN | VK_TAB => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().sandbox_eval.active_field = None;
+                    invalidate_window(hwnd);
+                }
+            });
+            Some(LRESULT(0))
+        }
+        VK_BACK => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().sandbox_eval.backspace();
+                    invalidate_window(hwnd);
+                }
+            });
+            Some(LRESULT(0))
+        }
+        VK_V if ctrl => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
+                        state.borrow_mut().sandbox_eval.paste_text(&text);
+                        invalidate_window(hwnd);
+                    }
+                }
+            });
+            Some(LRESULT(0))
+        }
+        _ => {
+            // 字段激活期间阻止编辑器处理其他按键
             Some(LRESULT(0))
         }
     }
