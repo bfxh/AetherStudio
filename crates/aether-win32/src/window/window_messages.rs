@@ -13,7 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
     AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HIGHLIGHT_TIMER_ID,
-    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, TERM_TIMER_ID, UI_ANIM_TIMER_ID,
+    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
+    UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
 
@@ -51,6 +52,33 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     }
     if wparam.0 == POWER_TIMER_ID {
         return on_timer_power(hwnd);
+    }
+    if wparam.0 == SANDBOX_TIMER_ID {
+        return on_timer_sandbox(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// 智能体沙盒评测：评测运行期间驱动流式消费、倒计时与任务推进；
+/// 评测结束（进入打分/配置阶段）后自动停止定时器。
+unsafe fn on_timer_sandbox(hwnd: HWND) -> LRESULT {
+    let Some(state) = get_and_set_state(hwnd) else {
+        let _ = KillTimer(hwnd, SANDBOX_TIMER_ID);
+        return LRESULT(0);
+    };
+    let (dirty, active) = {
+        let mut st = state.borrow_mut();
+        let app = st.app_settings.clone();
+        let dirty = st.sandbox_eval.tick(&app);
+        (dirty, st.sandbox_eval.is_active())
+    };
+    if dirty {
+        invalidate_window(hwnd);
+    }
+    if !active {
+        let _ = KillTimer(hwnd, SANDBOX_TIMER_ID);
+        // 阶段切换（如进入打分页）需要最后一帧重绘
+        invalidate_window(hwnd);
     }
     LRESULT(0)
 }
@@ -117,10 +145,11 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
 
 /// 终端刷新：周期性重绘以显示异步到达的 shell 输出。
 unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
-    // render() 内部会调用 flush_output 拉取子进程输出。
-    // 底部终端面板不可见时自动停止定时器，避免空转；
-    // 冰冻态下终端输出消费交由无头泵（AI 定时器）驱动，本定时器同样停止。
-    let (still_visible, frozen) = EDITOR_STATE.with(|s| {
+    // 后台任务泥：AI 流 / Agent 回环 / LSP 诊断 / 终端输出。
+    // 此前在 render() 入口调用，导致每帧渲染前轮询 IO，影响编辑器点击响应。
+    // 现移至独立 33ms 定时器，渲染路径零 IO 阻塞，流畅度显著提升。
+    // 冰冻态下此定时器停止，后台任务由 AI 无头泥驱动。
+    let (_still_visible, frozen) = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
             .map(|state| {
@@ -129,11 +158,59 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
             })
             .unwrap_or((false, false))
     });
-    if !still_visible || frozen {
+    if frozen {
         let _ = KillTimer(hwnd, TERM_TIMER_ID);
-    } else if get_and_set_state(hwnd).is_some() {
+        return LRESULT(0);
+    }
+    // 执行后台任务泥 + 设置面板轮询
+    let need_redraw = if let Some(state) = get_and_set_state(hwnd) {
+        let mut st = state.borrow_mut();
+        st.pump_background_tasks();
+        // 设置面板轮询（测试连接 / 模型列表拉取）
+        let mut dirty = false;
+        match st.settings_panel.poll_test_result() {
+            crate::settings::TestPollResult::SuccessWithPendingSave => {
+                st.save_ai_settings();
+                st.settings_panel.model_editing = false;
+                st.dirty_tracker.mark_full_window();
+                dirty = true;
+            }
+            crate::settings::TestPollResult::Success
+            | crate::settings::TestPollResult::Failed
+            | crate::settings::TestPollResult::FailedWithPendingSave => {
+                st.dirty_tracker.mark_full_window();
+                dirty = true;
+            }
+            crate::settings::TestPollResult::Pending => {}
+        }
+        if st.settings_panel.poll_models_fetch() {
+            st.dirty_tracker.mark_full_window();
+            dirty = true;
+        }
+        // 文件系统监控（AI 命令后检测工作区变化）
+        if let Some(until) = st.fs_watch_until {
+            if std::time::Instant::now() >= until {
+                st.fs_watch_until = None;
+            } else {
+                let sig = st.workspace_root_signature();
+                if sig != st.fs_last_root_sig {
+                    st.fs_last_root_sig = sig;
+                    st.refresh_file_tree_light();
+                    dirty = true;
+                }
+            }
+        }
+        // 懒加载预扫描
+        st.preload_expanded_dirs();
+        dirty || st.dirty_tracker.has_dirty()
+    } else {
+        false
+    };
+    // 只在后台任务产生了状态变化时触发重绘，避免空转帧
+    if need_redraw {
         invalidate_window(hwnd);
     }
+    // 终端不可见时不停定时器——后台任务仍需周期泥驱动
     LRESULT(0)
 }
 
@@ -226,6 +303,20 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
                 rp.width,
                 rp.height,
                 crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
+            need_invalidate = true;
+            any_active = true;
+        }
+        // 沙盒评测页输入框光标闪烁（编辑器内容区）
+        if st.sandbox_eval.active_field.is_some() {
+            st.sandbox_eval.caret_visible = !st.sandbox_eval.caret_visible;
+            let er = st.layout.editor_region().clone();
+            st.dirty_tracker.mark_region(
+                er.x,
+                er.y,
+                er.width,
+                er.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
             );
             need_invalidate = true;
             any_active = true;
@@ -435,6 +526,12 @@ pub(crate) unsafe fn on_wm_app_8(
 
     // 立即重建 Box 保证 drop 语义，即使后续处理 panic 也不会泄漏
     let msg = unsafe { Box::from_raw(lparam.0 as *mut UpdateCheckMessage) };
+    // 清除检查中状态
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            state.borrow_mut().update_checking = false;
+        }
+    });
     match &msg.result {
         UpdateCheckResult::UpToDate => {
             if msg.manual {
@@ -454,6 +551,13 @@ pub(crate) unsafe fn on_wm_app_8(
             version,
             setup_path,
         } => {
+            // 设置 badge 状态（齿轮图标绿点 + 设置页提示）
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().update_available_version = Some(version.clone());
+                }
+            });
+            invalidate_window(hwnd);
             let text = format!(
                 "发现新版本 {version}（当前 v{}）。\n安装包已下载完成，是否立即更新？\n应用将退出并完成静默安装，随后自动重启。",
                 crate::updater::APP_VERSION

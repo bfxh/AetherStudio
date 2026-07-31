@@ -12,6 +12,12 @@ pub enum SettingsField {
     MaxTokens,
     MaxInputTokens,
     SystemPrompt,
+    /// 停止序列（逗号分隔，开发者参数）
+    Stop,
+    /// top_logprobs 候选数（0-20，开发者参数）
+    TopLogprobs,
+    /// 业务侧用户标识（开发者参数）
+    UserId,
 }
 
 /// 设置面板按钮标识
@@ -21,6 +27,8 @@ pub enum SettingsButton {
     TestConnection,
     /// 模型编辑视图返回模型列表
     BackToModels,
+    /// 立即检查更新
+    CheckUpdate,
 }
 
 /// 设置标签页类型
@@ -36,6 +44,8 @@ pub enum SettingsTab {
     Remote,
     /// 模型管理
     Models,
+    /// 更新设置
+    Update,
 }
 
 impl SettingsTab {
@@ -46,16 +56,18 @@ impl SettingsTab {
             Self::Appearance => "外观",
             Self::Remote => "远程",
             Self::Models => "模型",
+            Self::Update => "更新",
         }
     }
 
     /// 导航中展示的标签页。AI 配置已并入「模型」页（新建/编辑模型时以内嵌表单形式出现），
     /// 因此不再单独列出 AI 项；账户功能当前不需要，也一并移除。
-    pub const ALL: [SettingsTab; 4] = [
+    pub const ALL: [SettingsTab; 5] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Remote,
         SettingsTab::Models,
+        SettingsTab::Update,
     ];
 }
 
@@ -81,6 +93,8 @@ pub enum ModelButton {
     Edit,
     Delete,
     ToggleEnabled,
+    /// 能力评测（沙盒评测入口）
+    Eval,
 }
 
 /// 测试连接轮询结果
@@ -111,11 +125,30 @@ pub struct ModelConfig {
     pub api_key: String,
     pub base_url: String,
     pub temperature: String,
+    pub top_p: String,
     pub max_tokens: String,
     pub max_input_tokens: String,
     pub system_prompt: String,
     /// 深度思考开关（仅 DeepSeek 生效），默认开启
     pub thinking: bool,
+    /// 思考强度（"high"/"max"，仅 DeepSeek 思考模式生效）
+    pub reasoning_effort: String,
+    /// 频率惩罚（-2.0 ~ 2.0）
+    pub frequency_penalty: String,
+    /// 存在惩罚（-2.0 ~ 2.0）
+    pub presence_penalty: String,
+    /// 停止序列（逗号分隔，最多 16 个）
+    pub stop: String,
+    /// 响应格式（"text"/"json_object"）
+    pub response_format: String,
+    /// 流式用量统计开关
+    pub include_usage: bool,
+    /// logprobs 调试开关
+    pub logprobs: bool,
+    /// top_logprobs 候选数（0-20，空=不下发）
+    pub top_logprobs: String,
+    /// 业务侧用户标识（空=不下发）
+    pub user_id: String,
 }
 
 impl ModelConfig {
@@ -133,6 +166,7 @@ impl ModelConfig {
             },
             model: self.name.clone(),
             temperature: self.temperature.trim().parse().ok(),
+            top_p: self.top_p.trim().parse().ok(),
             max_tokens: self.max_tokens.trim().parse().ok(),
             max_input_tokens: self.max_input_tokens.trim().parse().ok(),
             system_prompt: if self.system_prompt.is_empty() {
@@ -142,6 +176,31 @@ impl ModelConfig {
             },
             enabled: self.enabled,
             thinking: Some(self.thinking),
+            reasoning_effort: if self.reasoning_effort.is_empty() {
+                None
+            } else {
+                Some(self.reasoning_effort.clone())
+            },
+            frequency_penalty: self.frequency_penalty.trim().parse().ok(),
+            presence_penalty: self.presence_penalty.trim().parse().ok(),
+            stop: parse_stop_sequences(&self.stop),
+            response_format: if self.response_format == "json_object" {
+                Some("json_object".to_string())
+            } else {
+                None
+            },
+            include_usage: if self.include_usage { Some(true) } else { None },
+            logprobs: if self.logprobs { Some(true) } else { None },
+            top_logprobs: if self.logprobs {
+                self.top_logprobs.trim().parse().ok()
+            } else {
+                None
+            },
+            user_id: if self.user_id.trim().is_empty() {
+                None
+            } else {
+                Some(self.user_id.trim().to_string())
+            },
         }
     }
 
@@ -164,6 +223,10 @@ impl ModelConfig {
                 .temperature
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "0.7".to_string()),
+            top_p: p
+                .top_p
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "1.0".to_string()),
             max_tokens: p
                 .max_tokens
                 .map(|m| m.to_string())
@@ -174,7 +237,43 @@ impl ModelConfig {
                 .unwrap_or_else(|| "24000".to_string()),
             system_prompt: p.system_prompt.clone().unwrap_or_default(),
             thinking: p.thinking.unwrap_or(true),
+            reasoning_effort: p
+                .reasoning_effort
+                .clone()
+                .unwrap_or_else(|| "high".to_string()),
+            frequency_penalty: p
+                .frequency_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string()),
+            presence_penalty: p
+                .presence_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string()),
+            stop: p.stop.as_ref().map(|s| s.join(", ")).unwrap_or_default(),
+            response_format: p
+                .response_format
+                .clone()
+                .unwrap_or_else(|| "text".to_string()),
+            include_usage: p.include_usage.unwrap_or(false),
+            logprobs: p.logprobs.unwrap_or(false),
+            top_logprobs: p.top_logprobs.map(|n| n.to_string()).unwrap_or_default(),
+            user_id: p.user_id.clone().unwrap_or_default(),
         }
+    }
+}
+
+/// 把逗号分隔的停止序列文本解析为列表（去空白、去空项，最多 16 个）；空结果返回 None
+pub fn parse_stop_sequences(raw: &str) -> Option<Vec<String>> {
+    let seqs: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(16)
+        .collect();
+    if seqs.is_empty() {
+        None
+    } else {
+        Some(seqs)
     }
 }
 
@@ -186,6 +285,7 @@ pub struct SettingsPanel {
     pub base_url: String,
     pub model: String,
     pub temperature: String,
+    pub top_p: String,
     pub max_tokens: String,
     pub max_input_tokens: String,
     pub system_prompt: String,
@@ -250,12 +350,59 @@ pub struct SettingsPanel {
     pub temp_slider_region: Option<(f32, f32, f32, f32)>,
     /// 温度滑块是否处于拖拽中
     pub temp_slider_dragging: bool,
+    // Top-p 滑块轨道命中区
+    pub top_p_slider_region: Option<(f32, f32, f32, f32)>,
+    /// Top-p 滑块是否处于拖拽中
+    pub top_p_slider_dragging: bool,
     /// 深度思考开关状态（仅 DeepSeek 显示），默认开启
     pub thinking: bool,
     /// 深度思考开关命中区
     pub thinking_toggle_region: Option<(f32, f32, f32, f32)>,
     /// 深度思考开关悬停态
     pub hover_thinking_toggle: bool,
+    /// 思考强度（"high"/"max"）
+    pub reasoning_effort: String,
+    /// 思考强度分段按钮命中区 (强度值, x, y, w, h)
+    pub effort_regions: Vec<(&'static str, f32, f32, f32, f32)>,
+    /// 思考强度分段悬停态（命中的强度值）
+    pub hover_effort: Option<&'static str>,
+    // ---- 开发者参数 ----
+    /// 开发者参数区是否展开
+    pub dev_params_expanded: bool,
+    /// 开发者参数区标题命中区
+    pub dev_params_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// 频率惩罚（-2.0 ~ 2.0，字符串编辑态）
+    pub frequency_penalty: String,
+    /// 频率惩罚滑块轨道命中区
+    pub freq_slider_region: Option<(f32, f32, f32, f32)>,
+    /// 频率惩罚滑块拖拽中
+    pub freq_slider_dragging: bool,
+    /// 存在惩罚（-2.0 ~ 2.0，字符串编辑态）
+    pub presence_penalty: String,
+    /// 存在惩罚滑块轨道命中区
+    pub pres_slider_region: Option<(f32, f32, f32, f32)>,
+    /// 存在惩罚滑块拖拽中
+    pub pres_slider_dragging: bool,
+    /// 停止序列（逗号分隔）
+    pub stop: String,
+    /// 响应格式（"text"/"json_object"）
+    pub response_format: String,
+    /// 响应格式分段命中区 (格式值, x, y, w, h)
+    pub response_format_regions: Vec<(&'static str, f32, f32, f32, f32)>,
+    /// 响应格式分段悬停态
+    pub hover_response_format: Option<&'static str>,
+    /// 流式用量统计开关
+    pub include_usage: bool,
+    /// 流式用量统计开关命中区
+    pub include_usage_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// logprobs 调试开关
+    pub logprobs: bool,
+    /// logprobs 开关命中区
+    pub logprobs_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// top_logprobs 候选数（0-20，字符串编辑态，空=不下发）
+    pub top_logprobs: String,
+    /// 业务侧用户标识（空=不下发）
+    pub user_id: String,
     /// 打开设置面板时的 AI 配置快照，用于"未保存更改"检测
     pub baseline_ai: Option<AiSettings>,
 }
@@ -268,6 +415,7 @@ impl SettingsPanel {
             base_url: "https://api.deepseek.com/v1".to_string(),
             model: "deepseek-v4-pro".to_string(),
             temperature: "0.7".to_string(),
+            top_p: "1.0".to_string(),
             max_tokens: "8192".to_string(),
             max_input_tokens: "24000".to_string(),
             system_prompt: String::new(),
@@ -311,9 +459,32 @@ impl SettingsPanel {
             api_key_toggle_region: None,
             temp_slider_region: None,
             temp_slider_dragging: false,
+            top_p_slider_region: None,
+            top_p_slider_dragging: false,
             thinking: true,
             thinking_toggle_region: None,
             hover_thinking_toggle: false,
+            reasoning_effort: "high".to_string(),
+            effort_regions: Vec::new(),
+            hover_effort: None,
+            dev_params_expanded: false,
+            dev_params_toggle_region: None,
+            frequency_penalty: "0.0".to_string(),
+            freq_slider_region: None,
+            freq_slider_dragging: false,
+            presence_penalty: "0.0".to_string(),
+            pres_slider_region: None,
+            pres_slider_dragging: false,
+            stop: String::new(),
+            response_format: "text".to_string(),
+            response_format_regions: Vec::new(),
+            hover_response_format: None,
+            include_usage: false,
+            include_usage_toggle_region: None,
+            logprobs: false,
+            logprobs_toggle_region: None,
+            top_logprobs: String::new(),
+            user_id: String::new(),
             baseline_ai: None,
         }
     }
@@ -329,6 +500,11 @@ impl SettingsPanel {
                 .temperature
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "0.7".to_string()),
+            top_p: settings
+                .ai
+                .top_p
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "1.0".to_string()),
             max_tokens: settings
                 .ai
                 .max_tokens
@@ -380,9 +556,57 @@ impl SettingsPanel {
             api_key_toggle_region: None,
             temp_slider_region: None,
             temp_slider_dragging: false,
+            top_p_slider_region: None,
+            top_p_slider_dragging: false,
             thinking: settings.ai.thinking.unwrap_or(true),
             thinking_toggle_region: None,
             hover_thinking_toggle: false,
+            reasoning_effort: settings
+                .ai
+                .reasoning_effort
+                .clone()
+                .unwrap_or_else(|| "high".to_string()),
+            effort_regions: Vec::new(),
+            hover_effort: None,
+            dev_params_expanded: false,
+            dev_params_toggle_region: None,
+            frequency_penalty: settings
+                .ai
+                .frequency_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string()),
+            freq_slider_region: None,
+            freq_slider_dragging: false,
+            presence_penalty: settings
+                .ai
+                .presence_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string()),
+            pres_slider_region: None,
+            pres_slider_dragging: false,
+            stop: settings
+                .ai
+                .stop
+                .as_ref()
+                .map(|s| s.join(", "))
+                .unwrap_or_default(),
+            response_format: settings
+                .ai
+                .response_format
+                .clone()
+                .unwrap_or_else(|| "text".to_string()),
+            response_format_regions: Vec::new(),
+            hover_response_format: None,
+            include_usage: settings.ai.include_usage.unwrap_or(false),
+            include_usage_toggle_region: None,
+            logprobs: settings.ai.logprobs.unwrap_or(false),
+            logprobs_toggle_region: None,
+            top_logprobs: settings
+                .ai
+                .top_logprobs
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            user_id: settings.ai.user_id.clone().unwrap_or_default(),
             baseline_ai: None,
         }
     }
@@ -398,6 +622,7 @@ impl SettingsPanel {
             },
             model: self.model.clone(),
             temperature: self.temperature.parse().ok(),
+            top_p: self.top_p.parse().ok(),
             max_tokens: self.max_tokens.parse().ok(),
             max_input_tokens: self.max_input_tokens.parse().ok(),
             system_prompt: if self.system_prompt.is_empty() {
@@ -406,6 +631,31 @@ impl SettingsPanel {
                 Some(self.system_prompt.clone())
             },
             thinking: Some(self.thinking),
+            reasoning_effort: if self.reasoning_effort.is_empty() {
+                None
+            } else {
+                Some(self.reasoning_effort.clone())
+            },
+            frequency_penalty: self.frequency_penalty.trim().parse().ok(),
+            presence_penalty: self.presence_penalty.trim().parse().ok(),
+            stop: parse_stop_sequences(&self.stop),
+            response_format: if self.response_format == "json_object" {
+                Some("json_object".to_string())
+            } else {
+                None
+            },
+            include_usage: if self.include_usage { Some(true) } else { None },
+            logprobs: if self.logprobs { Some(true) } else { None },
+            top_logprobs: if self.logprobs {
+                self.top_logprobs.trim().parse().ok()
+            } else {
+                None
+            },
+            user_id: if self.user_id.trim().is_empty() {
+                None
+            } else {
+                Some(self.user_id.trim().to_string())
+            },
         }
     }
 
@@ -442,10 +692,20 @@ impl SettingsPanel {
             self.base_url = m.base_url;
             self.model = m.name;
             self.temperature = m.temperature;
+            self.top_p = m.top_p;
             self.max_tokens = m.max_tokens;
             self.max_input_tokens = m.max_input_tokens;
             self.system_prompt = m.system_prompt;
             self.thinking = m.thinking;
+            self.reasoning_effort = m.reasoning_effort;
+            self.frequency_penalty = m.frequency_penalty;
+            self.presence_penalty = m.presence_penalty;
+            self.stop = m.stop;
+            self.response_format = m.response_format;
+            self.include_usage = m.include_usage;
+            self.logprobs = m.logprobs;
+            self.top_logprobs = m.top_logprobs;
+            self.user_id = m.user_id;
         } else {
             self.provider = fallback_ai.provider.clone();
             self.api_key = fallback_ai.api_key.clone();
@@ -455,6 +715,10 @@ impl SettingsPanel {
                 .temperature
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "0.7".to_string());
+            self.top_p = fallback_ai
+                .top_p
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "1.0".to_string());
             self.max_tokens = fallback_ai
                 .max_tokens
                 .map(|m| m.to_string())
@@ -465,6 +729,34 @@ impl SettingsPanel {
                 .unwrap_or_else(|| "24000".to_string());
             self.system_prompt = fallback_ai.system_prompt.clone().unwrap_or_default();
             self.thinking = fallback_ai.thinking.unwrap_or(true);
+            self.reasoning_effort = fallback_ai
+                .reasoning_effort
+                .clone()
+                .unwrap_or_else(|| "high".to_string());
+            self.frequency_penalty = fallback_ai
+                .frequency_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string());
+            self.presence_penalty = fallback_ai
+                .presence_penalty
+                .map(|v| format!("{:.1}", v))
+                .unwrap_or_else(|| "0.0".to_string());
+            self.stop = fallback_ai
+                .stop
+                .as_ref()
+                .map(|s| s.join(", "))
+                .unwrap_or_default();
+            self.response_format = fallback_ai
+                .response_format
+                .clone()
+                .unwrap_or_else(|| "text".to_string());
+            self.include_usage = fallback_ai.include_usage.unwrap_or(false);
+            self.logprobs = fallback_ai.logprobs.unwrap_or(false);
+            self.top_logprobs = fallback_ai
+                .top_logprobs
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            self.user_id = fallback_ai.user_id.clone().unwrap_or_default();
         }
     }
 
@@ -496,10 +788,20 @@ impl SettingsPanel {
                 api_key: String::new(),
                 base_url: String::new(),
                 temperature: "0.7".to_string(),
+                top_p: "1.0".to_string(),
                 max_tokens: "8192".to_string(),
                 max_input_tokens: "24000".to_string(),
                 system_prompt: String::new(),
                 thinking: true,
+                reasoning_effort: "high".to_string(),
+                frequency_penalty: "0.0".to_string(),
+                presence_penalty: "0.0".to_string(),
+                stop: String::new(),
+                response_format: "text".to_string(),
+                include_usage: false,
+                logprobs: false,
+                top_logprobs: String::new(),
+                user_id: String::new(),
             });
             self.active_model_id = Some(new_id);
         }
@@ -508,10 +810,20 @@ impl SettingsPanel {
         let base_url = self.base_url.clone();
         let model = self.model.clone();
         let temperature = self.temperature.clone();
+        let top_p = self.top_p.clone();
         let max_tokens = self.max_tokens.clone();
         let max_input_tokens = self.max_input_tokens.clone();
         let system_prompt = self.system_prompt.clone();
         let thinking = self.thinking;
+        let reasoning_effort = self.reasoning_effort.clone();
+        let frequency_penalty = self.frequency_penalty.clone();
+        let presence_penalty = self.presence_penalty.clone();
+        let stop = self.stop.clone();
+        let response_format = self.response_format.clone();
+        let include_usage = self.include_usage;
+        let logprobs = self.logprobs;
+        let top_logprobs = self.top_logprobs.clone();
+        let user_id = self.user_id.clone();
         if let Some(id) = self.active_model_id.clone() {
             if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
                 m.provider = provider;
@@ -519,10 +831,20 @@ impl SettingsPanel {
                 m.base_url = base_url;
                 m.name = model.clone();
                 m.temperature = temperature;
+                m.top_p = top_p;
                 m.max_tokens = max_tokens;
                 m.max_input_tokens = max_input_tokens;
                 m.system_prompt = system_prompt;
                 m.thinking = thinking;
+                m.reasoning_effort = reasoning_effort;
+                m.frequency_penalty = frequency_penalty;
+                m.presence_penalty = presence_penalty;
+                m.stop = stop;
+                m.response_format = response_format;
+                m.include_usage = include_usage;
+                m.logprobs = logprobs;
+                m.top_logprobs = top_logprobs;
+                m.user_id = user_id;
                 if m.display_name.is_empty() && !model.is_empty() {
                     m.display_name = model;
                 }
@@ -555,10 +877,20 @@ impl SettingsPanel {
             api_key: String::new(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             temperature: "0.7".to_string(),
+            top_p: "1.0".to_string(),
             max_tokens: "8192".to_string(),
             max_input_tokens: "24000".to_string(),
             system_prompt: String::new(),
             thinking: true,
+            reasoning_effort: "high".to_string(),
+            frequency_penalty: "0.0".to_string(),
+            presence_penalty: "0.0".to_string(),
+            stop: String::new(),
+            response_format: "text".to_string(),
+            include_usage: false,
+            logprobs: false,
+            top_logprobs: String::new(),
+            user_id: String::new(),
         });
         self.active_model_id = Some(id.clone());
         self.provider = "deepseek".to_string();
@@ -566,10 +898,13 @@ impl SettingsPanel {
         self.base_url = "https://api.deepseek.com/v1".to_string();
         self.model = String::new();
         self.temperature = "0.7".to_string();
+        self.top_p = "1.0".to_string();
         self.max_tokens = "8192".to_string();
         self.max_input_tokens = "24000".to_string();
         self.system_prompt = String::new();
         self.thinking = true;
+        self.reasoning_effort = "high".to_string();
+        self.reset_dev_params();
         id
     }
 
@@ -583,12 +918,27 @@ impl SettingsPanel {
         self.base_url = "https://api.deepseek.com/v1".to_string();
         self.model = String::new();
         self.temperature = "0.7".to_string();
+        self.top_p = "1.0".to_string();
         self.max_tokens = "8192".to_string();
         self.max_input_tokens = "24000".to_string();
         self.system_prompt = String::new();
         self.thinking = true;
+        self.reasoning_effort = "high".to_string();
+        self.reset_dev_params();
         self.test_status.clear();
         self.active_field = None;
+    }
+
+    /// 把开发者参数重置为默认值（新建模型/草稿时用）
+    fn reset_dev_params(&mut self) {
+        self.frequency_penalty = "0.0".to_string();
+        self.presence_penalty = "0.0".to_string();
+        self.stop = String::new();
+        self.response_format = "text".to_string();
+        self.include_usage = false;
+        self.logprobs = false;
+        self.top_logprobs = String::new();
+        self.user_id = String::new();
     }
 
     /// 把模型列表与激活选择同步回 AppSettings（供持久化）
@@ -623,6 +973,15 @@ impl SettingsPanel {
         self.dropdown_trigger_regions.clear();
         self.dropdown_item_regions.clear();
         self.thinking_toggle_region = None;
+        self.effort_regions.clear();
+        self.temp_slider_region = None;
+        self.top_p_slider_region = None;
+        self.dev_params_toggle_region = None;
+        self.freq_slider_region = None;
+        self.pres_slider_region = None;
+        self.response_format_regions.clear();
+        self.include_usage_toggle_region = None;
+        self.logprobs_toggle_region = None;
     }
 
     pub fn add_field_region(&mut self, field: SettingsField, x: f32, y: f32, w: f32, h: f32) {
@@ -676,6 +1035,9 @@ impl SettingsPanel {
                 SettingsField::MaxTokens => self.max_tokens.push(ch),
                 SettingsField::MaxInputTokens => self.max_input_tokens.push(ch),
                 SettingsField::SystemPrompt => self.system_prompt.push(ch),
+                SettingsField::Stop => self.stop.push(ch),
+                SettingsField::TopLogprobs => self.top_logprobs.push(ch),
+                SettingsField::UserId => self.user_id.push(ch),
             }
         }
     }
@@ -692,6 +1054,9 @@ impl SettingsPanel {
                 SettingsField::MaxTokens => self.max_tokens.push_str(text),
                 SettingsField::MaxInputTokens => self.max_input_tokens.push_str(text),
                 SettingsField::SystemPrompt => self.system_prompt.push_str(text),
+                SettingsField::Stop => self.stop.push_str(text),
+                SettingsField::TopLogprobs => self.top_logprobs.push_str(text),
+                SettingsField::UserId => self.user_id.push_str(text),
             }
         }
     }
@@ -724,6 +1089,15 @@ impl SettingsPanel {
                 SettingsField::SystemPrompt => {
                     self.system_prompt.pop();
                 }
+                SettingsField::Stop => {
+                    self.stop.pop();
+                }
+                SettingsField::TopLogprobs => {
+                    self.top_logprobs.pop();
+                }
+                SettingsField::UserId => {
+                    self.user_id.pop();
+                }
             }
         }
     }
@@ -740,6 +1114,9 @@ impl SettingsPanel {
                 SettingsField::MaxTokens => self.max_tokens.clear(),
                 SettingsField::MaxInputTokens => self.max_input_tokens.clear(),
                 SettingsField::SystemPrompt => self.system_prompt.clear(),
+                SettingsField::Stop => self.stop.clear(),
+                SettingsField::TopLogprobs => self.top_logprobs.clear(),
+                SettingsField::UserId => self.user_id.clear(),
             }
         }
     }
@@ -756,6 +1133,14 @@ impl SettingsPanel {
         fields.push(SettingsField::MaxInputTokens);
         fields.push(SettingsField::MaxTokens);
         fields.push(SettingsField::SystemPrompt);
+        // 开发者参数区展开时，其文本字段加入 Tab 循环
+        if self.dev_params_expanded {
+            fields.push(SettingsField::Stop);
+            if self.logprobs {
+                fields.push(SettingsField::TopLogprobs);
+            }
+            fields.push(SettingsField::UserId);
+        }
         fields
     }
 
@@ -803,6 +1188,27 @@ impl SettingsPanel {
     /// 温度是否合法（0.0-2.0）
     pub fn temperature_valid(&self) -> bool {
         matches!(self.temperature.trim().parse::<f32>(), Ok(v) if (0.0..=2.0).contains(&v))
+    }
+
+    /// Top-p 是否合法（0.0-1.0）
+    pub fn top_p_valid(&self) -> bool {
+        matches!(self.top_p.trim().parse::<f32>(), Ok(v) if (0.0..=1.0).contains(&v))
+    }
+
+    /// 频率惩罚是否合法（-2.0 ~ 2.0）
+    pub fn frequency_penalty_valid(&self) -> bool {
+        matches!(self.frequency_penalty.trim().parse::<f32>(), Ok(v) if (-2.0..=2.0).contains(&v))
+    }
+
+    /// 存在惩罚是否合法（-2.0 ~ 2.0）
+    pub fn presence_penalty_valid(&self) -> bool {
+        matches!(self.presence_penalty.trim().parse::<f32>(), Ok(v) if (-2.0..=2.0).contains(&v))
+    }
+
+    /// top_logprobs 是否合法（空=不下发，或 0-20 的整数）
+    pub fn top_logprobs_valid(&self) -> bool {
+        let t = self.top_logprobs.trim();
+        t.is_empty() || matches!(t.parse::<u32>(), Ok(v) if v <= 20)
     }
 
     /// Max Tokens 是否合法（1..=1_000_000 的正整数）
@@ -874,6 +1280,148 @@ impl SettingsPanel {
             }
         }
         false
+    }
+
+    /// 命中：Top-p 滑块轨道，返回点击位置对应的 top_p（0.0-1.0，步进 0.05）
+    pub fn hit_test_top_p_slider(&self, x: f32, y: f32) -> Option<f32> {
+        if let Some((rx, ry, rw, rh)) = self.top_p_slider_region {
+            if x >= rx - 4.0 && x <= rx + rw + 4.0 && y >= ry - 8.0 && y <= ry + rh + 8.0 {
+                let ratio = ((x - rx) / rw).clamp(0.0, 1.0);
+                let val = (ratio * 20.0).round() / 20.0;
+                return Some(val);
+            }
+        }
+        None
+    }
+
+    /// 拖拽中根据鼠标 x 更新 top_p（忽略 y，超出轨道两端自动夹紧）。返回是否有变化。
+    pub fn set_top_p_from_slider_x(&mut self, x: f32) -> bool {
+        if let Some((rx, _ry, rw, _rh)) = self.top_p_slider_region {
+            if rw > 0.0 {
+                let ratio = ((x - rx) / rw).clamp(0.0, 1.0);
+                let val = (ratio * 20.0).round() / 20.0;
+                let new_str = format!("{:.2}", val);
+                if self.top_p != new_str {
+                    self.top_p = new_str;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 命中：思考强度分段按钮，返回命中的强度值（"high"/"max"）
+    pub fn hit_test_effort(&self, x: f32, y: f32) -> Option<&'static str> {
+        for (effort, ex, ey, ew, eh) in &self.effort_regions {
+            if x >= *ex && x < ex + ew && y >= *ey && y < ey + eh {
+                return Some(effort);
+            }
+        }
+        None
+    }
+
+    /// 命中：响应格式分段按钮，返回命中的格式值（"text"/"json_object"）
+    pub fn hit_test_response_format(&self, x: f32, y: f32) -> Option<&'static str> {
+        for (fmt, fx, fy, fw, fh) in &self.response_format_regions {
+            if x >= *fx && x < fx + fw && y >= *fy && y < fy + fh {
+                return Some(fmt);
+            }
+        }
+        None
+    }
+
+    /// 命中：开发者参数区标题（展开/折叠）
+    pub fn hit_test_dev_params_toggle(&self, x: f32, y: f32) -> bool {
+        if let Some((rx, ry, rw, rh)) = self.dev_params_toggle_region {
+            x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        } else {
+            false
+        }
+    }
+
+    /// 命中：流式用量统计开关
+    pub fn hit_test_include_usage_toggle(&self, x: f32, y: f32) -> bool {
+        if let Some((rx, ry, rw, rh)) = self.include_usage_toggle_region {
+            x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        } else {
+            false
+        }
+    }
+
+    /// 命中：logprobs 调试开关
+    pub fn hit_test_logprobs_toggle(&self, x: f32, y: f32) -> bool {
+        if let Some((rx, ry, rw, rh)) = self.logprobs_toggle_region {
+            x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        } else {
+            false
+        }
+    }
+
+    /// 命中：频率惩罚滑块轨道，返回点击位置对应的值（-2.0 ~ 2.0，步进 0.1）
+    pub fn hit_test_freq_slider(&self, x: f32, y: f32) -> Option<f32> {
+        Self::hit_test_penalty_slider(self.freq_slider_region, x, y)
+    }
+
+    /// 命中：存在惩罚滑块轨道，返回点击位置对应的值（-2.0 ~ 2.0，步进 0.1）
+    pub fn hit_test_pres_slider(&self, x: f32, y: f32) -> Option<f32> {
+        Self::hit_test_penalty_slider(self.pres_slider_region, x, y)
+    }
+
+    /// 惩罚滑块公共命中逻辑：轨道周边扩展区内映射到 -2.0 ~ 2.0（步进 0.1）
+    fn hit_test_penalty_slider(
+        region: Option<(f32, f32, f32, f32)>,
+        x: f32,
+        y: f32,
+    ) -> Option<f32> {
+        if let Some((rx, ry, rw, rh)) = region {
+            if x >= rx - 4.0 && x <= rx + rw + 4.0 && y >= ry - 8.0 && y <= ry + rh + 8.0 {
+                let ratio = ((x - rx) / rw).clamp(0.0, 1.0);
+                let val = ((ratio * 4.0 - 2.0) * 10.0).round() / 10.0;
+                return Some(val);
+            }
+        }
+        None
+    }
+
+    /// 拖拽中根据鼠标 x 更新频率惩罚。返回是否有变化。
+    pub fn set_freq_from_slider_x(&mut self, x: f32) -> bool {
+        if let Some(val) = Self::penalty_from_slider_x(self.freq_slider_region, x) {
+            let new_str = format!("{:.1}", val);
+            if self.frequency_penalty != new_str {
+                self.frequency_penalty = new_str;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 拖拽中根据鼠标 x 更新存在惩罚。返回是否有变化。
+    pub fn set_pres_from_slider_x(&mut self, x: f32) -> bool {
+        if let Some(val) = Self::penalty_from_slider_x(self.pres_slider_region, x) {
+            let new_str = format!("{:.1}", val);
+            if self.presence_penalty != new_str {
+                self.presence_penalty = new_str;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 惩罚滑块拖拽公共逻辑：忽略 y，超出轨道两端自动夹紧
+    fn penalty_from_slider_x(region: Option<(f32, f32, f32, f32)>, x: f32) -> Option<f32> {
+        if let Some((rx, _ry, rw, _rh)) = region {
+            if rw > 0.0 {
+                let ratio = ((x - rx) / rw).clamp(0.0, 1.0);
+                return Some(((ratio * 4.0 - 2.0) * 10.0).round() / 10.0);
+            }
+        }
+        None
+    }
+
+    /// 采样参数（temperature/top_p）是否被思考模式禁用：
+    /// DeepSeek 思考模式下采样参数不生效（官方文档）
+    pub fn sampling_disabled_by_thinking(&self) -> bool {
+        self.provider == "deepseek" && self.thinking
     }
 
     /// 当前 AI 配置相对打开时的快照是否有未保存更改

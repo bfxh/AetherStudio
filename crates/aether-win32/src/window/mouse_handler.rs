@@ -49,6 +49,9 @@ pub(crate) unsafe fn on_l_button_up(
                 }
             }
             st.settings_panel.temp_slider_dragging = false;
+            st.settings_panel.top_p_slider_dragging = false;
+            st.settings_panel.freq_slider_dragging = false;
+            st.settings_panel.pres_slider_dragging = false;
             // 长按检测状态清理
             st.mouse_press.lbutton_down = false;
             st.mouse_press.lpress_target = None;
@@ -265,6 +268,20 @@ pub(crate) unsafe fn on_mouse_wheel(
                 if editor.contains(cursor_x, cursor_y) {
                     // delta>0（上滚）减小偏移查看上方内容
                     state.settings_panel.scroll_by(-delta * 0.5);
+                    invalidate_window(hwnd);
+                    return;
+                }
+            }
+
+            // 沙盒评测页：光标在编辑器内容区内 → 滚动页面内容
+            if state.active_tab_is_sandbox_eval() {
+                let editor = state.layout.editor_region();
+                if editor.contains(cursor_x, cursor_y) {
+                    let max_scroll = (state.sandbox_eval.content_height
+                        - state.sandbox_eval.view_height)
+                        .max(0.0);
+                    state.sandbox_eval.scroll_y =
+                        (state.sandbox_eval.scroll_y - delta * 0.5).clamp(0.0, max_scroll);
                     invalidate_window(hwnd);
                     return;
                 }

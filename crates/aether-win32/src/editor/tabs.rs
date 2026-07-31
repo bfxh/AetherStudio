@@ -52,6 +52,14 @@ impl EditorState {
             .map(|t| t.is_welcome())
             .unwrap_or(false)
     }
+    /// 当前活动标签页是否是沙盒评测 tab
+    pub fn active_tab_is_sandbox_eval(&self) -> bool {
+        self.tab_bar
+            .tabs
+            .get(self.tab_bar.active_tab)
+            .map(|t| t.is_sandbox_eval())
+            .unwrap_or(false)
+    }
     /// 当前活动文件标签页的文件路径
     pub fn active_file_path(&self) -> Option<&std::path::PathBuf> {
         self.tab_bar
@@ -66,6 +74,26 @@ impl EditorState {
     /// 查找欢迎 tab 的索引
     pub fn find_welcome_tab(&self) -> Option<usize> {
         self.tab_bar.tabs.iter().position(|t| t.is_welcome())
+    }
+    /// 查找沙盒评测 tab 的索引
+    pub fn find_sandbox_eval_tab(&self) -> Option<usize> {
+        self.tab_bar.tabs.iter().position(|t| t.is_sandbox_eval())
+    }
+    /// 打开沙盒评测标签页（作为通用 tab 插入到标签栏）
+    pub fn open_sandbox_eval_tab(&mut self) {
+        if let Some(idx) = self.find_sandbox_eval_tab() {
+            self.switch_tab(idx);
+        } else {
+            // 保存当前文件 tab 的内容到 tabs[active_tab]（如果是文件 tab）
+            self.swap_tab_content(self.tab_bar.active_tab);
+            self.tab_bar.tabs.push(crate::tabs::Tab::SandboxEval);
+            self.tab_bar.active_tab = self.tab_bar.tabs.len() - 1;
+            // 沙盒评测 tab 无 content，self.content 保持空即可
+            self.content = crate::tabs::TabContent::new();
+            self.ai_panel.input_focused = false;
+            self.status_message = "已打开智能体沙盒评测".to_string();
+            self.emit_event(crate::events::EditorEvent::TabChanged);
+        }
     }
     /// 切换到指定标签页
     pub fn switch_tab(&mut self, index: usize) {

@@ -476,7 +476,47 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     if shift {
                         state.borrow_mut().redo();
                     } else {
-                        state.borrow_mut().undo();
+                        let mut st = state.borrow_mut();
+                        // 优先级：如果最近 2 秒内刚删除了文件，优先撤销删除；
+                        // 否则尝试文本编辑撤销；文本也无可撤则回退到删除撤销。
+                        let recent_delete = st
+                            .delete_undo_stack
+                            .last()
+                            .map(|r| r.timestamp.elapsed().as_secs() < 2)
+                            .unwrap_or(false);
+                        if recent_delete {
+                            if let Some(path) =
+                                crate::undo_delete::pop_last_delete(&mut st.delete_undo_stack)
+                            {
+                                let name = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                                if path.exists() {
+                                    st.refresh_file_tree_light();
+                                    st.status_message = format!("已恢复: {}", name);
+                                } else {
+                                    st.status_message =
+                                        format!("已撤销删除: {} (请从回收站还原)", name);
+                                }
+                            }
+                        } else if st.content.history.can_undo() {
+                            st.undo();
+                        } else if let Some(path) =
+                            crate::undo_delete::pop_last_delete(&mut st.delete_undo_stack)
+                        {
+                            let name = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.to_string_lossy().to_string());
+                            if path.exists() {
+                                st.refresh_file_tree_light();
+                                st.status_message = format!("已恢复: {}", name);
+                            } else {
+                                st.status_message =
+                                    format!("已撤销删除: {} (请从回收站还原)", name);
+                            }
+                        }
                     }
                     invalidate_window(hwnd);
                 }

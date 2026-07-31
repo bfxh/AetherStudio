@@ -186,10 +186,12 @@ unsafe fn lbd_titlebar_controls(
     let right_panel_btn_x = tb.right_panel_btn_x;
     let bottom_panel_btn_x = tb.bottom_panel_btn_x;
     let left_sidebar_btn_x = tb.left_sidebar_btn_x;
-    let forward_btn_x = tb.forward_btn_x;
-    let back_btn_x = tb.back_btn_x;
 
     let mut st = state.borrow_mut();
+    // 左侧箭头按钮（动态位置，从渲染帧缓存读取）
+    let back_x = st.titlebar_back_btn_x;
+    let fwd_x = st.titlebar_forward_btn_x;
+    let arrow_size = tb.tool_btn_size;
     if mouse_x >= minimize_x {
         if mouse_x >= close_x {
             drop(st);
@@ -246,13 +248,13 @@ unsafe fn lbd_titlebar_controls(
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
-    } else if mouse_x >= forward_btn_x {
+    } else if mouse_x >= fwd_x && mouse_x < fwd_x + arrow_size {
         // 前进：暂无历史导航，仅作为占位
         st.status_message = "前进（待实现）".to_string();
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
-    } else if mouse_x >= back_btn_x {
+    } else if mouse_x >= back_x && mouse_x < back_x + arrow_size {
         // 返回：暂无历史导航，仅作为占位
         st.status_message = "返回（待实现）".to_string();
         drop(st);

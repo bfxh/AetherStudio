@@ -108,47 +108,8 @@ impl EditorState {
         // TEST: 每帧开始清除上一帧命中区域
         crate::hit_test::clear_hit_regions();
 
-        // 后台任务泵：AI 流 / Agent 回环 / LSP 诊断 / 终端输出
-        self.pump_background_tasks();
-
-        // 设置面板：轮询测试连接结果
-        match self.settings_panel.poll_test_result() {
-            crate::settings::TestPollResult::SuccessWithPendingSave => {
-                self.save_ai_settings();
-                // 保存成功后退出模型编辑态，返回模型列表
-                self.settings_panel.model_editing = false;
-                self.dirty_tracker.mark_full_window();
-            }
-            crate::settings::TestPollResult::Success
-            | crate::settings::TestPollResult::Failed
-            | crate::settings::TestPollResult::FailedWithPendingSave => {
-                self.dirty_tracker.mark_full_window();
-            }
-            crate::settings::TestPollResult::Pending => {}
-        }
-
-        // 设置面板：轮询模型列表拉取结果（打开模型下拉后自动获取厂商可用模型）
-        if self.settings_panel.poll_models_fetch() {
-            self.dirty_tracker.mark_full_window();
-        }
-
-        // 懒加载预扫描：确保所有 is_expanded 但未加载的目录节点子项已就绪
-        // 这样渲染文件树时不会因目录未加载而显示空
-        self.preload_expanded_dirs();
-
-        // AI 终端命令后：在监视窗口内检测工作区根目录变化，变化则轻量刷新资源管理器，
-        // 使 AI 通过命令（如 Remove-Item / New-Item）删除或新建的文件即时同步显示。
-        if let Some(until) = self.fs_watch_until {
-            if std::time::Instant::now() >= until {
-                self.fs_watch_until = None;
-            } else {
-                let sig = self.workspace_root_signature();
-                if sig != self.fs_last_root_sig {
-                    self.fs_last_root_sig = sig;
-                    self.refresh_file_tree_light();
-                }
-            }
-        }
+        // 后台任务泥已移至独立定时器（TERM_TIMER 每 33ms），
+        // 渲染路径零 IO 阻塞，保证点击/编辑即时响应。
 
         // UI-L07: 降级为 trace，避免生产环境每帧日志噪声
         tracing::trace!(
@@ -239,7 +200,7 @@ impl EditorState {
                             .map(|ch| if ch.is_ascii() { 8.0 } else { 13.0 })
                             .sum()
                     });
-                let item_width = text_width + 24.0; // 左右各 12px padding
+                let item_width = text_width + 16.0; // 左右各 8px padding（紧凑风格）
                 self.menu_bar.item_widths.push(item_width);
             }
             self.menu_bar.layout_dirty = false;
@@ -261,7 +222,7 @@ impl EditorState {
         // P1.2: 先把事件队列中累积的事件转换为脏矩形
         self.flush_events_to_dirty_tracker();
 
-        // 侧边栏宽度动画 tick：每帧 lerp，到达终态后匃布可见性并清除动画
+        // 侧边栏宽度动画 tick：每帧 lerp，到达终态后布可见性并清除动画
         if let Some(anim) = self.layout.sidebar_anim {
             let (width, done) = anim.tick();
             if done {
@@ -277,8 +238,9 @@ impl EditorState {
             } else {
                 self.layout.sidebar_width = width.max(0.0);
             }
-            // 动画期间每帧刷新
+            // 动画期间 + 终态帧均强制全窗口重绘，避免侧边栏区域残影
             self.dirty_tracker.mark_full_window();
+            // 终态帧后再请求一次重绘，确保编辑器区域完全覆盖旧侧边栏位置
             crate::window::invalidate_window(self.hwnd);
         }
 
@@ -772,6 +734,17 @@ impl EditorState {
                 editor_content_region.height,
                 &text_brush,
             );
+        } else if self.active_tab_is_sandbox_eval() {
+            // 智能体沙盒评测页：在编辑器内容区域整页渲染
+            unsafe {
+                self.render_sandbox_eval_page(
+                    &target,
+                    editor_content_region.x,
+                    editor_content_region.y,
+                    editor_content_region.width,
+                    editor_content_region.height,
+                );
+            }
         } else if self.content.language == Language::Image {
             self.render_image_preview(
                 &target,
@@ -1038,9 +1011,11 @@ mod find;
 mod menus;
 mod remote;
 mod remote_dialogs;
+mod sandbox_eval;
 mod settings_ai;
 mod settings_general;
 mod settings_models;
+mod settings_update;
 mod sidebar;
 mod sidebar_files;
 mod sidebar_scm;
