@@ -75,7 +75,7 @@ impl EditorState {
 
     /// 渲染一个胶囊开关 + 右侧标签；返回命中区（覆盖开关与标签一段）
     #[allow(clippy::too_many_arguments)]
-    unsafe fn render_pill_switch(
+    pub(super) unsafe fn render_pill_switch(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
         x: f32,

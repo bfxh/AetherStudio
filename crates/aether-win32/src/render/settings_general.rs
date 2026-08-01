@@ -728,14 +728,13 @@ impl EditorState {
                     }
                 }
                 crate::settings::SettingsTab::Appearance => {
-                    self.render_settings_empty_state(
+                    self.render_appearance_settings(
                         target,
                         page_x,
-                        page_y,
                         page_w,
-                        (content_h - 96.0).max(120.0),
-                        "外观设置即将推出",
-                        "主题与界面自定义功能正在开发中",
+                        page_y,
+                        &label_format,
+                        text_brush,
                     );
                 }
                 crate::settings::SettingsTab::Remote => {
@@ -843,6 +842,99 @@ impl EditorState {
                 &hint_format,
                 &hint_rect,
                 &hint_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+
+    /// 渲染"外观"标签页内容（任务栏显示开关等）
+    pub(super) fn render_appearance_settings(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        width: f32,
+        start_y: f32,
+        label_format: &windows::Win32::Graphics::DirectWrite::IDWriteTextFormat,
+        text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
+    ) {
+        unsafe {
+            let mut cy = start_y;
+
+            // 分组标题「窗口」
+            let group_title: Vec<u16> = "窗口".encode_utf16().chain(Some(0)).collect();
+            let group_title_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    13.0,
+                    DWRITE_FONT_WEIGHT_BOLD.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let group_title_rect = D2D_RECT_F {
+                left: x,
+                top: cy,
+                right: x + width,
+                bottom: cy + 22.0,
+            };
+            target.DrawText(
+                &group_title,
+                &group_title_format,
+                &group_title_rect,
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            cy += 28.0;
+
+            // 任务栏开关
+            let show_taskbar = self.app_settings.ui.show_taskbar_when_maximized;
+            let region = self.render_pill_switch(
+                target,
+                x,
+                cy,
+                show_taskbar,
+                "最大化时显示 Windows 任务栏",
+                label_format,
+                text_brush,
+            );
+            self.settings_panel.taskbar_toggle_region = Some(region);
+            cy += 20.0 + 8.0;
+
+            // 描述文字
+            let desc_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let desc_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.50, 0.50, 0.53, 1.0))
+                .unwrap();
+            let desc_text: Vec<u16> =
+                "开启后，窗口最大化时底部会保留 Windows 任务栏可见；关闭则全屏覆盖。"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+            let desc_rect = D2D_RECT_F {
+                left: x,
+                top: cy,
+                right: x + width,
+                bottom: cy + 16.0,
+            };
+            target.DrawText(
+                &desc_text,
+                &desc_format,
+                &desc_rect,
+                &desc_brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );

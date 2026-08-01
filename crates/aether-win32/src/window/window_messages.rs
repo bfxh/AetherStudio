@@ -639,7 +639,33 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
                     st.exit_frozen();
                 }
             }
+            // 若最大化且用户设置了显示任务栏，调整窗口为工作区大小
+            let need_adjust = is_max && st.app_settings.ui.show_taskbar_when_maximized;
             drop(st);
+            if need_adjust {
+                use windows::Win32::Graphics::Gdi::{
+                    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+                };
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+                };
+                let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                let mut mi = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+                        mi.rcWork.left,
+                        mi.rcWork.top,
+                        mi.rcWork.right - mi.rcWork.left,
+                        mi.rcWork.bottom - mi.rcWork.top,
+                        SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
             if !is_min {
                 invalidate_window(hwnd);
             }
@@ -718,21 +744,51 @@ pub(crate) unsafe fn on_nccalcsize(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    // 移除系统非客户区边框，避免白色边框线
-    // 返回 0 表示客户区覆盖整个窗口，不绘制系统边框
+    // 移除系统非客户区边框，避免白色边框线。
+    //
+    // 当 wparam == 0（FALSE）时，lparam 指向 RECT，返回 0 表示客户区覆盖整个窗口。
+    // 当 wparam != 0（TRUE）时，lparam 指向 NCCALCSIZE_PARAMS，rgrc[0] 输入为提议的
+    // 新窗口矩形，输出应为新的客户区矩形。返回标志指示哪些矩形有效。
     //
     // 修复（最大化后鼠标与 UI 偏移）：窗口带 WS_THICKFRAME 时，Windows 在
     // 最大化时会把窗口矩形向外膨胀一圈不可见缩放边框（原点移到屏幕外负坐标），
     // 若客户区不收缩，渲染与鼠标命中会整体偏移一个边框宽度。
     // 最大化时把客户区向内收缩边框厚度，使客户区与可视区域一致。
-    if wparam.0 != 0 && IsZoomed(hwnd).as_bool() {
+    if wparam.0 != 0 {
         let params = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
-        let frame_x = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
-        let frame_y = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
-        params.rgrc[0].left += frame_x;
-        params.rgrc[0].top += frame_y;
-        params.rgrc[0].right -= frame_x;
-        params.rgrc[0].bottom -= frame_y;
+
+        // 获取当前窗口所在的显示器信息，用于判断当前是否处于最大化过程
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let is_maximized = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            // 若 rgrc[0] 与显示器矩形一致（或接近），说明正在最大化
+            let rc = &params.rgrc[0];
+            rc.left <= mi.rcMonitor.left
+                && rc.top <= mi.rcMonitor.top
+                && rc.right >= mi.rcMonitor.right
+                && rc.bottom >= mi.rcMonitor.bottom
+        } else {
+            false
+        };
+
+        if is_maximized {
+            let frame_x = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+            let frame_y = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+            params.rgrc[0].left += frame_x;
+            params.rgrc[0].top += frame_y;
+            params.rgrc[0].right -= frame_x;
+            params.rgrc[0].bottom -= frame_y;
+
+            // 返回 WVR_REDRAW 告诉 Windows 根据我们修改后的客户区矩形
+            // 重新计算窗口矩形，并触发重绘
+            return LRESULT(0x0300); // WVR_REDRAW = WVR_HREDRAW | WVR_VREDRAW
+        }
     }
     LRESULT(0)
 }
