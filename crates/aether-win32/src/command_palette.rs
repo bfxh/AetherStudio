@@ -180,6 +180,13 @@ impl CommandPalette {
                 icon: Some(IconKind::Bug),
             },
             CommandPaletteItem {
+                label: "运行: 智能体沙盒评测".to_string(),
+                description: Some("在隔离沙盒中评测 AI 智能体的任务完成度".to_string()),
+                shortcut: None,
+                command_id: CommandId::RunSandboxEval,
+                icon: Some(IconKind::Bot),
+            },
+            CommandPaletteItem {
                 label: "终端: 新建终端".to_string(),
                 description: Some("打开集成终端".to_string()),
                 shortcut: Some("Ctrl+`".to_string()),

@@ -41,6 +41,7 @@ cargo_test_out.txt
 # Reference / local-only directories
 vscode/
 tests/screenshots/
+tests/reports/
 tests/gui_hit_regions.jsonl
 tests/gui_probe_report.json
 tests/gui_smoke_report.json

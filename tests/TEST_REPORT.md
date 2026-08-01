@@ -124,9 +124,11 @@ cargo build --release -p aether-win32
 python tests/gui_smoke.py
 
 # 覆盖率收集（需 llvm-tools-preview）
-powershell -File tests/run_final_coverage.ps1
-powershell -File tests/generate_coverage_report.ps1
+powershell -File tests/tools/coverage.ps1
 ```
+
+> 注：原 run_final_coverage.ps1 / generate_coverage_report.ps1 已合并为
+> tests/tools/coverage.ps1（统一入口见 tests/run_tests.ps1）。
 
 ## 6. 性能与资源指标
 
@@ -164,4 +166,4 @@ powershell -File tests/generate_coverage_report.ps1
 - `tests/gui_smoke_report.json`：GUI Smoke 测试报告
 - `tests/lexer_bench.log`：Lexer 性能基准结果
 - `tests/clippy.log` / `tests/clippy6.log`：静态检查日志
-- `tests/run_full_test.ps1` / `tests/run_final_coverage.ps1` / `tests/generate_coverage_report.ps1`：可复用脚本
+- `tests/run_tests.ps1` / `tests/tools/coverage.ps1`：可复用脚本（已整合为测试框架，原 run_full_test / run_final_coverage / generate_coverage_report 已合并）

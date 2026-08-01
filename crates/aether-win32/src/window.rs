@@ -51,6 +51,10 @@ pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
 pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
 /// 冰冻看门狗定时器 ID（低频检查空闲时长，满足条件进入 Frozen 冰冻态，见 power.rs）
 pub(crate) const POWER_TIMER_ID: usize = 0xA009;
+/// 智能体沙盒评测定时器 ID（评测运行期间驱动流式消费/倒计时/任务推进，结束后自动停止）
+pub const SANDBOX_TIMER_ID: usize = 0xA00A;
+/// 沙盒评测刷新间隔（毫秒）
+pub const SANDBOX_REFRESH_MS: u32 = 200;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -322,6 +326,9 @@ unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
 
     // 冰冻看门狗：低频检查空闲时长，满足「失焦 + 空闲超阈」时进入冰冻态释放内存
     SetTimer(hwnd, POWER_TIMER_ID, crate::power::POWER_CHECK_MS, None);
+    // 后台任务泥定时器：驱动 AI 流/LSP 诊断/终端输出/文件监控
+    // （此前仅在终端面板打开时启动，现全局启动以保证后台任务始终泥动）
+    SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
     // 启动完成后记录内存基线（遥测）
     crate::power::log_memory_usage("startup");
 

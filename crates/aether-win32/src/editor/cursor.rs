@@ -204,8 +204,12 @@ impl EditorState {
                 } else {
                     0.0
                 };
-                // +1 行：根目录行（工作区文件夹名）
-                let total_height = (estimated_nodes + 1.0) * node_height + 20.0;
+                // +1 行：根目录行（工作区文件夹名）；内联新建输入行再 +1
+                let input_extra = match &self.file_tree_input {
+                    Some(i) if !matches!(i.kind, FileTreeInputKind::Rename) => 1.0,
+                    _ => 0.0,
+                };
+                let total_height = (estimated_nodes + 1.0 + input_extra) * node_height + 20.0;
                 let sidebar_region = self.layout.sidebar_region();
                 let visible_height = sidebar_region.height;
                 let max_scroll = (total_height - visible_height).max(0.0);

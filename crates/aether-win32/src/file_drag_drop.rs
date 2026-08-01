@@ -111,7 +111,7 @@ impl EditorState {
                 .text_format_cache
                 .measure_text_width(
                     &label,
-                    11.0 * self.dpi_scale,
+                    9.5 * self.dpi_scale,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 )
                 .unwrap_or(0.0);

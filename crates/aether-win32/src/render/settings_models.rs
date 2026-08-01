@@ -48,12 +48,12 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            cy += 28.0;
+            cy += 24.0;
 
             // 卡片式模型列表
-            let card_h = 84.0f32;
-            let card_gap = 10.0f32;
-            let _card_radius = 6.0f32;
+            let card_h = 76.0f32;
+            let card_gap = 8.0f32;
+            let card_radius = 6.0f32;
             let models_clone: Vec<_> = self.settings_panel.models.to_vec();
             let active_id = self.settings_panel.active_model_id.clone();
 
@@ -134,7 +134,12 @@ impl EditorState {
                     right: x + eff_width - margin,
                     bottom: cy + card_h,
                 };
-                target.FillRectangle(&card_rect, &card_bg_brush);
+                let card_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: card_rect,
+                    radiusX: card_radius,
+                    radiusY: card_radius,
+                };
+                target.FillRoundedRectangle(&card_rounded, &card_bg_brush);
                 // 卡片边框（激活模型高亮）
                 let card_border = if is_active {
                     color_f(0.0, 0.47, 0.83, 1.0)
@@ -147,23 +152,25 @@ impl EditorState {
                     .get_brush(target, &card_border)
                     .unwrap();
                 let border_w = if is_active { 2.0 } else { 1.0 };
-                target.DrawRectangle(&card_rect, &card_border_brush, border_w, None);
-                // 激活卡片左侧强调色条
+                target.DrawRoundedRectangle(&card_rounded, &card_border_brush, border_w, None);
+                // 激活卡片左侧强调短条（上下内缩，避免压住圆角）
                 if is_active {
                     let accent_brush = self
                         .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.0, 0.55, 0.95, 1.0))
                         .unwrap();
-                    target.FillRectangle(
-                        &D2D_RECT_F {
-                            left: x + margin,
-                            top: cy,
+                    let accent_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: x + margin + 1.0,
+                            top: cy + 10.0,
                             right: x + margin + 4.0,
-                            bottom: cy + card_h,
+                            bottom: cy + card_h - 10.0,
                         },
-                        &accent_brush,
-                    );
+                        radiusX: 1.5,
+                        radiusY: 1.5,
+                    };
+                    target.FillRoundedRectangle(&accent_rounded, &accent_brush);
                 }
 
                 // 预计算右侧操作区几何（先定位，便于左侧信息区自动避让，避免重叠）
@@ -176,8 +183,10 @@ impl EditorState {
                 let state_x = toggle_x - 8.0 - state_w;
                 let del_w = 56.0f32;
                 let del_x = state_x - 14.0 - del_w;
+                let eval_w = 56.0f32;
+                let eval_x = del_x - 10.0 - eval_w;
                 let edit_w = 56.0f32;
-                let edit_x = del_x - 10.0 - edit_w;
+                let edit_x = eval_x - 10.0 - edit_w;
                 let act_h = 28.0f32;
                 let act_y = row_cy - act_h / 2.0;
                 let toggle_y = row_cy - toggle_h / 2.0;
@@ -196,9 +205,9 @@ impl EditorState {
                     &input_format,
                     &D2D_RECT_F {
                         left: x + margin + 20.0,
-                        top: cy + 16.0,
+                        top: cy + 12.0,
                         right: left_area_right,
-                        bottom: cy + 40.0,
+                        bottom: cy + 36.0,
                     },
                     if is_active {
                         &active_name_brush
@@ -221,9 +230,9 @@ impl EditorState {
                         &cur_format,
                         &D2D_RECT_F {
                             left: x + margin + 20.0,
-                            top: cy + 16.0,
+                            top: cy + 12.0,
                             right: left_area_right,
-                            bottom: cy + 40.0,
+                            bottom: cy + 36.0,
                         },
                         &cur_brush,
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -248,9 +257,9 @@ impl EditorState {
                     &label_format,
                     &D2D_RECT_F {
                         left: x + margin + 20.0,
-                        top: cy + 48.0,
+                        top: cy + 42.0,
                         right: left_area_right,
-                        bottom: cy + 70.0,
+                        bottom: cy + 62.0,
                     },
                     &provider_brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -276,7 +285,12 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &toggle_bg)
                     .unwrap();
-                target.FillRectangle(&toggle_rect, &toggle_bg_brush);
+                let toggle_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: toggle_rect,
+                    radiusX: toggle_h / 2.0,
+                    radiusY: toggle_h / 2.0,
+                };
+                target.FillRoundedRectangle(&toggle_rounded, &toggle_bg_brush);
                 let knob_r = 8.0f32;
                 let knob_y = toggle_y + toggle_h / 2.0;
                 let knob_x = if model.enabled {
@@ -358,7 +372,12 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &del_bg)
                     .unwrap();
-                target.FillRectangle(&del_rect, &del_bg_brush);
+                let del_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: del_rect,
+                    radiusX: 4.0,
+                    radiusY: 4.0,
+                };
+                target.FillRoundedRectangle(&del_rounded, &del_bg_brush);
                 let del_border = if is_del_hover {
                     color_f(0.78, 0.36, 0.36, 1.0)
                 } else {
@@ -369,7 +388,7 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &del_border)
                     .unwrap();
-                target.DrawRectangle(&del_rect, &del_border_brush, 1.0, None);
+                target.DrawRoundedRectangle(&del_rounded, &del_border_brush, 1.0, None);
                 let del_txt_color = if is_del_hover {
                     color_f(1.0, 0.74, 0.74, 1.0)
                 } else {
@@ -417,7 +436,12 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &edit_bg)
                     .unwrap();
-                target.FillRectangle(&edit_rect, &edit_bg_brush);
+                let edit_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: edit_rect,
+                    radiusX: 4.0,
+                    radiusY: 4.0,
+                };
+                target.FillRoundedRectangle(&edit_rounded, &edit_bg_brush);
                 let edit_border = if is_edit_hover {
                     color_f(0.28, 0.56, 0.86, 1.0)
                 } else {
@@ -428,7 +452,7 @@ impl EditorState {
                     .brush_cache
                     .get_brush(target, &edit_border)
                     .unwrap();
-                target.DrawRectangle(&edit_rect, &edit_border_brush, 1.0, None);
+                target.DrawRoundedRectangle(&edit_rounded, &edit_border_brush, 1.0, None);
                 let edit_txt_color = if is_edit_hover {
                     color_f(0.82, 0.90, 1.0, 1.0)
                 } else {
@@ -453,6 +477,70 @@ impl EditorState {
                     edit_x,
                     act_y,
                     edit_w,
+                    act_h,
+                );
+
+                // 能力评测按钮（编辑与删除之间，绿色调）
+                let is_eval_hover = self.settings_panel.hover_model_button
+                    == Some(crate::settings::ModelButton::Eval)
+                    && self.settings_panel.hover_model_button_id.as_ref() == Some(&model.id);
+                let eval_rect = D2D_RECT_F {
+                    left: eval_x,
+                    top: act_y,
+                    right: eval_x + eval_w,
+                    bottom: act_y + act_h,
+                };
+                let eval_bg = if is_eval_hover {
+                    color_f(0.14, 0.30, 0.22, 1.0)
+                } else {
+                    color_f(0.16, 0.16, 0.18, 1.0)
+                };
+                let eval_bg_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &eval_bg)
+                    .unwrap();
+                let eval_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: eval_rect,
+                    radiusX: 4.0,
+                    radiusY: 4.0,
+                };
+                target.FillRoundedRectangle(&eval_rounded, &eval_bg_brush);
+                let eval_border = if is_eval_hover {
+                    color_f(0.30, 0.72, 0.48, 1.0)
+                } else {
+                    color_f(0.34, 0.34, 0.37, 1.0)
+                };
+                let eval_border_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &eval_border)
+                    .unwrap();
+                target.DrawRoundedRectangle(&eval_rounded, &eval_border_brush, 1.0, None);
+                let eval_txt_color = if is_eval_hover {
+                    color_f(0.60, 0.96, 0.72, 1.0)
+                } else {
+                    color_f(0.50, 0.80, 0.60, 1.0)
+                };
+                let eval_txt_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &eval_txt_color)
+                    .unwrap();
+                let eval_text: Vec<u16> = "评测".encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &eval_text,
+                    &button_format,
+                    &eval_rect,
+                    &eval_txt_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                self.settings_panel.add_model_button_region(
+                    crate::settings::ModelButton::Eval,
+                    eval_x,
+                    act_y,
+                    eval_w,
                     act_h,
                 );
 
@@ -495,7 +583,12 @@ impl EditorState {
                 right: add_btn_x + add_btn_w,
                 bottom: add_btn_y + add_btn_h,
             };
-            target.FillRectangle(&add_rect, &add_bg_brush);
+            let add_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect: add_rect,
+                radiusX: 4.0,
+                radiusY: 4.0,
+            };
+            target.FillRoundedRectangle(&add_rounded, &add_bg_brush);
             let add_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let add_text_brush = self
                 .render_ctx
@@ -540,14 +633,19 @@ impl EditorState {
                 right: x + btn_w,
                 bottom: y + btn_h,
             };
-            target.FillRectangle(&rect, &bg_brush);
+            let back_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect,
+                radiusX: 4.0,
+                radiusY: 4.0,
+            };
+            target.FillRoundedRectangle(&back_rounded, &bg_brush);
             let border = color_f(0.35, 0.35, 0.37, 1.0);
             let border_brush = self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &border)
                 .unwrap();
-            target.DrawRectangle(&rect, &border_brush, 1.0, None);
+            target.DrawRoundedRectangle(&back_rounded, &border_brush, 1.0, None);
             let tc = color_f(0.85, 0.85, 0.85, 1.0);
             let tb = self.render_ctx.brush_cache.get_brush(target, &tc).unwrap();
             let txt: Vec<u16> = "← 返回模型列表".encode_utf16().chain(Some(0)).collect();

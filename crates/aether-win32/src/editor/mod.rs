@@ -266,7 +266,7 @@ pub enum FileTreeInputKind {
     Rename,
 }
 
-/// 文件树内联输入状态（用于新建文件/文件夹或重命名时）
+/// 文件树内联输入状态（新建文件/文件夹或重命名时，以树内行形式展示）
 #[derive(Clone, Debug)]
 pub struct FileTreeInput {
     pub kind: FileTreeInputKind,
@@ -274,7 +274,7 @@ pub struct FileTreeInput {
     pub caret_visible: bool,
     /// IME 合成串（中文输入法预编辑文本），渲染时显示在 value 之后
     pub composition: Option<String>,
-    /// 重命名时记录目标节点索引
+    /// 新建时 = 目标父目录节点（None = 工作区根）；重命名时 = 被重命名节点
     pub target_node: Option<u32>,
 }
 
@@ -491,6 +491,13 @@ pub struct EditorState {
     pub is_main_window: bool,
     /// 标题栏按钮悬停状态 (0=最小化, 1=最大化, 2=关闭)
     pub titlebar_hover_button: Option<usize>,
+    /// 标题栏左侧箭头按钮 X 位置（渲染时设置，悬停/点击时读取）
+    pub titlebar_back_btn_x: f32,
+    pub titlebar_forward_btn_x: f32,
+    /// 有可用新版本时为 Some(版本号)，用于右上角 badge 显示
+    pub update_available_version: Option<String>,
+    /// 是否正在后台检查更新（用于按钮加载动画）
+    pub update_checking: bool,
     /// 侧边栏宽度调整手柄的悬停状态
     pub hover_sidebar_resize: bool,
     /// 文件树中选中的节点索引
@@ -531,10 +538,14 @@ pub struct EditorState {
     pub git_cloning: bool,
     /// 侧边栏滚动偏移（用于文件树虚拟滚动）
     pub sidebar_scroll_y: f32,
+    /// 删除撤销栈：记录最近删除的文件路径，支持 Ctrl+Z 快速撤销
+    pub delete_undo_stack: Vec<crate::undo_delete::DeleteRecord>,
     /// 应用设置
     pub app_settings: aether_shared::settings::AppSettings,
     /// 设置面板
     pub settings_panel: crate::settings::SettingsPanel,
+    /// 智能体沙盒评测面板
+    pub sandbox_eval: crate::sandbox_eval::SandboxEvalPanel,
     /// 标签栏面板
     pub tabs_panel: crate::open_tabs::TabsPanel,
     /// Git 面板
@@ -763,6 +774,7 @@ impl EditorState {
                 frozen: false,
             },
             settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
+            sandbox_eval: crate::sandbox_eval::SandboxEvalPanel::new(),
             tabs_panel: crate::open_tabs::TabsPanel::new(),
             app_settings,
             remote: RemoteState {
@@ -781,6 +793,10 @@ impl EditorState {
             is_maximized: false,
             is_main_window,
             titlebar_hover_button: None,
+            titlebar_back_btn_x: 0.0,
+            titlebar_forward_btn_x: 0.0,
+            update_available_version: None,
+            update_checking: false,
             hover_sidebar_resize: false,
             selected_file_node: None,
             hover_file_node: None,
@@ -801,6 +817,7 @@ impl EditorState {
             fs_last_root_sig: 0,
             git_cloning: false,
             sidebar_scroll_y: 0.0,
+            delete_undo_stack: Vec::new(),
             git_panel: crate::git::GitIntegration::new(),
             dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
             end_draw_fail_streak: 0,

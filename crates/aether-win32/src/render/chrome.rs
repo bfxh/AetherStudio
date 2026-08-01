@@ -428,39 +428,7 @@ impl EditorState {
             let forward_btn_x = tb.forward_btn_x;
             let back_btn_x = tb.back_btn_x;
 
-            // 在标题栏中间显示当前工作区（打开的文件夹）或应用名
-            // UI-T01: 不要显示“未命名”，优先显示打开的文件夹名
-            let title_text = if let Some(folder) = &self.current_folder {
-                let folder_name = folder
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| folder.to_string_lossy().to_string());
-                if self.content.is_dirty {
-                    format!("{} ● - Aether", folder_name)
-                } else {
-                    format!("{} - Aether", folder_name)
-                }
-            } else {
-                "Aether".to_string()
-            };
-            let title_wide: Vec<u16> = title_text.encode_utf16().chain(Some(0)).collect();
-            let title_format = self
-                .render_ctx
-                .text_format_cache
-                .get_format(
-                    13.0,
-                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-                )
-                .unwrap();
-            let title_text_color = color_f(0.85, 0.85, 0.85, 1.0);
-            let title_text_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &title_text_color)
-                .unwrap();
-            // 计算标题区域：在菜单项右侧、按钮左侧
+            // 在菜单栏右侧显示工作区文件夹名（加粗、左对齐）+ 前进/后退箭头
             let menu_end_x = if !self.menu_bar.item_x_positions.is_empty() {
                 self.menu_bar
                     .item_x_positions
@@ -469,22 +437,64 @@ impl EditorState {
                     .unwrap_or(0.0)
                     + self.menu_bar.item_widths.last().copied().unwrap_or(0.0)
             } else {
-                0.0
+                8.0
             };
-            let title_rect = D2D_RECT_F {
-                left: menu_end_x + 10.0,
-                top: y,
-                right: back_btn_x - 10.0,
-                bottom: y + height,
-            };
-            target.DrawText(
-                &title_wide,
-                &title_format,
-                &title_rect,
-                &title_text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
+            let workspace_name = self
+                .current_folder
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string());
+            // 工作区名称（加粗）
+            let mut after_workspace_x = menu_end_x + 8.0;
+            if let Some(ref ws_name) = workspace_name {
+                let ws_format = self
+                    .render_ctx
+                    .text_format_cache
+                    .get_format(
+                        12.0,
+                        DWRITE_FONT_WEIGHT_BOLD.0 as u32,
+                        DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                    )
+                    .unwrap();
+                let ws_wide: Vec<u16> = ws_name.encode_utf16().chain(Some(0)).collect();
+                let ws_text_w = self
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(ws_name, 12.0, DWRITE_FONT_WEIGHT_BOLD.0 as u32)
+                    .unwrap_or(ws_name.len() as f32 * 8.0);
+                let ws_rect = D2D_RECT_F {
+                    left: after_workspace_x,
+                    top: y,
+                    right: after_workspace_x + ws_text_w + 4.0,
+                    bottom: y + height,
+                };
+                let ws_color = color_f(0.85, 0.85, 0.85, 1.0);
+                let ws_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &ws_color)
+                    .unwrap();
+                target.DrawText(
+                    &ws_wide,
+                    &ws_format,
+                    &ws_rect,
+                    &ws_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                after_workspace_x += ws_text_w + 10.0;
+            }
+            // 前进/后退箭头紧跟工作区名右侧
+            let tool_icon_size = 16.0f32;
+            let arrow_btn_size = tb.tool_btn_size;
+            let arrow_y = y + (height - arrow_btn_size) / 2.0;
+            let arrow_icon_offset = (arrow_btn_size - tool_icon_size) / 2.0;
+            let left_back_btn_x = after_workspace_x;
+            let left_forward_btn_x = left_back_btn_x + arrow_btn_size + 2.0;
+            // 缓存箭头位置供悬停/点击检测使用
+            self.titlebar_back_btn_x = left_back_btn_x;
+            self.titlebar_forward_btn_x = left_forward_btn_x;
 
             // 按钮颜色
             let default_bg = if self.theme.glass_enabled {
@@ -817,9 +827,9 @@ impl EditorState {
             let tool_icon_offset = (tool_btn_size - tool_icon_size) / 2.0;
             let tool_icon_top = tool_top + tool_icon_offset;
 
-            // 返回按钮 ←
+            // 返回按钮 ←（左侧，工作区名后）
             target.FillRectangle(
-                &tool_btn_rect(back_btn_x),
+                &tool_btn_rect(left_back_btn_x),
                 if self.titlebar_hover_button == Some(9) {
                     &hover_tool_bg_brush
                 } else {
@@ -831,20 +841,19 @@ impl EditorState {
             } else {
                 &icon_brush
             };
-            // UI-UX: 使用矢量 Back 图标替代像素点阵
             self.icons.draw(
                 target,
                 crate::icons::IconKind::Back,
-                back_btn_x + tool_icon_offset,
-                tool_icon_top,
+                left_back_btn_x + arrow_icon_offset,
+                arrow_y + arrow_icon_offset,
                 tool_icon_size,
                 tool_icon_size,
                 arrow_brush,
             );
 
-            // 前进按钮 →
+            // 前进按钮 →（左侧，后退右侧）
             target.FillRectangle(
-                &tool_btn_rect(forward_btn_x),
+                &tool_btn_rect(left_forward_btn_x),
                 if self.titlebar_hover_button == Some(8) {
                     &hover_tool_bg_brush
                 } else {
@@ -856,18 +865,17 @@ impl EditorState {
             } else {
                 &icon_brush
             };
-            // UI-UX: 使用矢量 Forward 图标替代像素点阵
             self.icons.draw(
                 target,
                 crate::icons::IconKind::Forward,
-                forward_btn_x + tool_icon_offset,
-                tool_icon_top,
+                left_forward_btn_x + arrow_icon_offset,
+                arrow_y + arrow_icon_offset,
                 tool_icon_size,
                 tool_icon_size,
                 arrow_brush,
             );
 
-            // 分隔线
+            // 右侧分隔线（保留，但箭头已移左，分隔线现在分割工具按钮组与空白拖拽区）
             let divider_brush = self
                 .render_ctx
                 .brush_cache
@@ -954,6 +962,30 @@ impl EditorState {
             );
 
             // 设置按钮：齿轮图标
+            // 更新可用 badge（小绿点，在齿轮左上角）
+            if self.update_available_version.is_some() {
+                let badge_size = 6.0f32;
+                let badge_x = settings_btn_x + 2.0;
+                let badge_y = tool_top + 2.0;
+                let badge_color = color_f(0.2, 0.85, 0.4, 1.0);
+                let badge_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &badge_color)
+                    .unwrap();
+                let badge_rect = D2D_RECT_F {
+                    left: badge_x,
+                    top: badge_y,
+                    right: badge_x + badge_size,
+                    bottom: badge_y + badge_size,
+                };
+                let badge_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: badge_rect,
+                    radiusX: badge_size / 2.0,
+                    radiusY: badge_size / 2.0,
+                };
+                target.FillRoundedRectangle(&badge_rounded, &badge_brush);
+            }
             target.FillRectangle(
                 &tool_btn_rect(settings_btn_x),
                 if self.titlebar_hover_button == Some(4) {

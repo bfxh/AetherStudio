@@ -30,12 +30,45 @@ pub const IS_RELEASE_BUILD: bool = option_env!("AETHER_VERSION").is_some();
 pub const WM_UPDATE_CHECK_DONE: u32 = WM_APP + 8;
 
 const GITHUB_REPO: &str = "songdiyang/AetherStudio";
-const SETUP_ASSET_NAME: &str = "aether-setup.exe";
-/// 镜像服务器版本清单地址（优先级高于 GitHub）。
-/// 服务器侧规格：Nginx 静态目录 /aether/ 下提供 latest.json + aether-setup.exe。
-const MIRROR_MANIFEST_URL: &str = "https://aetherstudio.cn/aether/latest.json";
+const SETUP_ASSET_NAME: &str = "AetherStudio-Setup.exe";
+/// 国内镜像服务器版本清单地址（优先级高于 GitHub）。
+const MIRROR_MANIFEST_URL: &str = "https://aetherstudio.cn/downloads/latest.json";
 /// 下载上限，防止异常响应撑爆磁盘
 const MAX_SETUP_BYTES: u64 = 300 * 1024 * 1024;
+/// 启动后延迟检查时间（避免影响首帧渲染）
+pub const UPDATE_CHECK_DELAY_MS: u32 = 5000;
+/// 周期检查间隔（4小时）
+pub const UPDATE_CHECK_INTERVAL_SECS: u64 = 4 * 3600;
+
+/// 判断是否应该执行更新检查（基于策略 + 抑制期）
+pub fn should_check_now(settings: &aether_shared::settings::UpdateSettings) -> bool {
+    use aether_shared::settings::UpdatePolicy;
+    if settings.policy == UpdatePolicy::Disabled {
+        return false;
+    }
+    // 检查抑制期
+    if settings.suppress_days > 0 && settings.last_suppressed_ts > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let suppress_secs = settings.suppress_days as u64 * 86400;
+        if now < settings.last_suppressed_ts + suppress_secs {
+            return false;
+        }
+    }
+    // 检查间隔：上次检查后未超过 4 小时则跳过
+    if settings.last_check_ts > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now < settings.last_check_ts + UPDATE_CHECK_INTERVAL_SECS {
+            return false;
+        }
+    }
+    true
+}
 
 /// 更新检查结果
 pub enum UpdateCheckResult {
@@ -134,7 +167,7 @@ fn fetch_latest_release() -> Result<LatestRelease, String> {
 /// 镜像服务器清单格式（latest.json）：
 /// {
 ///   "version": "v2026.07.21-2",
-///   "setup_url": "https://your-server-domain.com/aether/aether-setup.exe",
+///   "downloadUrl": "https://your-server-domain.com/aether/AetherStudio-Setup.exe",
 ///   "sha256": "64位十六进制小写，可选"
 /// }
 fn fetch_from_mirror() -> Result<LatestRelease, String> {
@@ -158,9 +191,10 @@ fn parse_manifest(body: &serde_json::Value) -> Result<LatestRelease, String> {
         .ok_or_else(|| "清单缺少 version 字段".to_string())?
         .to_string();
     let setup_url = body
-        .get("setup_url")
+        .get("downloadUrl")
+        .or_else(|| body.get("setup_url"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "清单缺少 setup_url 字段".to_string())?
+        .ok_or_else(|| "清单缺少 downloadUrl 字段".to_string())?
         .to_string();
     let sha256 = body
         .get("sha256")
@@ -310,7 +344,7 @@ mod tests {
         assert!(parse_manifest(&body).unwrap().sha256.is_none());
 
         // 缺字段报错
-        assert!(parse_manifest(&serde_json::json!({"setup_url": "x"})).is_err());
+        assert!(parse_manifest(&serde_json::json!({"downloadUrl": "x"})).is_err());
         assert!(parse_manifest(&serde_json::json!({"version": "v1"})).is_err());
     }
 }

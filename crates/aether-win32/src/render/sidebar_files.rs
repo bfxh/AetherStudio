@@ -11,6 +11,11 @@ impl EditorState {
         text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
         let s = self.dpi_scale;
+        // 动画收起期间侧边栏宽度缩小到无法显示内容时，直接跳过所有文字/图标渲染，
+        // 避免文字被挤压产生重影（仅保留背景填充，由 render_sidebar 处理）。
+        if width < 60.0 * s {
+            return;
+        }
         unsafe {
             // 确保矢量图标几何已创建（FilePython / FileJava / FileText）
             self.icons.ensure_created_from_target(target);
@@ -24,12 +29,12 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
                 .unwrap();
-            // 章节标题：10px 加粗，紧凑风格
+            // 章节标题：9px 加粗，紧凑风格
             let header_format = self
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    10.0 * s,
+                    9.0 * s,
                     DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
@@ -39,7 +44,7 @@ impl EditorState {
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    11.0 * s,
+                    9.5 * s,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
@@ -50,7 +55,7 @@ impl EditorState {
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    11.0 * s,
+                    9.5 * s,
                     DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
@@ -103,8 +108,8 @@ impl EditorState {
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
 
-            // 章节标题栏（与"源代码管理"风格一致，约 28px 高）
-            let header_h = 28.0f32 * s;
+            // 章节标题栏（紧凑风格，高度与 file_tree_list_start_y 共用常量）
+            let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT * s;
             let header_text: Vec<u16> = "资源管理器".encode_utf16().chain(Some(0)).collect();
             let header_text_rect = D2D_RECT_F {
                 left: x + 10.0 * s,
@@ -122,7 +127,7 @@ impl EditorState {
             );
 
             // 标题栏右侧：新建文件 / 打开文件夹按钮（紧凑小尺寸）
-            let btn_size = 16.0f32 * s;
+            let btn_size = 14.0f32 * s;
             let btn_margin = 4.0f32 * s;
             let new_file_rect = D2D_RECT_F {
                 left: x + width - btn_size * 2.0 - btn_margin * 2.0,
@@ -199,115 +204,13 @@ impl EditorState {
             };
             target.FillRectangle(&sep_rect, &sep_brush);
 
-            // 文件树内联输入框（新建文件/文件夹时显示）
-            // 该输入框的 y 偏移会通过 file_tree_list_start_y() 自动包含，
-            // 此处仍需渲染输入框 UI。
-            if let Some(input) = &self.file_tree_input {
-                let input_y = y + header_h + 6.0 * s;
-                let input_h = 26.0f32 * s;
-                let input_rect = D2D_RECT_F {
-                    left: x + 10.0 * s,
-                    top: input_y,
-                    right: x + width - 10.0 * s,
-                    bottom: input_y + input_h,
-                };
-                let input_bg = color_f(0.12, 0.12, 0.12, 1.0);
-                let input_bg_brush = self
-                    .render_ctx
-                    .brush_cache
-                    .get_brush(target, &input_bg)
-                    .unwrap();
-                let cursor_brush = self
-                    .render_ctx
-                    .brush_cache
-                    .get_brush(target, &self.theme.cursor_color)
-                    .unwrap();
-                target.FillRectangle(&input_rect, &input_bg_brush);
-                target.DrawRectangle(&input_rect, &sep_brush, 1.0 * s, None);
-
-                let value_text: Vec<u16> = input.value.encode_utf16().collect();
-                let value_rect = D2D_RECT_F {
-                    left: input_rect.left + 6.0 * s,
-                    top: input_rect.top + 2.0 * s,
-                    right: input_rect.right - 6.0 * s,
-                    bottom: input_rect.bottom - 2.0 * s,
-                };
-                target.DrawText(
-                    &value_text,
-                    &ui_format,
-                    &value_rect,
-                    text_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-
-                // 精确测量 value 文本宽度（支持 CJK 双宽字符）
-                let ui_font_size = 13.0f32 * s;
-                let value_width = self
-                    .render_ctx
-                    .text_format_cache
-                    .measure_text_width(
-                        &input.value,
-                        ui_font_size,
-                        DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                    )
-                    .unwrap_or(0.0);
-
-                // IME 合成串（pre-edit text）显示在 value 之后
-                let mut comp_width = 0.0f32;
-                if let Some(comp) = &input.composition {
-                    if !comp.is_empty() {
-                        let comp_text: Vec<u16> = comp.encode_utf16().collect();
-                        let comp_x = value_rect.left + value_width;
-                        let comp_rect = D2D_RECT_F {
-                            left: comp_x,
-                            top: value_rect.top,
-                            right: value_rect.right,
-                            bottom: value_rect.bottom,
-                        };
-                        // 合成串用稍暗的颜色，带下划线效果
-                        let comp_brush = self
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
-                            .unwrap();
-                        target.DrawText(
-                            &comp_text,
-                            &ui_format,
-                            &comp_rect,
-                            &comp_brush,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                        comp_width = self
-                            .render_ctx
-                            .text_format_cache
-                            .measure_text_width(
-                                comp,
-                                ui_font_size,
-                                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                            )
-                            .unwrap_or(0.0);
-                    }
-                }
-
-                // 光标：使用精确测量的文本宽度定位
-                if input.caret_visible {
-                    let caret_x = value_rect.left + value_width + comp_width;
-                    let caret_rect = D2D_RECT_F {
-                        left: caret_x,
-                        top: value_rect.top + 2.0 * s,
-                        right: caret_x + 1.0 * s,
-                        bottom: value_rect.bottom - 2.0 * s,
-                    };
-                    target.FillRectangle(&caret_rect, &cursor_brush);
-                }
-            }
+            // 内联输入行（新建文件/文件夹/重命名）已改为树内行，
+            // 在树绘制完成后叠加绘制（见本函数尾部）。
 
             if self.file_tree.is_some() {
                 let node_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
                 let base_x = x + 10.0 * s;
-                let arrow_w = 14.0 * s;
+                let arrow_w = crate::layout::FILE_TREE_ARROW_COL * s;
                 // 根目录行：矢量 chevron + 加粗工作区文件夹名（与
                 // handle_file_tree_click / update_local_tree_hover 共用同一公式，
                 // 避免 dpi_scale / scroll / inline input 不一致时焦点错位）
@@ -332,7 +235,7 @@ impl EditorState {
                 } else {
                     crate::icons::IconKind::ChevronRight
                 };
-                let ch_size = 10.0 * s;
+                let ch_size = 9.0 * s;
                 self.icons.draw(
                     target,
                     chevron,
@@ -348,7 +251,7 @@ impl EditorState {
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "工作区".to_string());
-                let root_text_left = base_x + arrow_w + 5.0 * s;
+                let root_text_left = base_x + arrow_w + 4.0 * s;
                 let max_text_w = (x + width - 10.0 * s - root_text_left).max(1.0);
                 if let Ok(layout) = self.render_ctx.text_layout_cache.create_ellipsis_layout(
                     &root_name,
@@ -367,8 +270,11 @@ impl EditorState {
                 }
             }
 
-            if let Some(tree) = &self.file_tree {
+            if self.file_tree.is_some() {
                 if self.file_tree_root_expanded {
+                    // 内联输入行几何依赖可见行数组，渲染帧先确保其最新
+                    self.ensure_file_tree_rows();
+                    let tree = self.file_tree.as_ref().unwrap();
                     // 节点列表从根目录行下方开始（公式与 file_tree_nodes_start_y 一致）
                     let mut current_y =
                         y + self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * s;
@@ -408,6 +314,173 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
+            }
+
+            // 内联输入行（树内叠加层）：新建时占据目标目录子列表首行
+            //（render_tree_nodes 已为其空出一行），重命名时覆盖原行文本区
+            //（原行图标保留在框外左侧）。几何与 file_tree_input_row_geom 共用。
+            if self.file_tree_input.is_some() {
+                if let Some((top_rel, item_left_rel, text_left_rel)) =
+                    self.file_tree_input_row_geom()
+                {
+                    let (kind, value, composition, caret_visible) = {
+                        let input = self.file_tree_input.as_ref().unwrap();
+                        (
+                            input.kind,
+                            input.value.clone(),
+                            input.composition.clone(),
+                            input.caret_visible,
+                        )
+                    };
+                    let node_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+                    let row_top = y + top_rel;
+                    // 视口裁剪：行滚出侧边栏可视区时不绘制
+                    if row_top + node_h > y + header_h && row_top < y + height {
+                        // 图标列：新建文件按当前输入名实时匹配类型图标，
+                        // 新建文件夹显示折叠 chevron；重命名复用原行图标
+                        let icon_left = x + item_left_rel;
+                        match kind {
+                            crate::editor::FileTreeInputKind::NewFolder => {
+                                let ch_size = 9.0 * s;
+                                self.icons.draw(
+                                    target,
+                                    crate::icons::IconKind::ChevronRight,
+                                    icon_left
+                                        + (crate::layout::FILE_TREE_ARROW_COL * s - ch_size) / 2.0,
+                                    row_top + (node_h - ch_size) / 2.0,
+                                    ch_size,
+                                    ch_size,
+                                    &dir_brush,
+                                );
+                            }
+                            crate::editor::FileTreeInputKind::NewFile => {
+                                let icon_size = 12.0 * s;
+                                let icon_kind = self
+                                    .get_file_vector_icon(&value)
+                                    .unwrap_or(crate::icons::IconKind::File);
+                                self.icons.draw(
+                                    target,
+                                    icon_kind,
+                                    icon_left,
+                                    row_top + (node_h - icon_size) / 2.0,
+                                    icon_size,
+                                    icon_size,
+                                    text_brush,
+                                );
+                            }
+                            crate::editor::FileTreeInputKind::Rename => {}
+                        }
+
+                        // 输入框：文本列起至右缘，焦点蓝边框（VS Code 风格）
+                        let box_rect = D2D_RECT_F {
+                            left: x + text_left_rel - 3.0 * s,
+                            top: row_top,
+                            right: x + width - 6.0 * s,
+                            bottom: row_top + node_h,
+                        };
+                        let input_bg = color_f(0.12, 0.12, 0.12, 1.0);
+                        let input_bg_brush = self
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &input_bg)
+                            .unwrap();
+                        let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
+                        let focus_brush = self
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &focus_color)
+                            .unwrap();
+                        target.FillRectangle(&box_rect, &input_bg_brush);
+                        target.DrawRectangle(&box_rect, &focus_brush, 1.0 * s, None);
+
+                        // 文本：与树行同字号，垂直居中
+                        let ft_font_size = 9.5f32 * s;
+                        let input_format = self
+                            .render_ctx
+                            .text_format_cache
+                            .get_format(
+                                ft_font_size,
+                                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                                DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                            )
+                            .unwrap();
+                        let pad = 4.0 * s;
+                        let text_rect = D2D_RECT_F {
+                            left: box_rect.left + pad,
+                            top: row_top,
+                            right: box_rect.right - pad,
+                            bottom: row_top + node_h,
+                        };
+                        let value_text: Vec<u16> = value.encode_utf16().collect();
+                        target.DrawText(
+                            &value_text,
+                            &input_format,
+                            &text_rect,
+                            text_brush,
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                        let value_width = self
+                            .render_ctx
+                            .text_format_cache
+                            .measure_text_width(
+                                &value,
+                                ft_font_size,
+                                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                            )
+                            .unwrap_or(0.0);
+
+                        // IME 合成串（pre-edit text）显示在 value 之后
+                        let mut comp_width = 0.0f32;
+                        if let Some(comp) = composition.as_ref().filter(|c| !c.is_empty()) {
+                            let comp_text: Vec<u16> = comp.encode_utf16().collect();
+                            let comp_rect = D2D_RECT_F {
+                                left: text_rect.left + value_width,
+                                ..text_rect
+                            };
+                            let comp_brush = self
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
+                                .unwrap();
+                            target.DrawText(
+                                &comp_text,
+                                &input_format,
+                                &comp_rect,
+                                &comp_brush,
+                                D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                            comp_width = self
+                                .render_ctx
+                                .text_format_cache
+                                .measure_text_width(
+                                    comp,
+                                    ft_font_size,
+                                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                                )
+                                .unwrap_or(0.0);
+                        }
+
+                        // 光标：使用精确测量的文本宽度定位
+                        if caret_visible {
+                            let caret_x = text_rect.left + value_width + comp_width;
+                            let caret_rect = D2D_RECT_F {
+                                left: caret_x,
+                                top: row_top + 2.0 * s,
+                                right: caret_x + 1.0 * s,
+                                bottom: row_top + node_h - 2.0 * s,
+                            };
+                            let cursor_brush = self
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &self.theme.cursor_color)
+                                .unwrap();
+                            target.FillRectangle(&caret_rect, &cursor_brush);
+                        }
+                    }
+                }
             }
 
             // 拖拽浮标：跟随鼠标的文件名标签（仅在侧边栏内绘制，
@@ -490,9 +563,19 @@ impl EditorState {
         let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
         // VS Code 风格两列布局：目录 = chevron + 名称（无文件夹图标），
         // 文件 = 类型图标（占据 chevron 列）+ 名称，同级名称对齐
-        let arrow_w = 14.0f32 * s;
-        let icon_size = 14.0f32 * s;
+        let arrow_w = crate::layout::FILE_TREE_ARROW_COL * s;
+        let icon_size = 12.0f32 * s;
         let icon_gap = 4.0f32 * s;
+        // 内联新建输入行占位：在目标目录（u32::MAX = 工作区根）的
+        // 子列表开头空出一行，实际输入框在树绘制完成后叠加。
+        // 行序公式与 file_tree_input_row_geom / skip_tree_nodes 保持一致。
+        if let Some(input) = &self.file_tree_input {
+            if !matches!(input.kind, crate::editor::FileTreeInputKind::Rename)
+                && input.target_node.unwrap_or(u32::MAX) == parent_idx
+            {
+                *current_y += node_height;
+            }
+        }
         let mut child_idx = if parent_idx == u32::MAX {
             tree.first_root_node()
         } else {
@@ -594,7 +677,7 @@ impl EditorState {
                     } else {
                         crate::icons::IconKind::ChevronRight
                     };
-                    let ch_size = 10.0 * s;
+                    let ch_size = 9.0 * s;
                     self.icons.draw(
                         target,
                         chevron,
@@ -665,8 +748,8 @@ impl EditorState {
                     //（根行占第 0 层，节点缩进整体 +1 级，公式对所有层级统一成立）
                     let child_indent =
                         (node.depth as f32 + 2.0) * crate::layout::FILE_TREE_INDENT * s;
-                    // chevron 列宽 14，中心偏移 7 → child_indent - 16 + 7
-                    let guide_x = base_x + child_indent - 9.0 * s;
+                    // chevron 列宽 12，中心偏移 6 → child_indent - 12 + 6
+                    let guide_x = base_x + child_indent - 6.0 * s;
                     let guide_top = children_top.max(clip_y);
                     let guide_bottom = (*current_y).min(clip_y + clip_height);
                     if guide_bottom > guide_top {
@@ -692,6 +775,14 @@ impl EditorState {
     pub(super) fn skip_tree_nodes(&self, tree: &FileTree, parent_idx: u32, current_y: &mut f32) {
         let s = self.dpi_scale;
         let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+        // 与 render_tree_nodes 同步：内联新建输入行在该父目录下占一行
+        if let Some(input) = &self.file_tree_input {
+            if !matches!(input.kind, crate::editor::FileTreeInputKind::Rename)
+                && input.target_node.unwrap_or(u32::MAX) == parent_idx
+            {
+                *current_y += node_height;
+            }
+        }
         let mut child_idx = tree
             .get_node(parent_idx)
             .map(|n| n.first_child)

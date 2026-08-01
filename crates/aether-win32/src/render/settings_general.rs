@@ -1,6 +1,364 @@
 use super::*;
 
+/// 设置页内容最大宽度：超宽窗口下内容不再无限拉伸
+pub(super) const SETTINGS_CONTENT_MAX_W: f32 = 680.0;
+/// 设置行行高
+pub(super) const SETTINGS_ROW_H: f32 = 36.0;
+
 impl EditorState {
+    /// 绘制设置分组卡片底（圆角 + 1px 描边）
+    pub(super) unsafe fn draw_settings_card(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        rect: &D2D_RECT_F,
+    ) {
+        let bg_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.155, 0.155, 0.17, 1.0))
+            .unwrap();
+        let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+            rect: *rect,
+            radiusX: 6.0,
+            radiusY: 6.0,
+        };
+        target.FillRoundedRectangle(&rounded, &bg_brush);
+        let border_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.26, 0.26, 0.28, 1.0))
+            .unwrap();
+        target.DrawRoundedRectangle(&rounded, &border_brush, 1.0, None);
+    }
+
+    /// 绘制一行「标签左 / 值右」设置行；badge 为 Some 时值渲染为绿/灰徽章
+    pub(super) unsafe fn draw_settings_row(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        label: &str,
+        value: &str,
+        rect: &D2D_RECT_F,
+        badge: Option<bool>,
+    ) {
+        let label_format = self
+            .render_ctx
+            .text_format_cache
+            .get_format(
+                12.0,
+                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+            )
+            .unwrap();
+        let label_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
+            .unwrap();
+        let padded_rect = D2D_RECT_F {
+            left: rect.left + 16.0,
+            top: rect.top,
+            right: rect.right - 16.0,
+            bottom: rect.bottom,
+        };
+        let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+        target.DrawText(
+            &label_wide,
+            &label_format,
+            &padded_rect,
+            &label_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        match badge {
+            Some(on) => {
+                // 状态徽章：半透明底 pill + 彩色文字
+                let (badge_color, badge_bg) = if on {
+                    (
+                        color_f(0.30, 0.80, 0.48, 1.0),
+                        color_f(0.20, 0.72, 0.40, 0.16),
+                    )
+                } else {
+                    (
+                        color_f(0.62, 0.62, 0.65, 1.0),
+                        color_f(0.55, 0.55, 0.58, 0.16),
+                    )
+                };
+                let badge_w = value.chars().count() as f32 * 12.0 + 16.0;
+                let badge_h = 20.0f32;
+                let badge_cy = (rect.top + rect.bottom) / 2.0;
+                let badge_rect = D2D_RECT_F {
+                    left: padded_rect.right - badge_w,
+                    top: badge_cy - badge_h / 2.0,
+                    right: padded_rect.right,
+                    bottom: badge_cy + badge_h / 2.0,
+                };
+                let badge_bg_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &badge_bg)
+                    .unwrap();
+                let badge_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: badge_rect,
+                    radiusX: 10.0,
+                    radiusY: 10.0,
+                };
+                target.FillRoundedRectangle(&badge_rounded, &badge_bg_brush);
+                let badge_text_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &badge_color)
+                    .unwrap();
+                let badge_format = self
+                    .render_ctx
+                    .text_format_cache
+                    .get_format(
+                        11.0,
+                        DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                        DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                    )
+                    .unwrap();
+                let value_wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &value_wide,
+                    &badge_format,
+                    &badge_rect,
+                    &badge_text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+            None => {
+                let value_format = self
+                    .render_ctx
+                    .text_format_cache
+                    .get_format(
+                        12.0,
+                        DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                        DWRITE_TEXT_ALIGNMENT_TRAILING.0 as u32,
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                    )
+                    .unwrap();
+                let value_brush = self
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
+                    .unwrap();
+                let value_wide: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+                target.DrawText(
+                    &value_wide,
+                    &value_format,
+                    &padded_rect,
+                    &value_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+        }
+    }
+
+    /// 绘制一个设置分组：分组标题 + 卡片 + 若干设置行；返回卡片底部 Y
+    pub(super) unsafe fn draw_settings_group(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        title: &str,
+        x: f32,
+        w: f32,
+        y: f32,
+        rows: &[(&str, String, Option<bool>)],
+    ) -> f32 {
+        // 分组标题（位于卡片上方）
+        let group_title_format = self
+            .render_ctx
+            .text_format_cache
+            .get_format(
+                12.0,
+                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+            )
+            .unwrap();
+        let group_title_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.55, 0.55, 0.58, 1.0))
+            .unwrap();
+        let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        let title_rect = D2D_RECT_F {
+            left: x + 2.0,
+            top: y,
+            right: x + w,
+            bottom: y + 16.0,
+        };
+        target.DrawText(
+            &title_wide,
+            &group_title_format,
+            &title_rect,
+            &group_title_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        // 卡片底 + 描边
+        let card_top = y + 24.0;
+        let card_h = rows.len() as f32 * SETTINGS_ROW_H;
+        let card_rect = D2D_RECT_F {
+            left: x,
+            top: card_top,
+            right: x + w,
+            bottom: card_top + card_h,
+        };
+        self.draw_settings_card(target, &card_rect);
+
+        // 设置行 + 行间分隔线
+        let row_sep_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.22, 0.22, 0.24, 1.0))
+            .unwrap();
+        for (i, (label, value, badge)) in rows.iter().enumerate() {
+            let row_top = card_top + i as f32 * SETTINGS_ROW_H;
+            let row_rect = D2D_RECT_F {
+                left: x,
+                top: row_top,
+                right: x + w,
+                bottom: row_top + SETTINGS_ROW_H,
+            };
+            self.draw_settings_row(target, label, value, &row_rect, *badge);
+            if i + 1 < rows.len() {
+                let sep_rect = D2D_RECT_F {
+                    left: x + 16.0,
+                    top: row_top + SETTINGS_ROW_H,
+                    right: x + w - 16.0,
+                    bottom: row_top + SETTINGS_ROW_H + 1.0,
+                };
+                target.FillRectangle(&sep_rect, &row_sep_brush);
+            }
+        }
+        card_top + card_h
+    }
+
+    /// 渲染空态占位（外观 / 远程等尚未实现的页面）
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn render_settings_empty_state(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        title: &str,
+        desc: &str,
+    ) {
+        unsafe {
+            // 占位块整体高度：图标 40 + 间距 16 + 标题 20 + 间距 6 + 说明 16
+            let block_h = 98.0f32;
+            let top = (y + (h - block_h) / 2.0).max(y + 20.0);
+            let cx = x + w / 2.0;
+
+            // 矢量时钟图标：圆环 + 两根指针
+            let icon_color = color_f(0.35, 0.35, 0.38, 1.0);
+            let icon_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &icon_color)
+                .unwrap();
+            let icon_cy = top + 20.0;
+            let ring = windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                point: D2D_POINT_2F { x: cx, y: icon_cy },
+                radiusX: 20.0,
+                radiusY: 20.0,
+            };
+            target.DrawEllipse(&ring, &icon_brush, 1.5, None);
+            target.DrawLine(
+                D2D_POINT_2F { x: cx, y: icon_cy },
+                D2D_POINT_2F {
+                    x: cx,
+                    y: icon_cy - 9.0,
+                },
+                &icon_brush,
+                1.5,
+                None,
+            );
+            target.DrawLine(
+                D2D_POINT_2F { x: cx, y: icon_cy },
+                D2D_POINT_2F {
+                    x: cx + 7.0,
+                    y: icon_cy + 4.0,
+                },
+                &icon_brush,
+                1.5,
+                None,
+            );
+
+            // 标题
+            let title_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    14.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                )
+                .unwrap();
+            let title_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.75, 0.75, 0.78, 1.0))
+                .unwrap();
+            let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+            let title_rect = D2D_RECT_F {
+                left: x,
+                top: top + 56.0,
+                right: x + w,
+                bottom: top + 76.0,
+            };
+            target.DrawText(
+                &title_wide,
+                &title_format,
+                &title_rect,
+                &title_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+
+            // 说明
+            let desc_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    12.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                )
+                .unwrap();
+            let desc_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
+                .unwrap();
+            let desc_wide: Vec<u16> = desc.encode_utf16().chain(Some(0)).collect();
+            let desc_rect = D2D_RECT_F {
+                left: x,
+                top: top + 82.0,
+                right: x + w,
+                bottom: top + 98.0,
+            };
+            target.DrawText(
+                &desc_wide,
+                &desc_format,
+                &desc_rect,
+                &desc_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+
     /// 渲染设置面板：左侧导航 + 右侧内容
     pub(super) fn render_settings_sidebar(
         &mut self,
@@ -47,8 +405,8 @@ impl EditorState {
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    18.0,
-                    DWRITE_FONT_WEIGHT_BOLD.0 as u32,
+                    16.0,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
@@ -145,7 +503,7 @@ impl EditorState {
                 )
                 .unwrap();
             let nav_title_rect = D2D_RECT_F {
-                left: nav_x,
+                left: nav_x + 12.0,
                 top: nav_y + 16.0,
                 right: nav_x + nav_w,
                 bottom: nav_y + 48.0,
@@ -162,34 +520,40 @@ impl EditorState {
             // 导航项
             self.settings_panel.clear_regions();
             let tabs = crate::settings::SettingsTab::ALL;
-            let nav_item_h = 36.0;
+            let nav_item_h = 32.0;
             let nav_item_start_y = nav_y + 60.0;
             for (i, tab) in tabs.iter().enumerate() {
                 let item_y = nav_item_start_y + i as f32 * nav_item_h;
                 let is_active = self.settings_panel.active_tab == *tab;
                 let is_hover = self.settings_panel.hover_tab == Some(*tab);
 
-                let item_bg = if is_active {
-                    color_f(0.18, 0.30, 0.45, 1.0)
-                } else if is_hover {
-                    color_f(0.20, 0.20, 0.22, 1.0)
-                } else {
-                    color_f(0.10, 0.10, 0.10, 0.0)
-                };
-                let item_bg_brush = self
-                    .render_ctx
-                    .brush_cache
-                    .get_brush(target, &item_bg)
-                    .unwrap();
-                let item_rect = D2D_RECT_F {
-                    left: nav_x,
-                    top: item_y,
-                    right: nav_x + nav_w,
-                    bottom: item_y + nav_item_h,
-                };
-                target.FillRectangle(&item_rect, &item_bg_brush);
+                // 悬停 / 激活：内缩圆角色块（与全局菜单风格统一）
+                if is_active || is_hover {
+                    let item_bg = if is_active {
+                        color_f(0.18, 0.30, 0.45, 1.0)
+                    } else {
+                        color_f(0.20, 0.20, 0.22, 1.0)
+                    };
+                    let item_bg_brush = self
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &item_bg)
+                        .unwrap();
+                    let item_rect = D2D_RECT_F {
+                        left: nav_x + 8.0,
+                        top: item_y + 2.0,
+                        right: nav_x + nav_w - 8.0,
+                        bottom: item_y + nav_item_h - 2.0,
+                    };
+                    let item_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: item_rect,
+                        radiusX: 4.0,
+                        radiusY: 4.0,
+                    };
+                    target.FillRoundedRectangle(&item_rounded, &item_bg_brush);
+                }
 
-                // 激活状态左侧高亮条
+                // 激活状态左侧强调短条
                 if is_active {
                     let accent = color_f(0.0, 0.47, 0.83, 1.0);
                     let accent_brush = self
@@ -198,12 +562,17 @@ impl EditorState {
                         .get_brush(target, &accent)
                         .unwrap();
                     let accent_rect = D2D_RECT_F {
-                        left: nav_x,
-                        top: item_y,
-                        right: nav_x + 3.0,
-                        bottom: item_y + nav_item_h,
+                        left: nav_x + 8.0,
+                        top: item_y + 8.0,
+                        right: nav_x + 11.0,
+                        bottom: item_y + nav_item_h - 8.0,
                     };
-                    target.FillRectangle(&accent_rect, &accent_brush);
+                    let accent_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: accent_rect,
+                        radiusX: 1.5,
+                        radiusY: 1.5,
+                    };
+                    target.FillRoundedRectangle(&accent_rounded, &accent_brush);
                 }
 
                 let item_text_color = if is_active {
@@ -242,26 +611,27 @@ impl EditorState {
             let content_w = width - nav_w - 1.0;
             let content_h = height;
 
-            // 标题栏
-            let page_title = match self.settings_panel.active_tab {
-                crate::settings::SettingsTab::General => "通用",
+            // 标题栏：页面标题 + 一行灰色描述
+            let (page_title, page_desc) = match self.settings_panel.active_tab {
+                crate::settings::SettingsTab::General => ("通用", "外观、字体与自动保存偏好"),
                 crate::settings::SettingsTab::Models => {
                     if self.settings_panel.model_editing {
-                        "编辑模型"
+                        ("编辑模型", "编辑模型连接与参数")
                     } else {
-                        "模型"
+                        ("模型", "管理 AI 模型配置")
                     }
                 }
-                crate::settings::SettingsTab::Ai => "AI",
-                crate::settings::SettingsTab::Appearance => "外观",
-                crate::settings::SettingsTab::Remote => "远程",
+                crate::settings::SettingsTab::Ai => ("AI", "AI 接口配置"),
+                crate::settings::SettingsTab::Appearance => ("外观", "主题与界面自定义"),
+                crate::settings::SettingsTab::Remote => ("远程", "SSH 与容器远程连接"),
+                crate::settings::SettingsTab::Update => ("更新", "版本与更新策略"),
             };
             let page_title_wide: Vec<u16> = page_title.encode_utf16().chain(Some(0)).collect();
             let page_title_rect = D2D_RECT_F {
                 left: content_x + 24.0,
                 top: content_y + 24.0,
                 right: content_x + content_w - 24.0,
-                bottom: content_y + 56.0,
+                bottom: content_y + 48.0,
             };
             target.DrawText(
                 &page_title_wide,
@@ -272,31 +642,45 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
+            // 页面描述
+            let page_desc_wide: Vec<u16> = page_desc.encode_utf16().chain(Some(0)).collect();
+            let page_desc_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
+                .unwrap();
+            let page_desc_rect = D2D_RECT_F {
+                left: content_x + 24.0,
+                top: content_y + 48.0,
+                right: content_x + content_w - 24.0,
+                bottom: content_y + 64.0,
+            };
+            target.DrawText(
+                &page_desc_wide,
+                &label_format,
+                &page_desc_rect,
+                &page_desc_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+
             // 标题下方分隔线
             let title_sep_rect = D2D_RECT_F {
                 left: content_x + 24.0,
-                top: content_y + 64.0,
+                top: content_y + 72.0,
                 right: content_x + content_w - 24.0,
-                bottom: content_y + 65.0,
+                bottom: content_y + 73.0,
             };
             target.FillRectangle(&title_sep_rect, &sep_brush);
 
-            // 渲染当前激活页面的内容
+            // 渲染当前激活页面的内容（宽度约束到最大内容宽度）
             let page_x = content_x + 24.0;
-            let page_y = content_y + 80.0;
-            let page_w = content_w - 48.0;
+            let page_y = content_y + 96.0;
+            let page_w = (content_w - 48.0).min(SETTINGS_CONTENT_MAX_W);
 
             match self.settings_panel.active_tab {
                 crate::settings::SettingsTab::General => {
-                    self.render_general_settings(
-                        target,
-                        page_x,
-                        page_w,
-                        page_y,
-                        0.0,
-                        label_format,
-                        text_brush,
-                    );
+                    self.render_general_settings(target, page_x, page_w, page_y);
                 }
                 crate::settings::SettingsTab::Models => {
                     if self.settings_panel.model_editing {
@@ -308,7 +692,7 @@ impl EditorState {
                             &button_format,
                         );
                         let form_y = page_y + back_h + 10.0;
-                        let form_avail = (content_h - 80.0 - back_h - 10.0).max(60.0);
+                        let form_avail = (content_h - 96.0 - back_h - 10.0).max(60.0);
                         self.render_ai_settings_fields(
                             target,
                             page_x,
@@ -343,172 +727,214 @@ impl EditorState {
                         );
                     }
                 }
-                _ => {}
+                crate::settings::SettingsTab::Appearance => {
+                    self.render_appearance_settings(
+                        target,
+                        page_x,
+                        page_w,
+                        page_y,
+                        &label_format,
+                        text_brush,
+                    );
+                }
+                crate::settings::SettingsTab::Remote => {
+                    self.render_settings_empty_state(
+                        target,
+                        page_x,
+                        page_y,
+                        page_w,
+                        (content_h - 96.0).max(120.0),
+                        "远程开发即将推出",
+                        "SSH 与容器远程连接功能正在开发中",
+                    );
+                }
+                crate::settings::SettingsTab::Update => {
+                    self.render_update_settings(target, page_x, page_w, page_y);
+                }
+                crate::settings::SettingsTab::Ai => {}
             }
         }
     }
 
     /// 渲染"通用"标签页内容（主题 / 字体大小 / 自动保存等只读概览）
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_general_settings(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
         x: f32,
         width: f32,
         start_y: f32,
-        margin: f32,
-        label_format: IDWriteTextFormat,
-        text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
         unsafe {
             let mut cy = start_y;
 
-            // 主题
+            // 分组「外观与字体」
             let theme_label = if self.app_settings.ui.theme.is_empty() {
                 "默认深色".to_string()
             } else {
                 self.app_settings.ui.theme.clone()
             };
-            let theme_text: Vec<u16> = format!("主题：{}", theme_label)
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let theme_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 20.0,
-            };
-            target.DrawText(
-                &theme_text,
-                &label_format,
-                &theme_rect,
-                text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            cy += 30.0;
-
-            // 字体大小
             let font_size = if self.app_settings.ui.font_size == 0 {
                 14
             } else {
                 self.app_settings.ui.font_size
             };
-            let font_text: Vec<u16> = format!("编辑器字体大小：{} px", font_size)
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let font_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 20.0,
-            };
-            target.DrawText(
-                &font_text,
-                &label_format,
-                &font_rect,
-                text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            cy += 30.0;
+            let appearance_rows = [
+                ("主题", theme_label, None),
+                ("编辑器字体大小", format!("{} px", font_size), None),
+            ];
+            cy = self.draw_settings_group(target, "外观与字体", x, width, cy, &appearance_rows);
+            cy += 20.0;
 
-            // 自动保存
+            // 分组「自动保存」
             let auto_save = &self.app_settings.auto_save;
-            let auto_save_text: Vec<u16> = format!(
-                "自动保存：{}（防抖 {} ms）",
-                if auto_save.enabled {
-                    "已启用"
-                } else {
-                    "已禁用"
-                },
-                auto_save.debounce_ms
-            )
-            .encode_utf16()
-            .chain(Some(0))
-            .collect();
-            let auto_save_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 20.0,
-            };
-            target.DrawText(
-                &auto_save_text,
-                &label_format,
-                &auto_save_rect,
-                text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            cy += 30.0;
-
-            // 失焦保存
-            let focus_loss = if auto_save.focus_loss_save {
-                "是"
-            } else {
-                "否"
-            };
-            let focus_text: Vec<u16> = format!("失焦自动保存：{}", focus_loss)
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let focus_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 20.0,
-            };
-            target.DrawText(
-                &focus_text,
-                &label_format,
-                &focus_rect,
-                text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            cy += 40.0;
-
-            // 分隔线
-            let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
-            let sep_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &sep_color)
-                .unwrap();
-            let sep_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 1.0,
-            };
-            target.FillRectangle(&sep_rect, &sep_brush);
+            let auto_save_rows = [
+                (
+                    "自动保存",
+                    if auto_save.enabled {
+                        "已启用".to_string()
+                    } else {
+                        "已禁用".to_string()
+                    },
+                    Some(auto_save.enabled),
+                ),
+                ("保存防抖", format!("{} ms", auto_save.debounce_ms), None),
+                (
+                    "失焦自动保存",
+                    if auto_save.focus_loss_save {
+                        "是".to_string()
+                    } else {
+                        "否".to_string()
+                    },
+                    Some(auto_save.focus_loss_save),
+                ),
+            ];
+            cy = self.draw_settings_group(target, "自动保存", x, width, cy, &auto_save_rows);
             cy += 16.0;
 
             // 提示
+            let hint_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
             let hint_text: Vec<u16> = "更多通用选项（主题切换、字体调整等）将在后续版本提供"
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
-            let hint_color = color_f(0.55, 0.55, 0.55, 1.0);
             let hint_brush = self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &hint_color)
+                .get_brush(target, &color_f(0.50, 0.50, 0.53, 1.0))
                 .unwrap();
             let hint_rect = D2D_RECT_F {
-                left: x + margin,
+                left: x + 2.0,
                 top: cy,
-                right: x + width - margin,
-                bottom: cy + 18.0,
+                right: x + width,
+                bottom: cy + 16.0,
             };
             target.DrawText(
                 &hint_text,
-                &label_format,
+                &hint_format,
                 &hint_rect,
                 &hint_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+
+    /// 渲染"外观"标签页内容（任务栏显示开关等）
+    pub(super) fn render_appearance_settings(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        width: f32,
+        start_y: f32,
+        label_format: &windows::Win32::Graphics::DirectWrite::IDWriteTextFormat,
+        text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
+    ) {
+        unsafe {
+            let mut cy = start_y;
+
+            // 分组标题「窗口」
+            let group_title: Vec<u16> = "窗口".encode_utf16().chain(Some(0)).collect();
+            let group_title_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    13.0,
+                    DWRITE_FONT_WEIGHT_BOLD.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let group_title_rect = D2D_RECT_F {
+                left: x,
+                top: cy,
+                right: x + width,
+                bottom: cy + 22.0,
+            };
+            target.DrawText(
+                &group_title,
+                &group_title_format,
+                &group_title_rect,
+                text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            cy += 28.0;
+
+            // 任务栏开关
+            let show_taskbar = self.app_settings.ui.show_taskbar_when_maximized;
+            let region = self.render_pill_switch(
+                target,
+                x,
+                cy,
+                show_taskbar,
+                "最大化时显示 Windows 任务栏",
+                label_format,
+                text_brush,
+            );
+            self.settings_panel.taskbar_toggle_region = Some(region);
+            cy += 20.0 + 8.0;
+
+            // 描述文字
+            let desc_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let desc_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.50, 0.50, 0.53, 1.0))
+                .unwrap();
+            let desc_text: Vec<u16> =
+                "开启后，窗口最大化时底部会保留 Windows 任务栏可见；关闭则全屏覆盖。"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+            let desc_rect = D2D_RECT_F {
+                left: x,
+                top: cy,
+                right: x + width,
+                bottom: cy + 16.0,
+            };
+            target.DrawText(
+                &desc_text,
+                &desc_format,
+                &desc_rect,
+                &desc_brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );

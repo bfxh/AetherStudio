@@ -15,39 +15,58 @@ impl EditorState {
         mouse_x >= handle_x - SIDEBAR_RESIZE_GRAB && mouse_x <= handle_x + SIDEBAR_RESIZE_GRAB
     }
     /// 文件树根目录行（工作区文件夹名）的起始 Y 坐标（相对侧边栏顶部），
-    /// 与 render_tree_nodes 中的 `y + header_h + 6.0 * s + input_offset_y - sidebar_scroll_y`
-    /// 严格一致。
+    /// 与 render_tree_nodes 中的 `y + header_h + 6.0 * s - sidebar_scroll_y` 严格一致。
     ///
     /// 之前三处（render、handle_file_tree_click、update_local_tree_hover、rbutton_down）
-    /// 各自硬编码 34.0，未考虑 dpi_scale、sidebar_scroll_y 和 file_tree_input，
-    /// 导致高 DPI / 滚动 / 内联输入时点击/悬停位置与渲染节点错位，
+    /// 各自硬编码 34.0，未考虑 dpi_scale 和 sidebar_scroll_y，
+    /// 导致高 DPI / 滚动时点击/悬停位置与渲染节点错位，
     /// 表现为"焦点与选中状态分离"。
+    /// 内联输入行已改为树内行（见 file_tree_input_row_geom），不再整体下移。
     pub fn file_tree_list_start_y(&self) -> f32 {
         let s = self.dpi_scale;
-        let header_h = 28.0 * s;
-        let base = header_h + 6.0 * s;
-        let input_offset_y = if self.file_tree_input.is_some() {
-            26.0 * s + 10.0 * s
-        } else {
-            0.0
-        };
-        base + input_offset_y - self.sidebar_scroll_y
+        let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT * s;
+        header_h + 6.0 * s - self.sidebar_scroll_y
     }
 
     /// 树节点列表的起始 Y 坐标：根目录行之下一行（根行高度 = 节点行高）
     pub fn file_tree_nodes_start_y(&self) -> f32 {
         self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale
     }
-    /// 开始文件树内联输入（新建文件/文件夹/重命名），在工作区根目录创建
+    /// 开始文件树内联输入（新建文件/文件夹/重命名）。
+    /// 新建时基于当前选中项定位目标目录（VS Code 行为）：
+    /// 选中目录 → 其内；选中文件 → 其父目录；无选中 → 工作区根。
     pub fn start_file_tree_input(&mut self, kind: FileTreeInputKind) {
-        self.start_file_tree_input_in(kind, None);
+        let parent = self.file_tree_new_target_dir();
+        self.start_file_tree_input_in(kind, parent);
+    }
+    /// 新建入口的目标父目录：选中目录 → 该目录；选中文件 → 其父目录；
+    /// 无选中/顶层文件 → 工作区根（None）
+    pub(crate) fn file_tree_new_target_dir(&self) -> Option<u32> {
+        let idx = self.selected_file_node?;
+        let tree = self.file_tree.as_ref()?;
+        let node = tree.get_node(idx)?;
+        if node.kind == FileKind::Directory {
+            Some(idx)
+        } else if node.parent_idx != u32::MAX {
+            Some(node.parent_idx)
+        } else {
+            None
+        }
     }
     /// 开始文件树内联输入，可指定父文件夹节点（新建时在其内创建；
     /// None 则在工作区根目录）。重命名忽略 parent_node，仍使用选中节点。
     pub fn start_file_tree_input_in(&mut self, kind: FileTreeInputKind, parent_node: Option<u32>) {
+        // 未打开文件夹时无处创建，直接提示而不进入输入态
+        if self.current_folder.is_none() {
+            self.status_message = "请先打开文件夹".to_string();
+            return;
+        }
         let (default_name, target_node) = match kind {
-            FileTreeInputKind::NewFile => ("新建文件.txt".to_string(), parent_node),
-            FileTreeInputKind::NewFolder => ("新建文件夹".to_string(), parent_node),
+            // VS Code 行为：新建从空名开始（免去先删默认名的操作），
+            // 空名提交视为取消
+            FileTreeInputKind::NewFile | FileTreeInputKind::NewFolder => {
+                (String::new(), parent_node)
+            }
             FileTreeInputKind::Rename => {
                 let node_idx = self.selected_file_node;
                 let name = node_idx.and_then(|idx| {
@@ -59,6 +78,19 @@ impl EditorState {
                 (name.unwrap_or_default(), node_idx)
             }
         };
+        // 新建时输入行渲染在目标目录子列表开头：确保目标目录已加载并展开
+        if !matches!(kind, FileTreeInputKind::Rename) {
+            self.file_tree_root_expanded = true;
+            if let Some(p) = target_node {
+                let _ = self.ensure_node_loaded(p);
+                if let Some(tree) = self.file_tree.as_mut() {
+                    if let Some(node) = tree.get_node_mut(p) {
+                        node.is_expanded = true;
+                    }
+                }
+            }
+            self.mark_file_tree_rows_dirty();
+        }
         self.file_tree_input = Some(FileTreeInput {
             kind,
             value: default_name,
@@ -66,6 +98,15 @@ impl EditorState {
             composition: None,
             target_node,
         });
+        // 启动光标闪烁定时器（此前遗漏，输入行光标不会闪烁）
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                self.hwnd,
+                crate::window::CARET_TIMER_ID,
+                530,
+                None,
+            );
+        }
         self.dirty_tracker.mark_region(
             self.layout.sidebar_region().x,
             self.layout.sidebar_region().y,
@@ -93,7 +134,7 @@ impl EditorState {
 
         let name = input.value.trim();
         if name.is_empty() {
-            self.status_message = "名称不能为空".to_string();
+            // VS Code 行为：空名提交视为取消，不提示错误
             self.dirty_tracker.mark_region(
                 self.layout.sidebar_region().x,
                 self.layout.sidebar_region().y,
@@ -152,7 +193,9 @@ impl EditorState {
                     self.status_message = format!("创建文件失败: {}", e);
                 } else {
                     self.status_message = format!("已创建文件: {}", name);
-                    self.refresh_file_tree();
+                    // 轻量刷新：保留展开状态，不重启 LSP / 不重开 README
+                    self.refresh_file_tree_light();
+                    self.select_node_by_path(&target);
                     self.load_file(target);
                 }
             }
@@ -161,7 +204,8 @@ impl EditorState {
                     self.status_message = format!("创建文件夹失败: {}", e);
                 } else {
                     self.status_message = format!("已创建文件夹: {}", name);
-                    self.refresh_file_tree();
+                    self.refresh_file_tree_light();
+                    self.select_node_by_path(&target);
                 }
             }
             FileTreeInputKind::Rename => {
@@ -204,7 +248,8 @@ impl EditorState {
                                     self.content.file_path = Some(new_path.clone());
                                 }
                             }
-                            self.refresh_file_tree();
+                            self.refresh_file_tree_light();
+                            self.select_node_by_path(&new_path);
                         }
                     }
                 }
@@ -222,6 +267,47 @@ impl EditorState {
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
         }
+    }
+    /// 按绝对路径查找节点并选中（刷新树后定位新建/重命名的节点）
+    fn select_node_by_path(&mut self, path: &std::path::Path) {
+        let n = self.file_tree.as_ref().map(|t| t.len() as u32).unwrap_or(0);
+        for idx in 0..n {
+            if self.get_node_path(idx).as_deref() == Some(path) {
+                self.selected_file_node = Some(idx);
+                return;
+            }
+        }
+    }
+    /// 内联输入行几何（相对侧边栏左上角，已含 dpi 缩放与滚动偏移）：
+    /// 返回 (行顶 y, 图标列左缘 x, 文本框左缘 x)。
+    /// 新建：目标目录子列表第一行；重命名：目标节点自身行。
+    /// 行序公式与 render_tree_nodes / skip_tree_nodes 的占位逻辑严格一致。
+    /// 依赖 file_tree_visible_rows：渲染帧会先 ensure_file_tree_rows()，
+    /// 鼠标路径读到的至多是上一帧布局（误差一帧，可接受）。
+    pub(crate) fn file_tree_input_row_geom(&self) -> Option<(f32, f32, f32)> {
+        let input = self.file_tree_input.as_ref()?;
+        let s = self.dpi_scale;
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+        let nodes_top = self.file_tree_nodes_start_y();
+        let (row, depth) = match (input.kind, input.target_node) {
+            (FileTreeInputKind::Rename, Some(idx)) => {
+                let i = self.file_tree_visible_rows.iter().position(|&r| r == idx)?;
+                let depth = self.file_tree.as_ref()?.get_node(idx)?.depth as f32;
+                (i as f32, depth)
+            }
+            (FileTreeInputKind::Rename, None) => return None,
+            (_, Some(p)) => {
+                let i = self.file_tree_visible_rows.iter().position(|&r| r == p)?;
+                let depth = self.file_tree.as_ref()?.get_node(p)?.depth as f32 + 1.0;
+                (i as f32 + 1.0, depth)
+            }
+            (_, None) => (0.0, 0.0),
+        };
+        let top = nodes_top + row * row_h;
+        // 根目录行占第 0 层，节点整体缩进一级（与 render_tree_nodes 一致）
+        let item_left = 10.0 * s + (depth + 1.0) * crate::layout::FILE_TREE_INDENT * s;
+        let text_left = item_left + crate::layout::FILE_TREE_ARROW_COL * s + 4.0 * s;
+        Some((top, item_left, text_left))
     }
     /// 刷新文件树（重新扫描当前文件夹）
     pub fn refresh_file_tree(&mut self) {
@@ -451,38 +537,26 @@ impl EditorState {
         let Some(node) = tree.get_node(node_idx) else {
             return;
         };
-        let is_dir = node.kind == aether_core::workspace::file_tree::FileKind::Directory;
         let name = tree.get_name(node).to_string();
 
-        // 删除不可撤销，先弹窗确认（文件夹额外提示会连同内容一并删除）
-        let msg = if is_dir {
-            format!(
-                "确定要删除文件夹 \"{}\" 及其全部内容吗？\n\n{}\n\n此操作不可撤销。",
-                name,
-                path.display()
-            )
-        } else {
-            format!(
-                "确定要删除文件 \"{}\" 吗？\n\n{}\n\n此操作不可撤销。",
-                name,
-                path.display()
-            )
-        };
-        if !Dialogs::confirm_yes_no(self.hwnd, "删除确认", &msg) {
-            self.status_message = "已取消删除".to_string();
-            return;
-        }
+        // 直接移至回收站，无确认对话框（VS Code 行为）。
+        // 用户可通过 Ctrl+Z 撤销或从系统回收站还原。
 
-        let result = if is_dir {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-
-        match result {
+        // 使用 Windows 回收站 API（可由系统回收站恢复）
+        match crate::recycle_bin::move_to_recycle_bin(&path) {
             Ok(()) => {
-                self.status_message = format!("已删除: {}", name);
-                // 如果删除的文件当前已打开，关闭对应的标签页
+                self.status_message = format!("已删除: {} (可从回收站恢复)", name);
+                // 记录删除操作以支持 Ctrl+Z 撤销
+                self.delete_undo_stack
+                    .push(crate::undo_delete::DeleteRecord {
+                        original_path: path.clone(),
+                        timestamp: std::time::Instant::now(),
+                    });
+                // 淡汰超过 20 条的旧记录
+                if self.delete_undo_stack.len() > 20 {
+                    self.delete_undo_stack.remove(0);
+                }
+                // 关闭已删除文件的标签页
                 let path_str = path.to_string_lossy().to_string();
                 let mut tabs_to_close: Vec<usize> = Vec::new();
                 for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
@@ -492,11 +566,9 @@ impl EditorState {
                         }
                     }
                 }
-                // 从后往前关闭，避免索引偏移
                 for idx in tabs_to_close.into_iter().rev() {
                     self.close_tab(idx);
                 }
-                // 如果当前活动文件被删除，清空编辑器
                 if let Some(ref active_path) = self.content.file_path {
                     if active_path.to_string_lossy() == path_str {
                         self.content.buffer =
@@ -506,7 +578,8 @@ impl EditorState {
                     }
                 }
                 self.selected_file_node = None;
-                self.refresh_file_tree();
+                // 轻量刷新：保留展开状态，不重启 LSP
+                self.refresh_file_tree_light();
             }
             Err(e) => {
                 self.status_message = format!("删除失败: {}", e);
@@ -602,23 +675,45 @@ impl EditorState {
         }
     }
     pub(super) fn handle_file_tree_click(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        // 优先检测标题栏按钮点击
+        // 优先检测标题栏按钮点击。按钮区域存的是窗口绝对坐标，
+        // 而本函数收到的是侧边栏相对坐标，需先换算（此前直接比较
+        // 导致左键点击新建按钮永远未命中，按钮形同虚设）。
+        let sidebar = self.layout.sidebar_region();
+        let abs_x = mouse_x + sidebar.x;
+        let abs_y = mouse_y + sidebar.y;
         if let Some(rect) = self.file_tree_new_file_btn.clone() {
-            if rect.contains(mouse_x, mouse_y) {
+            if rect.contains(abs_x, abs_y) {
+                // 正在输入时先失焦提交，再开始新的输入
+                if self.file_tree_input.is_some() {
+                    self.confirm_file_tree_input();
+                }
                 self.start_file_tree_input(FileTreeInputKind::NewFile);
                 return true;
             }
         }
         if let Some(rect) = self.file_tree_new_folder_btn.clone() {
-            if rect.contains(mouse_x, mouse_y) {
+            if rect.contains(abs_x, abs_y) {
+                if self.file_tree_input.is_some() {
+                    self.confirm_file_tree_input();
+                }
                 self.start_file_tree_input(FileTreeInputKind::NewFolder);
                 return true;
             }
         }
 
-        // 如果正在内联输入，点击其他区域取消输入
+        // 正在内联输入：点击输入行自身保持输入态，
+        // 点击其他区域视为失焦提交（VS Code 行为；空名等效取消）
         if self.file_tree_input.is_some() {
-            self.cancel_file_tree_input();
+            if let Some((top, _, text_left)) = self.file_tree_input_row_geom() {
+                let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+                if mouse_y >= top
+                    && mouse_y < top + row_h
+                    && mouse_x >= text_left - 3.0 * self.dpi_scale
+                {
+                    return true;
+                }
+            }
+            self.confirm_file_tree_input();
             return true;
         }
 
@@ -723,6 +818,14 @@ impl EditorState {
     }
     pub(super) fn update_local_tree_hover(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
         if self.file_tree.is_none() {
+            let old = self.hover_file_node.take();
+            let old_root = std::mem::take(&mut self.hover_file_tree_root);
+            return old.is_some() || old_root;
+        }
+
+        // 内联输入激活时禁用行悬停：输入行占位使行序偏移一行，
+        // 且悬停高亮会干扰输入焦点（VS Code 同样不高亮）
+        if self.file_tree_input.is_some() {
             let old = self.hover_file_node.take();
             let old_root = std::mem::take(&mut self.hover_file_tree_root);
             return old.is_some() || old_root;
@@ -935,7 +1038,7 @@ impl EditorState {
     /// P5-1: O(1) 文件树命中测试 — 基于可见行数组按行高直接索引，
     /// 替代逐节点递归遍历（每次鼠标移动都执行的热路径）。
     /// 横向命中规则与 render_tree_nodes 保持一致（根目录行占第 0 层，
-    /// 节点整体缩进一级；chevron 列宽 14px）。
+    /// 节点整体缩进一级；chevron 列宽复用 FILE_TREE_ARROW_COL）。
     pub(crate) fn file_tree_hit_test(
         &mut self,
         mouse_x: f32,
@@ -966,7 +1069,7 @@ impl EditorState {
 
         // 判断点击的是目录展开箭头还是名称/图标区域
         let part = if node.kind == FileKind::Directory {
-            let arrow_right = item_left + 14.0 * s;
+            let arrow_right = item_left + crate::layout::FILE_TREE_ARROW_COL * s;
             if mouse_x < arrow_right {
                 FileTreeClickPart::Arrow
             } else {
