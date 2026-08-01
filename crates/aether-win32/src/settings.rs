@@ -405,6 +405,8 @@ pub struct SettingsPanel {
     pub user_id: String,
     /// 打开设置面板时的 AI 配置快照，用于"未保存更改"检测
     pub baseline_ai: Option<AiSettings>,
+    /// 外观页：最大化时显示任务栏开关命中区
+    pub taskbar_toggle_region: Option<(f32, f32, f32, f32)>,
 }
 
 impl SettingsPanel {
@@ -486,6 +488,7 @@ impl SettingsPanel {
             top_logprobs: String::new(),
             user_id: String::new(),
             baseline_ai: None,
+            taskbar_toggle_region: None,
         }
     }
 
@@ -608,6 +611,7 @@ impl SettingsPanel {
                 .unwrap_or_default(),
             user_id: settings.ai.user_id.clone().unwrap_or_default(),
             baseline_ai: None,
+            taskbar_toggle_region: None,
         }
     }
 

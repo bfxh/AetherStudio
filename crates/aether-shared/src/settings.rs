@@ -298,7 +298,7 @@ impl std::fmt::Debug for AiModelProfile {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct UiSettings {
     pub theme: String,
@@ -328,6 +328,28 @@ pub struct UiSettings {
     /// 上次打开的工作区路径，None 表示未打开任何工作区
     #[serde(default)]
     pub last_workspace: Option<PathBuf>,
+    /// 最大化时是否显示 Windows 任务栏（默认 true）
+    #[serde(default = "default_true")]
+    pub show_taskbar_when_maximized: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            theme: String::new(),
+            font_size: 0,
+            sidebar_visible: false,
+            activity_bar_order: Vec::new(),
+            menu_bar_order: Vec::new(),
+            window_x: None,
+            window_y: None,
+            window_width: None,
+            window_height: None,
+            window_maximized: false,
+            last_workspace: None,
+            show_taskbar_when_maximized: true,
+        }
+    }
 }
 
 /// SSH 服务器配置（持久化到 settings.json）
@@ -951,6 +973,7 @@ mod tests {
         assert!(!ui.window_maximized);
         assert!(ui.activity_bar_order.is_empty());
         assert!(ui.menu_bar_order.is_empty());
+        assert!(ui.show_taskbar_when_maximized);
     }
 
     #[test]

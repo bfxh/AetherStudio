@@ -1112,7 +1112,75 @@ pub(super) unsafe fn lbd_settings_page(
         return Some(LRESULT(0));
     }
 
-    // 4b. 更新页："立即检查更新"按钮（独立于 AI/模型页的按钮检测门槛）
+    // 4b. 外观页：任务栏显示开关
+    if st.settings_panel.active_tab == crate::settings::SettingsTab::Appearance {
+        if let Some((rx, ry, rw, rh)) = st.settings_panel.taskbar_toggle_region {
+            if mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh {
+                st.app_settings.ui.show_taskbar_when_maximized =
+                    !st.app_settings.ui.show_taskbar_when_maximized;
+                let enabled = st.app_settings.ui.show_taskbar_when_maximized;
+                match st.app_settings.save() {
+                    Ok(_) => {
+                        st.status_message = if enabled {
+                            "已开启：最大化时显示任务栏".to_string()
+                        } else {
+                            "已关闭：最大化时隐藏任务栏".to_string()
+                        };
+                    }
+                    Err(e) => {
+                        st.status_message = format!("保存设置失败：{}", e);
+                    }
+                }
+                // 若当前处于最大化状态，重新触发最大化以应用新的任务栏设置
+                let is_max = st.is_maximized;
+                let show_taskbar = st.app_settings.ui.show_taskbar_when_maximized;
+                drop(st);
+                if is_max {
+                    use windows::Win32::Graphics::Gdi::{
+                        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+                    };
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+                    };
+
+                    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    let mut mi = MONITORINFO {
+                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                        ..Default::default()
+                    };
+                    if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+                        if show_taskbar {
+                            // 显示任务栏：窗口设置为工作区大小（不包含任务栏）
+                            let _ = SetWindowPos(
+                                hwnd,
+                                windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+                                mi.rcWork.left,
+                                mi.rcWork.top,
+                                mi.rcWork.right - mi.rcWork.left,
+                                mi.rcWork.bottom - mi.rcWork.top,
+                                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        } else {
+                            // 隐藏任务栏：窗口设置为显示器全尺寸
+                            let _ = SetWindowPos(
+                                hwnd,
+                                windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+                                mi.rcMonitor.left,
+                                mi.rcMonitor.top,
+                                mi.rcMonitor.right - mi.rcMonitor.left,
+                                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        }
+                    }
+                }
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+        }
+    }
+
+    // 4c. 更新页："立即检查更新"按钮（独立于 AI/模型页的按钮检测门槛）
     if st.settings_panel.active_tab == crate::settings::SettingsTab::Update {
         if let Some(crate::settings::SettingsButton::CheckUpdate) =
             st.settings_panel.hit_test_button(mouse_x, mouse_y)
