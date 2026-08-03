@@ -14,9 +14,11 @@ impl EditorState {
     }
 
     /// P2.3: 大文件阈值（行数）
-    pub(super) const LARGE_FILE_LINE_THRESHOLD: usize = 100_000;
+    /// 卡顿修复：tree-sitter 全文件解析 10K 行约 400ms、50K 行约 2s（单核 100%），
+    /// 阈值下调到 8K 行/2MB，超过即跳过高亮，避免点击大文件后数秒系统卡顿。
+    pub(super) const LARGE_FILE_LINE_THRESHOLD: usize = 8_000;
     /// P2.3: 大文件阈值（字节数）
-    pub(super) const LARGE_FILE_BYTE_THRESHOLD: usize = 5 * 1024 * 1024;
+    pub(super) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
     /// P2.3: 重建行 Y 偏移前缀和缓存
     pub fn rebuild_line_y_offsets(&mut self) {
         let total_lines = self.content.buffer.len_lines().max(1);

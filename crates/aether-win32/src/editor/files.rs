@@ -64,7 +64,10 @@ impl EditorState {
 
         match PieceTable::from_file(&path) {
             Ok(buffer) => {
-                if self.can_reuse_current_tab() {
+                // 仅当存在标签页时才复用当前空标签：tabs 为空（如启动后打开的第一个文件）
+                // 时必须走新建标签路径，否则 show_empty_placeholder() 仍为 true，
+                // 编辑器区域渲染占位页导致文件“点不开”，要再点一次才能打开。
+                if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
                     self.content.buffer = buffer;
                     self.content.file_path = Some(path.clone());
                     self.content.language = lang;
@@ -126,7 +129,8 @@ impl EditorState {
     /// 加载图片文件
     pub(super) fn load_image_file(&mut self, path: PathBuf) {
         let content = format!("[图片预览] {}", path.display());
-        if self.can_reuse_current_tab() {
+        // tabs 为空时同样不能复用（否则渲染占位页），与 load_file 保持一致
+        if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
             self.content.file_path = Some(path.clone());
             self.content.language = Language::Image;
             self.content.buffer = PieceTable::from_string(content);
@@ -150,7 +154,8 @@ impl EditorState {
             .and_then(|e| e.to_str())
             .unwrap_or("unknown");
         let message = format!("不支持的文件格式: .{}\n文件: {}", ext, path.display());
-        if self.can_reuse_current_tab() {
+        // tabs 为空时同样不能复用（否则渲染占位页），与 load_file 保持一致
+        if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
             self.content.file_path = Some(path.to_path_buf());
             self.content.language = Language::PlainText;
             self.content.buffer = PieceTable::from_string(message);

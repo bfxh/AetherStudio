@@ -28,7 +28,9 @@ pub struct TreeSitterHighlighter {
 /// P4-6: 文档缓存最大条目数，避免长时间运行后无限增长
 const MAX_HIGHLIGHTER_DOCS: usize = 32;
 
-/// 启用并固定 capture 索引，使 `capture_to_token_kind` 的映射生效。
+/// configure() 传入的 recognized_names（HIGHLIGHT_NAMES）—— tree-sitter-highlight 0.20
+/// 的 HighlightStart 事件索引指向该列表（而非 config.names() 的查询 capture 列表），
+/// 且 capture 名称按点分前缀匹配（如 "function" 命中 @function.method）。
 /// 索引 0-9 分别对应 Keyword、StringLiteral、NumberLiteral、LineComment、
 /// Function、TypeName、Operator、Identifier、Preprocessor、Attribute。
 const HIGHLIGHT_NAMES: &[&str] = &[
@@ -42,6 +44,13 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "identifier",
     "preprocessor",
     "attribute",
+    // 以下扩展名用于提升 JS/TS 等语言的完整度（constant/constructor/punctuation 等）
+    "constant",
+    "constructor",
+    "punctuation",
+    "property",
+    "variable",
+    "embedded",
 ];
 
 impl TreeSitterHighlighter {
@@ -77,10 +86,12 @@ impl TreeSitterHighlighter {
             self.rust_config = Some(config);
         }
 
-        // JavaScript
+        // JavaScript：使用内置修正版 query（queries/javascript.scm），
+        // 原版 highlights.scm 把 @variable 放在最前，会遮蔽 @function/@constructor
+        // 等具体规则（tree-sitter-highlight 0.20 同节点只取 pattern index 最小者）。
         if let Ok(mut config) = HighlightConfiguration::new(
             tree_sitter_javascript::language(),
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            include_str!("../queries/javascript.scm"),
             "",
             "",
         ) {
@@ -243,9 +254,12 @@ impl TreeSitterHighlighter {
         };
 
         let mut spans = Vec::new();
-        let mut current_start = 0usize;
-        let mut current_kind = TokenKind::Unknown;
-        let mut in_highlight = false;
+        // 嵌套 capture 用栈：HighlightStart 压栈、HighlightEnd 弹栈；
+        // Source 区间自带 [start, end) 位置，取栈顶（最内层）kind 应用。
+        // 不能用“上一次 Source 起点”推断高亮段，否则会把 Start 之前的未高亮
+        // 区间也算入；也不能用单一 Option 覆盖，嵌套 capture（如正则内部的
+        // 运算符）会丢外层高亮。
+        let mut highlight_stack: Vec<TokenKind> = Vec::new();
 
         if let Ok(events) = self
             .highlighter
@@ -253,26 +267,28 @@ impl TreeSitterHighlighter {
         {
             for event in events {
                 match event {
-                    Ok(HighlightEvent::Source { start, end: _ }) => {
-                        if in_highlight && start > current_start {
-                            spans.push(LexemeSpan {
-                                start: current_start as u32,
-                                len: (start - current_start) as u32,
-                                kind: current_kind,
-                                flags: 0,
-                            });
+                    Ok(HighlightEvent::Source { start, end }) => {
+                        if let Some(kind) = highlight_stack.last() {
+                            if end > start {
+                                spans.push(LexemeSpan {
+                                    start: start as u32,
+                                    len: (end - start) as u32,
+                                    kind: *kind,
+                                    flags: 0,
+                                });
+                            }
                         }
-                        current_start = start;
                     }
                     Ok(HighlightEvent::HighlightStart(s)) => {
                         // H-16: 按 capture 名称而非索引映射 TokenKind，
                         // 因为不同语言的 highlight query 定义不同的 capture 顺序
-                        let name = config.names().get(s.0).map(|s| s.as_str()).unwrap_or("");
-                        current_kind = capture_name_to_token_kind(name);
-                        in_highlight = true;
+                        // 注意：0.20 的事件索引指向 configure() 传入的 HIGHLIGHT_NAMES，
+                        // 而非 config.names()（查询全量 capture 列表），用后者索引会整体错位。
+                        let name = HIGHLIGHT_NAMES.get(s.0).copied().unwrap_or("");
+                        highlight_stack.push(capture_name_to_token_kind(name));
                     }
                     Ok(HighlightEvent::HighlightEnd) => {
-                        in_highlight = false;
+                        highlight_stack.pop();
                     }
                     Err(_) => {}
                 }
@@ -460,31 +476,27 @@ impl TreeSitterHighlighter {
             .highlight(config, full_text.as_bytes(), None, |_| None);
 
         if let Ok(events) = events {
-            let mut current_start = 0usize;
-            let mut current_kind = TokenKind::Unknown;
-            let mut in_highlight = false;
+            // 嵌套 capture 用栈：HighlightStart 压栈、HighlightEnd 弹栈；
+            // Source 区间自带 [start, end) 位置，取栈顶（最内层）kind 分配，
+            // 否则正则内部的运算符等嵌套 capture 会丢失外层高亮。
+            let mut highlight_stack: Vec<TokenKind> = Vec::new();
 
             for event in events {
                 match event {
-                    Ok(HighlightEvent::Source { start, end: _ }) => {
-                        if in_highlight && start > current_start {
-                            assign_segment_to_lines(
-                                current_start,
-                                start,
-                                current_kind,
-                                &line_starts,
-                                &mut result,
-                            );
+                    Ok(HighlightEvent::Source { start, end }) => {
+                        if let Some(kind) = highlight_stack.last() {
+                            assign_segment_to_lines(start, end, *kind, &line_starts, &mut result);
                         }
-                        current_start = start;
                     }
                     Ok(HighlightEvent::HighlightStart(s)) => {
-                        let name = config.names().get(s.0).map(|s| s.as_str()).unwrap_or("");
-                        current_kind = capture_name_to_token_kind(name);
-                        in_highlight = true;
+                        // 0.20 的事件索引指向 configure() 传入的 HIGHLIGHT_NAMES，
+                        // 而非 config.names()（查询全量 capture 列表），用后者索引会整体错位
+                        // （如 const→variable、=→variable.builtin、42→function）。
+                        let name = HIGHLIGHT_NAMES.get(s.0).copied().unwrap_or("");
+                        highlight_stack.push(capture_name_to_token_kind(name));
                     }
                     Ok(HighlightEvent::HighlightEnd) => {
-                        in_highlight = false;
+                        highlight_stack.pop();
                     }
                     Err(_) => {}
                 }
@@ -564,16 +576,16 @@ fn capture_to_token_kind(index: usize) -> TokenKind {
 fn capture_name_to_token_kind(name: &str) -> TokenKind {
     match name {
         "keyword" => TokenKind::Keyword,
-        "string" | "string.special" => TokenKind::StringLiteral,
+        "string" | "string.special" | "embedded" => TokenKind::StringLiteral,
         "number" => TokenKind::NumberLiteral,
         "comment" => TokenKind::LineComment,
         "function" | "function.call" | "function.builtin" | "method" | "method.call" => {
             TokenKind::Function
         }
         "type" | "type.builtin" | "constructor" => TokenKind::TypeName,
-        "operator" => TokenKind::Operator,
+        "operator" | "punctuation" => TokenKind::Operator,
         "constant" | "constant.builtin" => TokenKind::NumberLiteral,
-        "variable" | "variable.builtin" | "variable.parameter" | "identifier" => {
+        "variable" | "variable.builtin" | "variable.parameter" | "identifier" | "property" => {
             TokenKind::Identifier
         }
         "preproc" => TokenKind::Preprocessor,
@@ -646,6 +658,46 @@ mod tests {
         let mut highlighter = TreeSitterHighlighter::new();
         let spans = highlighter.highlight_line("function foo() { return 42; }", "javascript");
         assert!(!spans.is_empty(), "JavaScript 简单代码应产生高亮 span");
+        // 回归断言：函数名必须映射为 Function（曾因 capture 索引错位 +
+        // @variable 规则遮蔽退化为 Identifier）；关键字/数字需正确着色。
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.start == 9 && s.len == 3 && s.kind == TokenKind::Function),
+            "函数名 foo 应高亮为 Function: {:?}",
+            spans
+        );
+        assert!(spans.iter().any(|s| s.kind == TokenKind::Keyword));
+        assert!(spans.iter().any(|s| s.kind == TokenKind::NumberLiteral));
+    }
+
+    #[test]
+    fn test_highlight_document_javascript() {
+        let mut highlighter = TreeSitterHighlighter::new();
+        let code = "const x = 42;\nfunction foo(a) { return a; }\n// comment\nconst re = /abc/g;\nclass Foo {}\n";
+        let lines = highlighter.highlight_document("doc_js2", "javascript", code);
+        assert!(
+            lines[0]
+                .iter()
+                .any(|t| t.start == 0 && t.len == 5 && t.kind == TokenKind::Keyword),
+            "const 应为 Keyword"
+        );
+        assert!(lines[0].iter().any(|t| t.kind == TokenKind::NumberLiteral));
+        assert!(
+            lines[1]
+                .iter()
+                .any(|t| t.start == 9 && t.len == 3 && t.kind == TokenKind::Function),
+            "函数名 foo 应为 Function"
+        );
+        assert!(lines[2].iter().any(|t| t.kind == TokenKind::LineComment));
+        assert!(
+            lines[3].iter().any(|t| t.kind == TokenKind::StringLiteral),
+            "正则内容应高亮为字符串"
+        );
+        assert!(
+            lines[4].iter().any(|t| t.kind == TokenKind::TypeName),
+            "大写类名 Foo 应为 TypeName"
+        );
     }
 
     #[test]

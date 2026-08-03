@@ -360,28 +360,40 @@ impl EditorState {
         // 导致后台高亮结果永远无法被消费，tokens 停留在空/旧状态。
         if ts_lang.is_some() && !self.content.is_large_file {
             if let Some(mut result) = self.bg_highlighter.poll_result() {
-                // P1-C: 后台结果整体 move 接管，避免逐行 clone 全文档 token
-                let token_lines = std::mem::take(&mut result.token_lines);
-                if self.content.cached_tokens.len() < token_lines.len() {
-                    self.content
-                        .cached_tokens
-                        .resize_with(token_lines.len(), Vec::new);
-                }
-                for (i, tokens) in token_lines.into_iter().enumerate() {
-                    if i < self.content.cached_tokens.len() {
-                        self.content.cached_tokens[i] = tokens;
+                // 结果归属校验：快速切换文件后，过期结果必须丢弃，
+                // 避免把旧文件的高亮 token 填进当前文件（错误着色）
+                let current_doc = self
+                    .content
+                    .file_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "untitled".to_string());
+                if result.doc_id != current_doc || result.version != self.content.buffer_version {
+                    drop(result);
+                } else {
+                    // P1-C: 后台结果整体 move 接管，避免逐行 clone 全文档 token
+                    let token_lines = std::mem::take(&mut result.token_lines);
+                    if self.content.cached_tokens.len() < token_lines.len() {
+                        self.content
+                            .cached_tokens
+                            .resize_with(token_lines.len(), Vec::new);
                     }
+                    for (i, tokens) in token_lines.into_iter().enumerate() {
+                        if i < self.content.cached_tokens.len() {
+                            self.content.cached_tokens[i] = tokens;
+                        }
+                    }
+                    // 后台高亮结果刚到达：标记编辑器区域脏，使本帧立即以着色重绘，
+                    // 避免文件打开后停留在无高亮的纯文本状态直到下一次无关重绘。
+                    let er = self.layout.editor_region();
+                    self.dirty_tracker.mark_region(
+                        er.x,
+                        er.y,
+                        er.width,
+                        er.height,
+                        crate::dirty_rect::DirtyRegionType::EditorContent,
+                    );
                 }
-                // 后台高亮结果刚到达：标记编辑器区域脏，使本帧立即以着色重绘，
-                // 避免文件打开后停留在无高亮的纯文本状态直到下一次无关重绘。
-                let er = self.layout.editor_region();
-                self.dirty_tracker.mark_region(
-                    er.x,
-                    er.y,
-                    er.width,
-                    er.height,
-                    crate::dirty_rect::DirtyRegionType::EditorContent,
-                );
             }
         }
 
@@ -443,7 +455,8 @@ impl EditorState {
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "untitled".to_string());
-                self.bg_highlighter.request(&doc_id, lang, snapshot);
+                self.bg_highlighter
+                    .request(&doc_id, lang, self.content.buffer_version, snapshot);
                 self.hl_request_version = self.content.buffer_version;
                 self.content.tokens_trimmed = false;
             }

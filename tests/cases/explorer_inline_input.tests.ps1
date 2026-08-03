@@ -9,16 +9,18 @@
 #
 # 使用独立临时工作区，测试结束自动清理，不污染真实项目。
 # 运行：pwsh -File tests\cases\explorer_inline_input.tests.ps1 [-SkipBuild]
+#
+# 本用例使用 AI 协作测试框架（AetherTest + AetherAi）：
+#   - Start-AetherApp 自动信任工作区 + new_window 隔离（不干扰用户窗口）
+#   - Get-AetherWindow -Isolate 移动窗口避免重叠
+#   - Send-AetherClickMsg（PostMessage 注入）不受前台锁定影响
 param([switch]$SkipBuild)
 
 Import-Module "$PSScriptRoot\..\framework\AetherTest.psm1" -Force
+Import-Module "$PSScriptRoot\..\framework\AetherAi.psm1" -Force
 
 # 布局名义常量（与 crates/aether-win32/src/layout.rs 保持一致）
-$TITLE_BAR = 28.0
-$ACTIVITY_W = 40.0
-$SIDEBAR_W = 200.0
-$HEADER_H = 24.0     # FILE_TREE_HEADER_HEIGHT
-$ROW_H = 15.0        # FILE_TREE_ROW_HEIGHT
+$L = Get-AetherLayoutConstants
 
 Start-TestCase "explorer_inline_input"
 
@@ -32,52 +34,52 @@ try {
         "zz_readme.md" = "# test"
     }
     $proc = Start-AetherApp -Folder $ws
-    $win = Get-AetherWindow -Process $proc
+    $win = Get-AetherWindow -Process $proc -Isolate
     $k = $win.Scale2   # 名义 → 物理换算系数
 
     # 名义坐标 → 窗口内物理像素
     function NX([double]$v) { [int]($v * $k) }
-    $sidebarRight = $ACTIVITY_W + $SIDEBAR_W
-    $newFileBtn = @{ X = NX ($sidebarRight - 29); Y = NX ($TITLE_BAR + $HEADER_H / 2) }
-    $newFolderBtn = @{ X = NX ($sidebarRight - 11); Y = NX ($TITLE_BAR + $HEADER_H / 2) }
+    $sidebarRight = $L.ACTIVITY_W + $L.SIDEBAR_W
+    $newFileBtn = @{ X = NX ($sidebarRight - 29); Y = NX ($L.TITLE_BAR + $L.HEADER_H / 2) }
+    $newFolderBtn = @{ X = NX ($sidebarRight - 11); Y = NX ($L.TITLE_BAR + $L.HEADER_H / 2) }
     # 树行：根行 top = 标题栏 + 表头 24 + 间距 6；第 i 个节点行中心
-    function RowCenterY([int]$i) { NX ($TITLE_BAR + $HEADER_H + 6 + $ROW_H * ($i + 1) + $ROW_H / 2) }
-    $rowLabelX = NX ($ACTIVITY_W + 10 + 12 + 30)   # base 10 + 一级缩进 12 + 深入 label 区
+    function RowCenterY([int]$i) { NX ($L.TITLE_BAR + $L.HEADER_H + 6 + $L.ROW_H * ($i + 1) + $L.ROW_H / 2) }
+    $rowLabelX = NX ($L.ACTIVITY_W + 10 + 12 + 30)   # base 10 + 一级缩进 12 + 深入 label 区
 
     Invoke-TestStep "点击新建文件按钮出现空输入行" {
-        Invoke-AetherClick -Window $win -X $newFileBtn.X -Y $newFileBtn.Y
+        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFileBtn.X -Y $newFileBtn.Y
         Save-AetherScreenshot -Window $win -Name "1_newfile_empty_input" | Out-Null
     }
 
     Invoke-TestStep "输入文件名并 Enter 创建" {
-        Send-AetherText "hello_test.rs"
+        Send-AetherTextMsg -Hwnd $win.Hwnd -Text "hello_test.rs"
         Save-AetherScreenshot -Window $win -Name "2_newfile_typed" | Out-Null
-        Send-AetherKeys "{ENTER}" -DelayMs 800
+        Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ENTER}" -DelayMs 800
         Assert-PathExists (Join-Path $ws "hello_test.rs")
         Save-AetherScreenshot -Window $win -Name "3_newfile_created" | Out-Null
     }
 
     Invoke-TestStep "新建文件夹并 Enter 创建" {
-        Invoke-AetherClick -Window $win -X $newFolderBtn.X -Y $newFolderBtn.Y
-        Send-AetherText "demo_dir"
-        Send-AetherKeys "{ENTER}" -DelayMs 800
+        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFolderBtn.X -Y $newFolderBtn.Y
+        Send-AetherTextMsg -Hwnd $win.Hwnd -Text "demo_dir"
+        Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ENTER}" -DelayMs 800
         Assert-PathExists (Join-Path $ws "demo_dir")
         Save-AetherScreenshot -Window $win -Name "4_newfolder_created" | Out-null
     }
 
     Invoke-TestStep "F2 重命名显示内联输入行且 Esc 不改名" {
         # 行序（目录优先 + 字母序）：demo_dir, hello_test.rs, main.rs, zz_readme.md
-        Invoke-AetherClick -Window $win -X $rowLabelX -Y (RowCenterY 2)   # main.rs
-        Send-AetherKeys "{F2}" -DelayMs 600
+        Send-AetherClickMsg -Hwnd $win.Hwnd -X $rowLabelX -Y (RowCenterY 2)   # main.rs
+        Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{F2}" -DelayMs 600
         Save-AetherScreenshot -Window $win -Name "5_rename_input" | Out-Null
-        Send-AetherKeys "{ESC}" -DelayMs 500
+        Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ESC}" -DelayMs 500
         Assert-PathExists (Join-Path $ws "main.rs")
     }
 
     Invoke-TestStep "空名 Enter 等效取消" {
         $before = (Get-ChildItem $ws).Count
-        Invoke-AetherClick -Window $win -X $newFileBtn.X -Y $newFileBtn.Y
-        Send-AetherKeys "{ENTER}" -DelayMs 600
+        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFileBtn.X -Y $newFileBtn.Y
+        Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ENTER}" -DelayMs 600
         $after = (Get-ChildItem $ws).Count
         Assert-Condition ($before -eq $after) "空名提交未创建任何文件（$before → $after）"
         Save-AetherScreenshot -Window $win -Name "6_empty_commit_cancelled" | Out-Null
