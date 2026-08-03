@@ -400,9 +400,9 @@ function Wait-AetherLogEvent {
             $log = Get-ChildItem $script:LogDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($log) {
                 $newLines = @(Get-Content $log.FullName) | Select-Object -Skip $startLen
-                $matches = @($newLines | Select-String $Pattern | ForEach-Object { $_.Line })
-                if ($matches.Count -gt 0) {
-                    return [pscustomobject]@{ Found = $true; Matches = $matches }
+                $matchedLines = @($newLines | Select-String $Pattern | ForEach-Object { $_.Line })
+                if ($matchedLines.Count -gt 0) {
+                    return [pscustomobject]@{ Found = $true; Matches = $matchedLines }
                 }
             }
         } catch { /* 日志尚未生成 */ }
