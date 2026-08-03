@@ -410,7 +410,22 @@ impl PieceTable {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let len = mmap.len();
-        let line_breaks = count_line_breaks(&mmap);
+        // 单次扫描构建行起始偏移表（替代 count_line_breaks + rebuild_line_index
+        // 的双重全文件扫描，打开大文件时省一半时间；SIMD 查找每次从上次位置继续，
+        // 总体仍是一次遍历）
+        let mut line_starts = Vec::new();
+        line_starts.push(0); // 第0行从字节0开始
+        let mut offset = 0usize;
+        while offset < len {
+            match crate::simd_utils::find_byte_simd(&mmap[offset..], b'\n') {
+                Some(pos) => {
+                    line_starts.push(offset + pos + 1); // 下一行起始
+                    offset += pos + 1; // 跳过已找到的换行符
+                }
+                None => break,
+            }
+        }
+        let line_breaks = (line_starts.len() - 1) as u32;
         let pieces = vec![Piece {
             source: Source::Original,
             start: 0,
@@ -421,14 +436,14 @@ impl PieceTable {
             original: Some(Arc::new(mmap)),
             add_buffer: Vec::new(),
             pieces,
-            line_index: LineIndex::new(),
+            line_index: LineIndex::from_line_starts(line_starts),
             piece_offset_cache: Vec::new(),
             len_chars: len,
             len_lines: line_breaks as usize + 1,
             edit_count: 0,
             coalesce_threshold: 32,
         };
-        pt.rebuild_line_index();
+        pt.rebuild_piece_offset_cache();
         Ok(pt)
     }
 
