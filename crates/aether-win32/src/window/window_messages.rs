@@ -321,6 +321,20 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
+        // 编辑器内容区光标闪烁（文件编辑状态）
+        if st.tab_bar.tabs.get(st.tab_bar.active_tab).map(|t| t.is_file()).unwrap_or(false) {
+            st.content.caret_visible = !st.content.caret_visible;
+            let er = st.layout.editor_region().clone();
+            st.dirty_tracker.mark_region(
+                er.x,
+                er.y,
+                er.width,
+                er.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
+            );
+            need_invalidate = true;
+            any_active = true;
+        }
         // 无任何活跃输入时停止定时器，避免空转
         if !any_active {
             let _ = KillTimer(hwnd, CARET_TIMER_ID);

@@ -1790,6 +1790,9 @@ pub(super) unsafe fn lbd_welcome_or_editor(
         st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
         st.clear_selection();
         st.start_selection();
+        // 重置光标闪烁状态并启动定时器
+        st.content.caret_visible = true;
+        let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
         // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘，
         // 点击落光标只需重绘编辑内容与状态栏行列信息
         st.dirty_tracker.mark_region(

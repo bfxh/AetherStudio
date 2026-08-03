@@ -559,7 +559,7 @@ impl EditorState {
                     ((cursor_y + line_height) * self.dpi_scale) as i32,
                 );
             }
-            if cursor_y >= y && cursor_y <= y + height {
+            if cursor_y >= y && cursor_y <= y + height && self.content.caret_visible {
                 // P0-2: 若存在 IME 合成串，渲染合成串文本 + 下划线，光标隐藏
                 if let Some(comp) = self.composition.as_ref() {
                     if !comp.is_empty() {

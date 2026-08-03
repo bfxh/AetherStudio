@@ -48,6 +48,8 @@ pub struct TabContent {
     pub(crate) line_y_offsets: Vec<f32>,
     /// P3.1: 当前内联补全建议
     pub(crate) inline_completion: Option<crate::inline_completion::InlineCompletion>,
+    /// 编辑器光标可见状态（用于光标闪烁）
+    pub caret_visible: bool,
     /// 冰冻态标记：cached_tokens 已被裁剪，需强制重新请求后台高亮
     pub(crate) tokens_trimmed: bool,
     // 语言类型
@@ -79,6 +81,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            caret_visible: true,
             tokens_trimmed: false,
             language: Language::PlainText,
         }
@@ -113,6 +116,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            caret_visible: true,
             tokens_trimmed: false,
             language,
         })
@@ -155,6 +159,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            caret_visible: true,
             tokens_trimmed: false,
             language,
         }
