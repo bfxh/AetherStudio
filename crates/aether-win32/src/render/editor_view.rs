@@ -511,14 +511,12 @@ impl EditorState {
                 let line_h_logical = 14.0;
                 let term_x_logical = term_region.x + 8.0 + prefix_x_logical;
                 let term_y_logical = term_region.y + 24.0 + t_row as f32 * line_h_logical;
-                self.ime.set_composition_window_position(
-                    (term_x_logical * self.dpi_scale) as i32,
-                    (term_y_logical * self.dpi_scale) as i32,
-                );
-                self.ime.set_candidate_window_position(
-                    (term_x_logical * self.dpi_scale) as i32,
-                    ((term_y_logical + line_h_logical) * self.dpi_scale) as i32,
-                );
+                // 转换为屏幕坐标（IME API 需要屏幕坐标）
+                let (comp_x, comp_y) = self.client_to_screen(term_x_logical, term_y_logical);
+                let (cand_x, cand_y) =
+                    self.client_to_screen(term_x_logical, term_y_logical + line_h_logical);
+                self.ime.set_composition_window_position(comp_x, comp_y);
+                self.ime.set_candidate_window_position(cand_x, cand_y);
             } else if self.file_tree_input.is_some() {
                 let sidebar = self.layout.sidebar_region();
                 // 候选窗口跟随树内输入行（几何与渲染共用 file_tree_input_row_geom）
@@ -532,16 +530,21 @@ impl EditorState {
                         .map(|i| i.value.chars().count())
                         .unwrap_or(0);
                     let ft_cursor_x = sidebar.x + text_left_rel + value_chars as f32 * 6.0 * s;
-                    self.ime.set_candidate_window_position(
-                        (ft_cursor_x * self.dpi_scale) as i32,
-                        ((sidebar.y + top_rel + row_h) * self.dpi_scale) as i32,
-                    );
+                    // 转换为屏幕坐标（IME API 需要屏幕坐标）
+                    let (cand_x, cand_y) =
+                        self.client_to_screen(ft_cursor_x, sidebar.y + top_rel + row_h);
+                    self.ime.set_candidate_window_position(cand_x, cand_y);
                 }
             } else if self.ai_panel.input_focused {
                 // AI 面板输入框聚焦时，IME 候选窗口定位到 AI 输入框
+                // 位置计算与 render/ai.rs 中的输入框渲染保持一致
                 let rp = self.layout.right_panel_region();
-                let ai_input_y = rp.y + rp.height - 40.0 + 7.0; // 输入框顶部 + padding
-                let ai_value_x = rp.x + 12.0 + 8.0; // margin + padding
+                let margin = 12.0f32;
+                let input_area_h = 80.0f32;
+                let input_y = rp.y + rp.height - input_area_h; // 输入区域顶部
+                let text_input_y = input_y + 6.0; // 文本输入框顶部（与 ai.rs 一致）
+                let text_input_h = 36.0f32;
+                let ai_value_x = rp.x + margin + 8.0 + 4.0; // margin + input_margin + padding
                 let ai_input_width = self
                     .render_ctx
                     .text_format_cache
@@ -552,23 +555,19 @@ impl EditorState {
                     )
                     .unwrap_or(0.0);
                 let ai_cursor_x = ai_value_x + ai_input_width;
-                self.ime.set_composition_window_position(
-                    (ai_cursor_x * self.dpi_scale) as i32,
-                    (ai_input_y * self.dpi_scale) as i32,
-                );
-                self.ime.set_candidate_window_position(
-                    (ai_cursor_x * self.dpi_scale) as i32,
-                    ((ai_input_y + 24.0) * self.dpi_scale) as i32,
-                );
+                // 转换为屏幕坐标（IME API 需要屏幕坐标）
+                // 合成窗口在文本输入框顶部，候选窗口在文本输入框下方
+                let (comp_x, comp_y) = self.client_to_screen(ai_cursor_x, text_input_y);
+                let (cand_x, cand_y) =
+                    self.client_to_screen(ai_cursor_x, text_input_y + text_input_h);
+                self.ime.set_composition_window_position(comp_x, comp_y);
+                self.ime.set_candidate_window_position(cand_x, cand_y);
             } else {
-                self.ime.set_composition_window_position(
-                    (cursor_x * self.dpi_scale) as i32,
-                    (cursor_y * self.dpi_scale) as i32,
-                );
-                self.ime.set_candidate_window_position(
-                    (cursor_x * self.dpi_scale) as i32,
-                    ((cursor_y + line_height) * self.dpi_scale) as i32,
-                );
+                // 转换为屏幕坐标（IME API 需要屏幕坐标）
+                let (comp_x, comp_y) = self.client_to_screen(cursor_x, cursor_y);
+                let (cand_x, cand_y) = self.client_to_screen(cursor_x, cursor_y + line_height);
+                self.ime.set_composition_window_position(comp_x, comp_y);
+                self.ime.set_candidate_window_position(cand_x, cand_y);
             }
             if cursor_y >= y && cursor_y <= y + height && self.content.caret_visible {
                 // P0-2: 若存在 IME 合成串，渲染合成串文本 + 下划线，光标隐藏

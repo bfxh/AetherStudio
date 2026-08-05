@@ -390,7 +390,11 @@ pub(super) unsafe fn lbd_right_panel(
                 continue;
             }
             let is_user = msg.role == crate::ai_panel::AiRole::User;
-            msg_y += label_h;
+            let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
+            // Tool 消息无角色标签行
+            if !is_tool {
+                msg_y += label_h;
+            }
 
             // 按 ``` 代码围栏拆分
             let mut segments: Vec<(bool, String)> = Vec::new();

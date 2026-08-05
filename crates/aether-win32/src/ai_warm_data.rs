@@ -500,6 +500,7 @@ fn role_to_str(role: &AiRole) -> &'static str {
         AiRole::User => "user",
         AiRole::Assistant => "assistant",
         AiRole::System => "system",
+        AiRole::Tool => "tool",
     }
 }
 
@@ -507,6 +508,7 @@ fn str_to_role(s: &str) -> AiRole {
     match s {
         "user" => AiRole::User,
         "assistant" => AiRole::Assistant,
+        "tool" => AiRole::Tool,
         _ => AiRole::System,
     }
 }

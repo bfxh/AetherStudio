@@ -1157,7 +1157,24 @@ fn language_to_lsp_id(lang: Language) -> &'static str {
     }
 }
 
-impl EditorState {}
+impl EditorState {
+    /// 将客户区逻辑坐标转换为屏幕物理坐标（用于 IME 候选窗口定位）
+    /// 逻辑坐标先乘以 dpi_scale 得到客户区物理坐标，再通过 ClientToScreen 转为屏幕坐标
+    pub(crate) fn client_to_screen(&self, logical_x: f32, logical_y: f32) -> (i32, i32) {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::ClientToScreen;
+        let physical_x = (logical_x * self.dpi_scale) as i32;
+        let physical_y = (logical_y * self.dpi_scale) as i32;
+        let mut pt = POINT {
+            x: physical_x,
+            y: physical_y,
+        };
+        unsafe {
+            let _ = ClientToScreen(self.hwnd, &mut pt);
+        }
+        (pt.x, pt.y)
+    }
+}
 
 /// 已知二进制文件扩展名（黑名单）
 const BINARY_EXTENSIONS: &[&str] = &[
