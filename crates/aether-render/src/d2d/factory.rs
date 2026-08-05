@@ -234,7 +234,17 @@ impl RenderTarget {
                 },
                 geometricMask: ManuallyDrop::new(Some(group_as_geometry)),
                 maskAntialiasMode: windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED,
-                maskTransform: Matrix3x2::default(),
+                // 单位矩阵：保持掩码几何在原始坐标空间。
+                // 注意：Matrix3x2::default() 为全零矩阵（退化变换），会把掩码塌缩为单点，
+                // 导致裁剪帧内所有绘制被丢弃（多矩形脏矩形重绘不生效）。
+                maskTransform: Matrix3x2 {
+                    M11: 1.0,
+                    M12: 0.0,
+                    M21: 0.0,
+                    M22: 1.0,
+                    M31: 0.0,
+                    M32: 0.0,
+                },
                 opacity: 1.0,
                 opacityBrush: ManuallyDrop::new(None),
                 layerOptions: windows::Win32::Graphics::Direct2D::D2D1_LAYER_OPTIONS_NONE,

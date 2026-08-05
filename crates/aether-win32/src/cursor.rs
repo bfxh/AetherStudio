@@ -12,6 +12,10 @@ pub enum CursorType {
     Hand,
     SizeWE,
     SizeNS,
+    /// 西北-东南斜向（\ 方向），用于左下拐角手柄
+    SizeNWSE,
+    /// 东北-西南斜向（/ 方向），用于右下拐角手柄
+    SizeNESW,
 }
 
 impl CursorType {
@@ -24,6 +28,8 @@ impl CursorType {
             CursorType::Hand => IDC_HAND,
             CursorType::SizeWE => IDC_SIZEWE,
             CursorType::SizeNS => IDC_SIZENS,
+            CursorType::SizeNWSE => IDC_SIZENWSE,
+            CursorType::SizeNESW => IDC_SIZENESW,
         }
     }
 }
@@ -41,13 +47,15 @@ mod tests {
     #[test]
     fn test_idc_cursor_mapping() {
         use windows::Win32::UI::WindowsAndMessaging::{
-            IDC_ARROW, IDC_HAND, IDC_IBEAM, IDC_SIZENS, IDC_SIZEWE,
+            IDC_ARROW, IDC_HAND, IDC_IBEAM, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
         };
         assert_eq!(CursorType::Arrow.idc_cursor(), IDC_ARROW);
         assert_eq!(CursorType::IBeam.idc_cursor(), IDC_IBEAM);
         assert_eq!(CursorType::Hand.idc_cursor(), IDC_HAND);
         assert_eq!(CursorType::SizeWE.idc_cursor(), IDC_SIZEWE);
         assert_eq!(CursorType::SizeNS.idc_cursor(), IDC_SIZENS);
+        assert_eq!(CursorType::SizeNWSE.idc_cursor(), IDC_SIZENWSE);
+        assert_eq!(CursorType::SizeNESW.idc_cursor(), IDC_SIZENESW);
     }
 
     #[test]

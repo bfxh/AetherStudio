@@ -172,10 +172,18 @@ pub struct MousePressState {
     pub lpress_index: usize,
     /// 当前鼠标左键是否按下（用于 WM_TIMER 判定）
     pub lbutton_down: bool,
+    /// 鼠标左键按下时的位置（逻辑像素），用于区分单击和拖动
+    pub lbutton_down_pos: Option<(f32, f32)>,
     /// 文件树拖拽：按下时命中的节点索引（None 表示未在文件树按下）
     pub file_tree_drag_node: Option<u32>,
     /// 文件树拖拽：是否已进入拖拽模式（超过阈值）
     pub file_tree_dragging: bool,
+    /// 图片预览拖拽：是否正在拖拽中键
+    pub image_dragging: bool,
+    /// 图片预览拖拽：拖拽起始鼠标位置
+    pub image_drag_start: Option<(f32, f32)>,
+    /// 图片预览拖拽：拖拽起始时的图片偏移
+    pub image_drag_offset: Option<(f32, f32)>,
 }
 
 /// 上一帧快照（脏追踪，从 EditorState 聚类抽取）
@@ -578,12 +586,25 @@ pub struct EditorState {
     pub composition: Option<String>,
     /// 后台语法高亮器（独立线程，避免阻塞 UI 输入）
     pub(crate) bg_highlighter: aether_tree_sitter::BackgroundHighlighter,
+    /// GPU 语法高亮器（可选，D3D11 Compute Shader 加速）
+    pub(crate) gpu_highlighter: Option<aether_render::gpu::lexer::GpuLexer>,
+    /// GPU 高亮配置
+    pub(crate) gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig,
     /// 已发送后台高亮请求对应的 buffer_version（变化时触发新请求）
     pub(crate) hl_request_version: u64,
     /// UI Tooltip 状态（500ms 延迟显示、4px 移动容差的悬停提示）
     pub tooltip_state: crate::tooltip::TooltipState,
     /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
     pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    /// 图片预览位图（设备相关缓存），由当前标签的 image_data 惰性创建；
+    /// 设备丢失/切换标签时清空重建
+    pub(crate) image_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    /// 图片预览缩放比例（1.0 = 100%）
+    pub image_zoom: f32,
+    /// 图片预览缩放后的水平偏移（用于平移查看）
+    pub image_offset_x: f32,
+    /// 图片预览缩放后的垂直偏移
+    pub image_offset_y: f32,
 }
 
 /// Task 8.4: 标签重排核心逻辑（自由函数，可独立测试）。
@@ -839,9 +860,15 @@ impl EditorState {
             file_drag: crate::file_drag_drop::FileDragDropState::default(),
             composition: None,
             bg_highlighter: aether_tree_sitter::BackgroundHighlighter::new(),
+            gpu_highlighter: None,
+            gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig::default(),
             hl_request_version: 0,
             tooltip_state: crate::tooltip::TooltipState::default(),
             logo_bitmap: None,
+            image_bitmap: None,
+            image_zoom: 1.0,
+            image_offset_x: 0.0,
+            image_offset_y: 0.0,
         };
         // 加载 logo 位图（aether-512.png）
         // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载
@@ -867,7 +894,12 @@ impl EditorState {
         if is_main_window {
             if let Some(workspace) = state.app_settings.ui.last_workspace.clone() {
                 if workspace.exists() {
-                    state.open_folder(workspace);
+                    // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+                    if crate::editor::files::check_workspace_trust(state.hwnd, &workspace) {
+                        state.open_folder(workspace);
+                    } else {
+                        state.status_message = "已取消打开不受信任的工作区".to_string();
+                    }
                 }
             }
         }
@@ -2126,7 +2158,7 @@ mod cursor;
 mod editing;
 mod events;
 mod file_tree;
-mod files;
+pub(crate) mod files;
 mod lsp;
 mod remote;
 mod tabs;

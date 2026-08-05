@@ -20,6 +20,27 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{get_and_set_state, invalidate_window, EDITOR_STATE, LP_TIMER_ID};
 
+/// WM_MBUTTONUP：鼠标中键释放事件
+pub(crate) unsafe fn on_m_button_up(
+    _hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            // 结束图片拖拽
+            if st.mouse_press.image_dragging {
+                st.mouse_press.image_dragging = false;
+                st.mouse_press.image_drag_start = None;
+                st.mouse_press.image_drag_offset = None;
+            }
+        }
+    });
+    LRESULT(0)
+}
+
 /// WM_LBUTTONUP
 pub(crate) unsafe fn on_l_button_up(
     hwnd: HWND,
@@ -37,8 +58,12 @@ pub(crate) unsafe fn on_l_button_up(
             // 结束面板拖拽
             st.layout.right_panel_resizing = false;
             st.layout.bottom_panel_resizing = false;
+            // 拐角手柄拖拽结束（右下拐角仅复位；左下拐角含侧边栏，需收起判断）
+            st.layout.corner_right_resizing = false;
+            let corner_left_was = st.layout.corner_left_resizing;
+            st.layout.corner_left_resizing = false;
             // 侧边栏拖拽结束：当前宽度低于阈值且仍可见 → 启动平滑收起动画（而非立即跳变）
-            if st.layout.sidebar_resizing {
+            if st.layout.sidebar_resizing || corner_left_was {
                 st.layout.sidebar_resizing = false;
                 let collapse_threshold = crate::layout::MIN_SIDEBAR_WIDTH * 0.5;
                 if st.layout.sidebar_visible && st.layout.sidebar_width < collapse_threshold {
@@ -178,6 +203,7 @@ pub(crate) unsafe fn on_mouse_wheel(
     let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut client_point);
     // P0-3: Shift + 滚轮 → 横向滚动
     let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
+    let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let mut state = state.borrow_mut();
@@ -185,6 +211,22 @@ pub(crate) unsafe fn on_mouse_wheel(
             let dpi_scale = state.dpi_scale;
             let cursor_x = client_point.x as f32 / dpi_scale;
             let cursor_y = client_point.y as f32 / dpi_scale;
+
+            // 图片预览：Ctrl+滚轮缩放
+            if state.content.language == aether_core::lexer::Language::Image && ctrl {
+                let editor = state.layout.editor_region();
+                if cursor_x >= editor.x
+                    && cursor_x < editor.x + editor.width
+                    && cursor_y >= editor.y
+                    && cursor_y < editor.y + editor.height
+                {
+                    // 缩放因子：每 120 单位滚轮 = 10% 缩放
+                    let zoom_delta = delta / 120.0 * 0.1;
+                    state.image_zoom = (state.image_zoom + zoom_delta).clamp(0.1, 10.0);
+                    invalidate_window(hwnd);
+                    return;
+                }
+            }
 
             // SubTask 7.5: 光标在标签栏区域时 → 横向滚动标签栏
             let show_tab_bar = state.show_tab_bar();

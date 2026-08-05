@@ -225,11 +225,20 @@ pub(crate) fn apply_launch_args(state: &mut EditorState, args: &LaunchArgs) {
 
     for path in &args.paths {
         if path.is_dir() {
-            state.open_folder(path.clone());
+            // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+            if crate::editor::files::check_workspace_trust(state.hwnd, path) {
+                state.open_folder(path.clone());
+            } else {
+                state.status_message = "已取消打开不受信任的工作区".to_string();
+            }
         } else if path.is_file() {
             // 文件：先打开所在文件夹作为工作区，再加载文件到标签页
             if let Some(parent) = path.parent() {
-                state.open_folder(parent.to_path_buf());
+                if crate::editor::files::check_workspace_trust(state.hwnd, parent) {
+                    state.open_folder(parent.to_path_buf());
+                } else {
+                    state.status_message = "已取消打开不受信任的工作区".to_string();
+                }
             }
             state.load_file(path.clone());
             if args.goto.is_some() && loaded_file_for_goto.is_none() {

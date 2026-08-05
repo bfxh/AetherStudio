@@ -83,7 +83,17 @@ impl EditorState {
         // 此前未调用 flush_output 导致 shell 输出无法显示，现在每帧轮询保证实时性。
         if self.terminal_panel.running {
             self.terminal_panel.poll_startup();
-            self.terminal_panel.flush_output();
+            // 拉取到新输出时标脏底部面板区域，确保输出及时触发局部重绘（而非等全窗口）
+            if self.terminal_panel.flush_output() {
+                let bp = self.layout.bottom_panel_region();
+                self.dirty_tracker.mark_region(
+                    bp.x,
+                    bp.y,
+                    bp.width,
+                    bp.height,
+                    crate::dirty_rect::DirtyRegionType::BottomPanel,
+                );
+            }
             // AI Agent 排队命令：终端就绪后自动发送执行
             self.terminal_panel.flush_pending_commands();
         }
@@ -915,6 +925,8 @@ impl EditorState {
                     self.render_ctx.handle_device_lost();
                     // P4-4: 同时清理 IconCache，确保下次绘制时从新 factory 重建几何
                     self.icons.clear();
+                    // 图片预览位图绑定旧设备，随渲染目标一起失效重建
+                    self.image_bitmap = None;
                     // 重建渲染目标并重新预初始化
                     let _ = self.init_render_target();
                     if let Some(rt) = self.render_ctx.target_ref() {

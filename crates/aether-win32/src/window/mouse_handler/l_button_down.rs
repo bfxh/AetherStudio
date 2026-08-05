@@ -36,6 +36,7 @@ pub(crate) unsafe fn on_l_button_down(
         st.mouse_press.lbutton_down = true;
         let mouse_x = raw_x / st.dpi_scale;
         let mouse_y = raw_y / st.dpi_scale;
+        st.mouse_press.lbutton_down_pos = Some((mouse_x, mouse_y));
         let layout = st.layout.clone();
         let activity_region = layout.activity_bar_region();
         let titlebar_region = layout.title_bar_region();

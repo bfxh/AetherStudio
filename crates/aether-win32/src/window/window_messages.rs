@@ -321,6 +321,26 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
+        // 编辑器内容区光标闪烁（文件编辑状态）
+        if st
+            .tab_bar
+            .tabs
+            .get(st.tab_bar.active_tab)
+            .map(|t| t.is_file())
+            .unwrap_or(false)
+        {
+            st.content.caret_visible = !st.content.caret_visible;
+            let er = st.layout.editor_region().clone();
+            st.dirty_tracker.mark_region(
+                er.x,
+                er.y,
+                er.width,
+                er.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
+            );
+            need_invalidate = true;
+            any_active = true;
+        }
         // 无任何活跃输入时停止定时器，避免空转
         if !any_active {
             let _ = KillTimer(hwnd, CARET_TIMER_ID);
@@ -593,12 +613,23 @@ pub(crate) unsafe fn on_dropfiles(
         if let Ok(path_str) = String::from_utf16(&path_buf[..path_len as usize]) {
             let path = PathBuf::from(path_str);
             if path.is_dir() {
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().open_folder(path);
-                        invalidate_window(hwnd);
-                    }
-                });
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().open_folder(path);
+                            invalidate_window(hwnd);
+                        }
+                    });
+                } else {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().status_message =
+                                "已取消打开不受信任的工作区".to_string();
+                            invalidate_window(hwnd);
+                        }
+                    });
+                }
                 break;
             } else {
                 EDITOR_STATE.with(|s| {

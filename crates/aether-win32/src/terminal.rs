@@ -60,6 +60,12 @@ pub struct TerminalPanel {
     agent_scan_from: usize,
     /// 当前 shell 是否为 PowerShell（决定哨兵命令的连接符语法）
     shell_is_powershell: bool,
+    /// 假终端模式：真终端（ConPTY）就绪前先展示模拟提示符，用户输入暂存
+    fake_prompt: bool,
+    /// 假终端当前输入行内容（不含提示符），用于本地即时回显
+    fake_input: String,
+    /// 真终端就绪前暂存的原始输入字节，就绪后一次性映射（发送）给真终端
+    pending_input: Vec<u8>,
 }
 
 /// AI Agent 命令监视：等待终端输出中出现完成哨兵
@@ -107,6 +113,9 @@ impl TerminalPanel {
             agent_counter: 0,
             agent_scan_from: 0,
             shell_is_powershell: false,
+            fake_prompt: false,
+            fake_input: String::new(),
+            pending_input: Vec::new(),
         }
     }
 
@@ -147,6 +156,12 @@ impl TerminalPanel {
     /// 获取终端光标位置 (row, col)，均为 0-indexed。
     /// 用于渲染光标。row 已被 clamp 到 output_lines 范围内。
     pub fn cursor_position(&self) -> (usize, usize) {
+        // 假终端：光标固定在末行末尾（提示符 + 输入内容之后）
+        if self.fake_prompt {
+            let row = self.output_lines.len().saturating_sub(1);
+            let col = self.prompt_text().chars().count() + self.fake_input.chars().count();
+            return (row, col);
+        }
         let (row, col) = self.ansi_parser.cursor_position();
         let clamped_row = row.min(self.output_lines.len().saturating_sub(1));
         (clamped_row, col)
@@ -182,7 +197,9 @@ impl TerminalPanel {
         self.running = true;
         self.size_synced = false; // 每次启动重置，首次 set_size 不触发 resize
 
-        self.push_output(&format!("正在启动终端: {}...", commandline));
+        // 假终端：立即显示模拟提示符（极速感知），真终端后台启动，
+        // 就绪后无感替换并把暂存输入映射过去
+        self.enter_fake_prompt();
 
         thread::spawn(move || {
             match ConPtySession::spawn(&commandline, Some(&cwd), cols, rows) {
@@ -255,8 +272,9 @@ impl TerminalPanel {
                     self.conpty = Some(session);
                     self.output_receiver = Some(output_rx);
                     self.conpty_start_time = Some(std::time::Instant::now());
-                    // 清除"正在启动"提示，ConPTY 会输出 shell 提示符
-                    self.output_lines.clear();
+                    // 假终端保持显示（无感）：此时 shell 仍在加载 PSReadLine，
+                    // 输入会被吞，故保持 fake_prompt 继续暂存；
+                    // 待 flush_pending_commands 确认 shell 就绪（900ms）后再无感替换并映射暂存输入。
                 }
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "poll_startup: 终端启动失败");
@@ -280,7 +298,7 @@ impl TerminalPanel {
         if let Some(ref session) = self.conpty {
             match session.write_input(data) {
                 Ok(()) => {
-                    tracing::info!(bytes = data.len(), data_hex = %format!("{:02x?}", data), "send_bytes: 已发送字节到子进程");
+                    tracing::debug!(bytes = data.len(), data_hex = %format!("{:02x?}", data), "send_bytes: 已发送字节到子进程");
                 }
                 Err(e) => {
                     tracing::error!(error = %e, bytes = data.len(), "send_bytes: write_input 失败");
@@ -386,9 +404,10 @@ impl TerminalPanel {
     }
 
     /// 刷新待执行命令：当 ConPTY 就绪且 shell 提示符已显示后，发送队列中的命令。
+    /// 同时负责假终端 → 真终端的无感替换（映射暂存输入）。
     /// 应在主线程每帧调用（与 poll_startup / flush_output 同级）。
     pub fn flush_pending_commands(&mut self) {
-        if self.pending_commands.is_empty() || self.conpty.is_none() {
+        if self.conpty.is_none() {
             return;
         }
         // 等待 shell 提示符就绪（启动后短暂延迟），避免命令被 shell 初始化吞掉。
@@ -400,6 +419,25 @@ impl TerminalPanel {
         } else {
             return;
         }
+
+        // shell 已就绪：执行假终端 → 真终端的无感替换
+        if self.fake_prompt {
+            // 清空假显示（假提示符 + 本地回显），真终端将输出真实提示符
+            self.output_lines.clear();
+            self.fake_prompt = false;
+            self.fake_input.clear();
+            // 假终端期间丢弃了 shell 首个提示符；若用户无暂存输入，
+            // 补一个空回车让 shell 重新显示提示符，避免替换后终端空白
+            if self.pending_input.is_empty() && self.pending_commands.is_empty() {
+                self.send_bytes(b"\r");
+            }
+        }
+        // 先映射假终端期间暂存的用户输入（保持输入顺序）
+        if !self.pending_input.is_empty() {
+            let pending = std::mem::take(&mut self.pending_input);
+            self.send_bytes(&pending);
+        }
+        // 再发送 AI Agent 待执行命令
         while let Some(cmd) = self.pending_commands.pop_front() {
             self.send_bytes(cmd.as_bytes());
             self.send_bytes(b"\r");
@@ -414,6 +452,12 @@ impl TerminalPanel {
     /// 管道模式下发送 `\r\n`（cmd.exe 管道模式需要 CRLF 行结束符）。
     pub fn send_enter(&mut self) {
         self.scroll_offset = 0;
+        if self.fake_prompt {
+            // 假终端：暂存回车，假显示换行
+            self.pending_input.push(b'\r');
+            self.fake_echo_newline();
+            return;
+        }
         let is_pipe = self.conpty.as_ref().map(|s| s.is_pipe()).unwrap_or(false);
         if is_pipe {
             self.send_bytes(b"\r\n");
@@ -424,16 +468,34 @@ impl TerminalPanel {
 
     /// 发送退格键（DEL = 0x7f，cmd.exe 识别）
     pub fn send_backspace(&mut self) {
+        if self.fake_prompt {
+            self.pending_input.push(0x7f);
+            self.fake_echo_backspace();
+            return;
+        }
         self.send_bytes(b"\x7f");
     }
 
     /// 发送 Tab 键
     pub fn send_tab(&mut self) {
+        if self.fake_prompt {
+            // 假终端不模拟补全，暂存 Tab 并回显为空格占位
+            self.pending_input.push(b'\t');
+            self.fake_input.push('\t');
+            self.refresh_fake_line();
+            return;
+        }
         self.send_bytes(b"\t");
     }
 
     /// 发送 Ctrl+C（中断信号）
     pub fn send_interrupt(&mut self) {
+        if self.fake_prompt {
+            // 假终端：暂存中断，换行给新提示符
+            self.pending_input.push(0x03);
+            self.fake_echo_newline();
+            return;
+        }
         self.send_bytes(b"\x03");
     }
 
@@ -445,21 +507,38 @@ impl TerminalPanel {
             ArrowKey::Right => b"\x1b[C",
             ArrowKey::Left => b"\x1b[D",
         };
+        if self.fake_prompt {
+            // 假终端：暂存方向键序列（历史/光标移动由真终端处理），本地不回显
+            self.pending_input.extend_from_slice(seq);
+            return;
+        }
         self.send_bytes(seq);
     }
 
     /// 发送 Delete 键
     pub fn send_delete(&mut self) {
+        if self.fake_prompt {
+            self.pending_input.extend_from_slice(b"\x1b[3~");
+            return;
+        }
         self.send_bytes(b"\x1b[3~");
     }
 
     /// 发送 Home 键
     pub fn send_home(&mut self) {
+        if self.fake_prompt {
+            self.pending_input.extend_from_slice(b"\x1b[H");
+            return;
+        }
         self.send_bytes(b"\x1b[H");
     }
 
     /// 发送 End 键
     pub fn send_end(&mut self) {
+        if self.fake_prompt {
+            self.pending_input.extend_from_slice(b"\x1b[F");
+            return;
+        }
         self.send_bytes(b"\x1b[F");
     }
 
@@ -467,7 +546,60 @@ impl TerminalPanel {
     pub fn send_char(&mut self, c: char) {
         let mut buf = [0u8; 4];
         let s = c.encode_utf8(&mut buf);
-        self.send_bytes(s.as_bytes());
+        if self.fake_prompt {
+            // 假终端：暂存字节 + 本地即时回显
+            self.pending_input.extend_from_slice(s.as_bytes());
+            self.fake_input.push(c);
+            self.refresh_fake_line();
+        } else {
+            self.send_bytes(s.as_bytes());
+        }
+    }
+
+    // ===== 假终端（真终端就绪前的极速占位 UI）=====
+
+    /// 当前 shell 提示符文本（模拟 PowerShell）
+    fn prompt_text(&self) -> String {
+        format!("PS {}> ", self.cwd)
+    }
+
+    /// 进入假终端模式：清空输出并显示模拟提示符
+    fn enter_fake_prompt(&mut self) {
+        self.fake_prompt = true;
+        self.fake_input.clear();
+        self.pending_input.clear();
+        self.output_lines.clear();
+        let prompt = self.prompt_text();
+        self.output_lines.push_back(prompt);
+        self.scroll_offset = 0;
+    }
+
+    /// 刷新假终端当前输入行（末行 = 提示符 + 输入内容）
+    fn refresh_fake_line(&mut self) {
+        let line = format!("{}{}", self.prompt_text(), self.fake_input);
+        if let Some(last) = self.output_lines.back_mut() {
+            *last = line;
+        } else {
+            self.output_lines.push_back(line);
+        }
+        self.scroll_offset = 0;
+    }
+
+    /// 假终端回车：暂存 \r，假显示换行并给出新提示符
+    fn fake_echo_newline(&mut self) {
+        self.fake_input.clear();
+        let prompt = self.prompt_text();
+        self.output_lines.push_back(prompt);
+        if self.output_lines.len() > self.max_lines {
+            self.output_lines.pop_front();
+        }
+        self.scroll_offset = 0;
+    }
+
+    /// 假终端退格：暂存 \x7f，删除输入行末字符（不删进提示符）
+    fn fake_echo_backspace(&mut self) {
+        self.fake_input.pop();
+        self.refresh_fake_line();
     }
 
     /// 停止终端
@@ -478,6 +610,10 @@ impl TerminalPanel {
         self.startup_receiver = None;
         self.size_synced = false;
         self.conpty_start_time = None;
+        // 清理假终端状态
+        self.fake_prompt = false;
+        self.fake_input.clear();
+        self.pending_input.clear();
     }
 
     /// 检查 ConPTY 子进程是否仍在运行
@@ -497,11 +633,13 @@ impl TerminalPanel {
     ///
     /// 同时检测读取线程是否已退出（通道断开 = 子进程已结束），
     /// 此时清理 ConPTY 并提示用户进程已退出。
-    pub fn flush_output(&mut self) {
+    ///
+    /// 返回 true 表示本帧拉取到了新输出并已写入 output_lines（调用方应标脏终端区域触发重绘）。
+    pub fn flush_output(&mut self) -> bool {
         let has_rx = self.output_receiver.is_some();
         let has_conpty = self.conpty.is_some();
         if !has_rx {
-            tracing::info!(
+            tracing::debug!(
                 has_rx,
                 has_conpty,
                 running = self.running,
@@ -512,7 +650,7 @@ impl TerminalPanel {
         static FLUSH_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let count = FLUSH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if count.is_multiple_of(100) {
-            tracing::info!(
+            tracing::debug!(
                 count,
                 has_rx,
                 has_conpty,
@@ -523,6 +661,7 @@ impl TerminalPanel {
         if let Some(rx) = self.output_receiver.take() {
             let mut total_bytes = 0usize;
             let mut msg_count = 0usize;
+            let mut fed_new = false;
             let mut channel_closed = false;
             // ConPTY 启动后 3 秒内抑制清屏序列（\x1b[2J、\x1b[K），
             // 因为 ConPTY 初始化时会发送清屏+重绘序列，但不包含实际文本内容，
@@ -538,8 +677,13 @@ impl TerminalPanel {
                     Ok(bytes) => {
                         total_bytes += bytes.len();
                         msg_count += 1;
-                        self.ansi_parser
-                            .feed(&bytes, &mut self.output_lines, self.max_lines);
+                        // 假终端期间：真终端启动输出（banner/清屏/首个提示符）无意义，
+                        // 丢弃不显示，避免污染假显示；无感替换后恢复正常 feed。
+                        if !self.fake_prompt {
+                            self.ansi_parser
+                                .feed(&bytes, &mut self.output_lines, self.max_lines);
+                            fed_new = true;
+                        }
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
@@ -549,7 +693,7 @@ impl TerminalPanel {
                 }
             }
             if msg_count > 0 {
-                tracing::info!(
+                tracing::debug!(
                     msgs = msg_count,
                     bytes = total_bytes,
                     lines = self.output_lines.len(),
@@ -557,7 +701,7 @@ impl TerminalPanel {
                 );
                 // 记录前 5 行内容用于诊断 ANSI 解析结果
                 for (i, line) in self.output_lines.iter().rev().take(5).enumerate() {
-                    tracing::info!(idx = i, content = %line, "终端输出行");
+                    tracing::debug!(idx = i, content = %line, "终端输出行");
                 }
             }
             if channel_closed {
@@ -572,12 +716,15 @@ impl TerminalPanel {
                 self.push_output(&format!("\n[进程已退出，退出码: 0x{:08X}]", exit_code));
                 self.conpty = None;
                 self.running = false;
+                return true; // 退出提示写入了 output_lines，需重绘
             } else {
                 self.output_receiver = Some(rx);
                 // 仅当用户未手动上滚（贴底状态）时，新输出到达后才自动保持底部；
                 // 用户正在浏览历史（scroll_offset > 0）时不强制归零，避免滚轮失效。
             }
+            return fed_new;
         }
+        false
     }
 
     /// 添加输出行（直接追加，不经过 ANSI 解析）

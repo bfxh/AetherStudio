@@ -57,7 +57,12 @@ impl EditorState {
             Ok(()) => {
                 self.status_message = format!("项目已创建: {}", project_path.display());
                 // 打开项目文件夹作为工作区
-                self.open_folder(project_path);
+                // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+                if crate::editor::files::check_workspace_trust(self.hwnd, &project_path) {
+                    self.open_folder(project_path);
+                } else {
+                    self.status_message = "已取消打开不受信任的工作区".to_string();
+                }
             }
             Err(e) => {
                 let msg = format!("创建项目失败: {}", e);

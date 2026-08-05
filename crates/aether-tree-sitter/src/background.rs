@@ -44,8 +44,8 @@ pub struct HighlightResult {
     pub token_lines: Vec<Vec<LexemeSpan>>,
 }
 
-/// 缓存容量：最多缓存 4 个文档（10 万行文档 tokens 约数 MB，LRU 淘汰控制内存）
-const MAX_CACHED_DOCS: usize = 4;
+/// 缓存容量：最多缓存 8 个文档（10 万行文档 tokens 约数 MB，LRU 淘汰控制内存）
+const MAX_CACHED_DOCS: usize = 8;
 
 /// 后台语法高亮器
 ///

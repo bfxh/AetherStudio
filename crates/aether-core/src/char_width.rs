@@ -14,8 +14,14 @@
 /// - 0：组合标记、控制字符、格式控制符（零宽度）
 /// - 1：窄字符（拉丁、希腊、西里尔等）
 /// - 2：宽字符（CJK、全角、Emoji）
+/// - 4：Tab 字符（制表符占 4 格）
 pub fn char_width(c: char) -> usize {
     let cp = c as u32;
+
+    // Tab 字符特殊处理：占 4 格
+    if cp == 0x09 {
+        return 4;
+    }
 
     // ===== 零宽度字符 =====
     if is_zero_width(cp) {
