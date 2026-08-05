@@ -228,7 +228,12 @@ impl EditorState {
             }
             crate::menu_bar::CommandId::FileOpenFolder => {
                 if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    self.open_folder(path);
+                    // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+                    if crate::editor::files::check_workspace_trust(self.hwnd, &path) {
+                        self.open_folder(path);
+                    } else {
+                        self.status_message = "已取消打开不受信任的工作区".to_string();
+                    }
                 }
             }
             crate::menu_bar::CommandId::FileCloseWorkspace => {
@@ -348,20 +353,45 @@ impl EditorState {
         }
     }
     /// 增量重建缓存：只重建可见行范围内的缓存，大幅减少大文件的词法分析开销
+    ///
+    /// 视口优先策略：
+    /// 1. 优先高亮可见区域（visible_start..visible_end），让用户立即看到内容
+    /// 2. 然后高亮视口扩展区域（±padding），为滚动做准备
+    /// 3. 后台处理不可见区域（通过 tree-sitter 异步处理）
     pub(crate) fn rebuild_cache(&mut self, visible_start: usize, visible_end: usize) {
+        // === 0延迟切换：刚切换过来的标签页首帧跳过所有重建 ===
+        // 直接渲染已有缓存，下一帧再恢复正常逻辑
+        // 但如果缓存中没有高亮数据（首次打开或缓存被清空），仍然需要高亮
+        if self.content.just_switched {
+            self.content.just_switched = false;
+            // 只更新签名，让后续帧能正确命中
+            let total_lines = self.content.buffer.len_lines().max(1);
+            self.content.last_cache_signature = (
+                self.content.buffer_version,
+                visible_start,
+                visible_end,
+                total_lines,
+            );
+            // 检查可见区域是否已有高亮缓存
+            let has_highlight = (visible_start..visible_end.min(total_lines))
+                .all(|i| {
+                    i < self.content.cached_tokens.len()
+                        && !self.content.cached_tokens[i].is_empty()
+                });
+            if has_highlight {
+                return; // 缓存完整，0延迟渲染
+            }
+            // 缓存不完整：继续执行下方的高亮逻辑
+        }
+
         let total_lines = self.content.buffer.len_lines().max(1);
 
         // tree-sitter 优先高亮：返回支持的语言的字符串标识
-        // 不支持的语言返回 None，由调用方 fallback 到手写 lexer
         let ts_lang = language_to_ts_str(self.content.language);
 
         // === P0-3: 后台语法高亮 — 始终 poll，即使在空闲帧 ===
-        // 必须在签名检查之前 poll，否则空闲帧（签名匹配）会 early return，
-        // 导致后台高亮结果永远无法被消费，tokens 停留在空/旧状态。
         if ts_lang.is_some() && !self.content.is_large_file {
             if let Some(mut result) = self.bg_highlighter.poll_result() {
-                // 结果归属校验：快速切换文件后，过期结果必须丢弃，
-                // 避免把旧文件的高亮 token 填进当前文件（错误着色）
                 let current_doc = self
                     .content
                     .file_path
@@ -371,7 +401,6 @@ impl EditorState {
                 if result.doc_id != current_doc || result.version != self.content.buffer_version {
                     drop(result);
                 } else {
-                    // P1-C: 后台结果整体 move 接管，避免逐行 clone 全文档 token
                     let token_lines = std::mem::take(&mut result.token_lines);
                     if self.content.cached_tokens.len() < token_lines.len() {
                         self.content
@@ -383,8 +412,6 @@ impl EditorState {
                             self.content.cached_tokens[i] = tokens;
                         }
                     }
-                    // 后台高亮结果刚到达：标记编辑器区域脏，使本帧立即以着色重绘，
-                    // 避免文件打开后停留在无高亮的纯文本状态直到下一次无关重绘。
                     let er = self.layout.editor_region();
                     self.dirty_tracker.mark_region(
                         er.x,
@@ -397,15 +424,14 @@ impl EditorState {
             }
         }
 
-        // REQ-P2-01: 变化检测 — 如果 buffer_version、可见范围、总行数均未变化，跳过整个重建
-        // 空闲帧（无编辑、无滚动）不会产生任何缓存重建开销
+        // REQ-P2-01: 变化检测
         let signature = (
             self.content.buffer_version,
             visible_start,
             visible_end,
             total_lines,
         );
-        // P0-A: 窗口化后附加校验窗口长度，防止首帧空窗口被签名误判为已建
+        // P0-A: 窗口化后附加校验窗口长度
         let cache_start = visible_start.saturating_sub(2);
         let cache_end = (visible_end + 2).min(total_lines).max(cache_start);
         let window_len = cache_end - cache_start;
@@ -418,81 +444,230 @@ impl EditorState {
         self.content.last_cache_signature = signature;
 
         // P2.3: 大文件检测与行偏移缓存
-        self.update_large_file_flag();
+        // 优化：只在必要时更新大文件标记（行数或字节数变化时）
+        let line_count = self.content.buffer.len_lines();
+        let byte_count = self.content.buffer.len_bytes();
+        let new_is_large = line_count > Self::LARGE_FILE_LINE_THRESHOLD
+            || byte_count > Self::LARGE_FILE_BYTE_THRESHOLD;
+        if self.content.is_large_file != new_is_large {
+            self.content.is_large_file = new_is_large;
+        }
         self.rebuild_line_y_offsets();
 
-        // P0-A: 平移行文本缓存窗口（重叠行保留，新行待重建）
+        // P0-A: 平移行文本缓存窗口
         self.content.slide_cache_window(cache_start, window_len);
 
-        // tokens 仍为全文件索引（后台高亮整体接管），行数变化时调整
+        // tokens 仍为全文件索引，行数变化时调整
         if self.content.cached_tokens.len() != total_lines {
             self.content
                 .cached_tokens
                 .resize_with(total_lines, Vec::new);
         }
 
-        // P2.3: 大文件模式下跳过语法高亮，只缓存行文本
-        // 延迟创建 fallback lexer：仅在 tree-sitter 不支持且至少一行需要重建时才创建
+        // P2.3: 大文件模式下跳过语法高亮
         let mut lexer: Option<Box<dyn aether_core::lexer::Lexer>> = None;
 
-        // === P0-3: 后台语法高亮 — 发送请求 ===
-        // poll 逻辑已移至签名检查之前，确保空闲帧也能消费后台结果。
-        // 此处仅在 buffer_version 变化时发送新请求。
-        if let Some(lang) = ts_lang {
-            // 冰冻态唤醒后 tokens_trimmed 置位：即使 buffer_version 未变也强制重新请求，
-            // 否则被裁剪的高亮 token 永远不会重建（后台高亮仅在版本变化时请求）
-            if !self.content.is_large_file
-                && (self.content.buffer_version != self.hl_request_version
-                    || self.content.tokens_trimmed)
-                && !self.bg_highlighter.has_pending()
+        // === GPU 高亮优先尝试 ===
+        // 优化：只在文件内容变化时运行 GPU 词法分析，切换标签页时复用缓存
+        let mut gpu_highlighted = false;
+        if let Some(ref mut gpu_lexer) = self.gpu_highlighter {
+            if self.gpu_highlight_config.enabled
+                && !self.content.is_large_file
+                && self.content.buffer.len_bytes() >= self.gpu_highlight_config.min_file_size
             {
-                // P1-C: 传递轻量快照（Arc pieces），全文物化移到后台线程，
-                // UI 线程不再每次编辑都做 O(文件) 的 get_all_text 拷贝
-                let snapshot = self.content.buffer.create_snapshot();
-                let doc_id = self
+                let vp_cache = self
                     .content
-                    .file_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "untitled".to_string());
-                self.bg_highlighter
-                    .request(&doc_id, lang, self.content.buffer_version, snapshot);
-                self.hl_request_version = self.content.buffer_version;
-                self.content.tokens_trimmed = false;
+                    .viewport_highlight_cache
+                    .get_or_insert_with(aether_render::gpu::viewport::ViewportHighlightCache::new);
+
+                // 检查是否需要重新运行 GPU 分析：
+                // 1. 视口范围变化 2. buffer_version 变化（内容编辑）
+                let vp_changed = vp_cache.window_start() != cache_start
+                    || vp_cache.window_len() != window_len;
+                let content_changed = vp_cache.buffer_version() != self.content.buffer_version;
+                let need_gpu_rebuild = vp_changed || content_changed || vp_cache.is_empty();
+
+                if need_gpu_rebuild {
+                    vp_cache.resize_window(cache_start, window_len, self.content.buffer_version);
+
+                    let current_lines: Vec<String> = (cache_start..cache_end)
+                        .map(|i| self.content.buffer.get_line(i).unwrap_or_default())
+                        .collect();
+                    vp_cache.update_with_edit_distance(
+                        &current_lines,
+                        self.content.buffer_version,
+                        self.gpu_highlight_config.edit_distance_threshold,
+                    );
+
+                    let dirty_lines = vp_cache.dirty_line_indices();
+
+                    if !dirty_lines.is_empty() {
+                        let text = self.content.buffer.get_all_text();
+                        if let Ok(tokens) = gpu_lexer.lex(text.as_bytes()) {
+                            if !tokens.is_empty() {
+                                let gpu_spans =
+                                    aether_render::gpu::render::gpu_tokens_to_lexeme_spans(&tokens, None);
+                                gpu_highlighted = true;
+
+                                for line_idx in cache_start..cache_end {
+                                    let line_start = self
+                                        .content
+                                        .buffer
+                                        .line_byte_range(line_idx)
+                                        .map(|(s, _)| s as u32)
+                                        .unwrap_or(0);
+                                    let line_end = self
+                                        .content
+                                        .buffer
+                                        .line_byte_range(line_idx)
+                                        .map(|(_, e)| e as u32)
+                                        .unwrap_or(text.len() as u32);
+
+                                    let line_tokens: Vec<aether_core::lexer::LexemeSpan> = gpu_spans
+                                        .iter()
+                                        .filter(|span| {
+                                            span.start >= line_start && span.start < line_end
+                                        })
+                                        .cloned()
+                                        .collect();
+
+                                    vp_cache.set_line_tokens(
+                                        line_idx,
+                                        line_tokens,
+                                        self.content.buffer_version,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        gpu_highlighted = true;
+                    }
+                } else {
+                    // 视口和内容均未变化：直接复用缓存
+                    gpu_highlighted = true;
+                }
             }
         }
 
-        for i in cache_start..cache_end {
-            let slot = i - cache_start;
-            if self.content.line_cache_versions[slot] != self.content.buffer_version {
-                let line = self.content.buffer.get_line(i).unwrap_or_default();
-
-                if self.content.is_large_file {
-                    // 大文件：跳过语法高亮
-                    self.content.cached_lines[slot] = line;
-                    self.content.cached_tokens[i] = Vec::new();
-                    self.content.line_cache_versions[slot] = self.content.buffer_version;
-                } else if ts_lang.is_some() {
-                    // tree-sitter 语言：只更新文本，tokens 由后台线程异步更新
-                    // 保留上一版本的 tokens（stale but usable），实现零输入延迟
-                    self.content.cached_lines[slot] = line;
-                    self.content.line_cache_versions[slot] = self.content.buffer_version;
-                } else {
-                    // fallback：手写 lexer（Markdown/Html/Css/PlainText/Image 等）
-                    if lexer.is_none() {
-                        lexer = Some(self.content.language.create_lexer());
+        // 将 ViewportHighlightCache 中的 token 同步到 cached_tokens
+        if gpu_highlighted {
+            if let Some(ref vp_cache) = self.content.viewport_highlight_cache {
+                for line_idx in cache_start..cache_end {
+                    if let Some(tokens) = vp_cache.get_line_tokens(line_idx) {
+                        if line_idx < self.content.cached_tokens.len() {
+                            self.content.cached_tokens[line_idx] = tokens.to_vec();
+                        }
                     }
-                    // C-03: lexer 创建可能返回 None（不支持的语言），unwrap 会 panic 并穿越 WndProc
-                    let tokens = if let Some(lex) = lexer.as_ref() {
-                        lex.lex_full(&line)
-                    } else {
-                        Vec::new()
-                    };
-                    self.content.cached_lines[slot] = line;
-                    self.content.cached_tokens[i] = tokens;
-                    self.content.line_cache_versions[slot] = self.content.buffer_version;
                 }
             }
+        }
+
+        // === P0-3: 后台语法高亮 — 发送请求 ===
+        let mut use_sync_lexer = false;
+        if !gpu_highlighted {
+            if let Some(lang) = ts_lang {
+                if !self.content.is_large_file
+                    && (self.content.buffer_version != self.hl_request_version
+                        || self.content.tokens_trimmed)
+                    && !self.bg_highlighter.has_pending()
+                {
+                    let snapshot = self.content.buffer.create_snapshot();
+                    let doc_id = self
+                        .content
+                        .file_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "untitled".to_string());
+                    self.bg_highlighter
+                        .request(&doc_id, lang, self.content.buffer_version, snapshot);
+                    self.hl_request_version = self.content.buffer_version;
+                    self.content.tokens_trimmed = false;
+                }
+                // 小文件：同步使用 CPU lexer 提供即时高亮
+                if self.content.buffer.len_bytes() < self.gpu_highlight_config.min_file_size {
+                    use_sync_lexer = true;
+                }
+            }
+        }
+
+        // === 视口优先高亮策略 ===
+        // 1. 首先处理可见区域（用户当前看到的内容）
+        // 2. 然后处理扩展区域（视口上下 padding）
+        // 3. 对于大文件，只处理可见区域，跳过不可见区域
+
+        // 计算可见区域和扩展区域
+        let viewport_start = visible_start;
+        let viewport_end = visible_end.min(total_lines);
+        let extended_start = cache_start;
+        let extended_end = cache_end;
+
+        // 第一遍：优先处理可见区域
+        for i in viewport_start..viewport_end {
+            if i >= cache_start && i < cache_end {
+                let slot = i - cache_start;
+                if self.content.line_cache_versions[slot] != self.content.buffer_version {
+                    self.highlight_line(i, slot, gpu_highlighted, use_sync_lexer, ts_lang, &mut lexer);
+                }
+            }
+        }
+
+        // 第二遍：处理扩展区域（不可见但接近视口）
+        for i in extended_start..extended_end {
+            if i < viewport_start || i >= viewport_end {
+                let slot = i - cache_start;
+                if self.content.line_cache_versions[slot] != self.content.buffer_version {
+                    self.highlight_line(i, slot, gpu_highlighted, use_sync_lexer, ts_lang, &mut lexer);
+                }
+            }
+        }
+    }
+
+    /// 高亮单行（提取为辅助方法）
+    fn highlight_line(
+        &mut self,
+        line_idx: usize,
+        slot: usize,
+        gpu_highlighted: bool,
+        use_sync_lexer: bool,
+        ts_lang: Option<&str>,
+        lexer: &mut Option<Box<dyn aether_core::lexer::Lexer>>,
+    ) {
+        let line = self.content.buffer.get_line(line_idx).unwrap_or_default();
+
+        if self.content.is_large_file {
+            self.content.cached_lines[slot] = line;
+            self.content.cached_tokens[line_idx] = Vec::new();
+            self.content.line_cache_versions[slot] = self.content.buffer_version;
+        } else if gpu_highlighted {
+            self.content.cached_lines[slot] = line;
+            self.content.line_cache_versions[slot] = self.content.buffer_version;
+        } else if use_sync_lexer {
+            if lexer.is_none() {
+                *lexer = Some(self.content.language.create_lexer());
+            }
+            let tokens = if let Some(lex) = lexer.as_ref() {
+                lex.lex_full(&line)
+            } else {
+                Vec::new()
+            };
+            self.content.cached_lines[slot] = line;
+            self.content.cached_tokens[line_idx] = tokens;
+            self.content.line_cache_versions[slot] = self.content.buffer_version;
+        } else if ts_lang.is_some() {
+            self.content.cached_lines[slot] = line;
+            self.content.line_cache_versions[slot] = self.content.buffer_version;
+        } else {
+            if lexer.is_none() {
+                *lexer = Some(self.content.language.create_lexer());
+            }
+            let tokens = if let Some(lex) = lexer.as_ref() {
+                lex.lex_full(&line)
+            } else {
+                Vec::new()
+            };
+            self.content.cached_lines[slot] = line;
+            self.content.cached_tokens[line_idx] = tokens;
+            self.content.line_cache_versions[slot] = self.content.buffer_version;
         }
     }
 }

@@ -135,6 +135,20 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         _ => false,
     };
     if handled {
+        // 标脏底部面板区域：终端按键回显只需局部重绘终端，避免全窗口重绘导致卡顿
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                let mut st = state.borrow_mut();
+                let bp = st.layout.bottom_panel_region();
+                st.dirty_tracker.mark_region(
+                    bp.x,
+                    bp.y,
+                    bp.width,
+                    bp.height,
+                    crate::dirty_rect::DirtyRegionType::BottomPanel,
+                );
+            }
+        });
         invalidate_window(hwnd);
     }
     handled

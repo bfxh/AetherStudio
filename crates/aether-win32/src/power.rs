@@ -125,6 +125,7 @@ impl EditorState {
         self.render_ctx.release_for_suspend();
         self.icons.clear();
         self.logo_bitmap = None;
+        self.image_bitmap = None;
 
         // 6. 收缩 SQLite 页缓存
         if let Some(warm) = self.ai_panel.warm_data_store.as_ref() {

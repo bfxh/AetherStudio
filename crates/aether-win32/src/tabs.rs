@@ -46,6 +46,8 @@ pub struct TabContent {
     pub(crate) is_large_file: bool,
     /// P2.3: 行 Y 偏移前缀和缓存
     pub(crate) line_y_offsets: Vec<f32>,
+    /// P2.3: 缓存 line_y_offsets 对应的行数，避免每帧重建
+    pub(crate) line_y_offsets_cached_lines: usize,
     /// P3.1: 当前内联补全建议
     pub(crate) inline_completion: Option<crate::inline_completion::InlineCompletion>,
     /// 编辑器光标可见状态（用于光标闪烁）
@@ -54,6 +56,12 @@ pub struct TabContent {
     pub(crate) tokens_trimmed: bool,
     // 语言类型
     pub(crate) language: Language,
+    /// GPU 视口高亮缓存（增量更新，仅缓存可见行）
+    pub(crate) viewport_highlight_cache: Option<aether_render::gpu::viewport::ViewportHighlightCache>,
+    /// 0延迟切换：标记刚切换过来的标签页，跳过首帧 rebuild_cache
+    pub(crate) just_switched: bool,
+    /// 图片预览：解码后的图像数据（仅 language == Image 时有值），随标签 swap 恢复
+    pub image_data: Option<crate::bitmap_loader::DecodedImage>,
 }
 
 impl TabContent {
@@ -80,10 +88,14 @@ impl TabContent {
             last_cache_signature: (0, 0, 0, 0),
             is_large_file: false,
             line_y_offsets: Vec::new(),
+            line_y_offsets_cached_lines: 0,
             inline_completion: None,
             caret_visible: true,
             tokens_trimmed: false,
             language: Language::PlainText,
+            viewport_highlight_cache: None,
+            just_switched: false,
+            image_data: None,
         }
     }
 
@@ -115,10 +127,14 @@ impl TabContent {
             last_cache_signature: (0, 0, 0, 0),
             is_large_file: false,
             line_y_offsets: Vec::new(),
+            line_y_offsets_cached_lines: 0,
             inline_completion: None,
             caret_visible: true,
             tokens_trimmed: false,
             language,
+            viewport_highlight_cache: None,
+            just_switched: false,
+            image_data: None,
         })
     }
 
@@ -158,10 +174,14 @@ impl TabContent {
             last_cache_signature: (0, 0, 0, 0),
             is_large_file: false,
             line_y_offsets: Vec::new(),
+            line_y_offsets_cached_lines: 0,
             inline_completion: None,
             caret_visible: true,
             tokens_trimmed: false,
             language,
+            viewport_highlight_cache: None,
+            just_switched: false,
+            image_data: None,
         }
     }
 
@@ -174,6 +194,7 @@ impl TabContent {
         self.cached_tokens = Vec::new();
         self.line_cache_versions = Vec::new();
         self.line_y_offsets = Vec::new();
+        self.line_y_offsets_cached_lines = 0;
         self.last_cache_signature = (0, 0, 0, 0);
         self.tokens_trimmed = true;
     }

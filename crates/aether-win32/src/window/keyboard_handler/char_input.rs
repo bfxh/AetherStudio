@@ -13,7 +13,7 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
     // 防止 Alt+Tab / 任务栏切换焦点后键盘输入路由到错误窗口的 EditorState
     get_and_set_state(hwnd);
     let ch = (wparam.0 & 0xFFFF) as u16;
-    tracing::info!(ch_code = ch, "on_char: 收到 WM_CHAR");
+    tracing::debug!(ch_code = ch, "on_char: 收到 WM_CHAR");
 
     // P2-9: 处理 UTF-16 代理对以支持 BMP 外字符（emoji、CJK 扩展 B 等）
     // WM_CHAR 对 BMP 外字符发送两条消息：先高代理（0xD800-0xDBFF），后低代理（0xDC00-0xDFFF）
@@ -365,11 +365,22 @@ unsafe fn oc_terminal(hwnd: HWND, c: char) -> Option<LRESULT> {
             .map(|state| state.borrow().terminal_panel.focused)
             .unwrap_or(false)
     });
-    tracing::info!(active, char = %c, "oc_terminal: 检查终端焦点");
+    tracing::debug!(active, char = %c, "oc_terminal: 检查终端焦点");
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().terminal_panel.send_char(c);
+                let mut st = state.borrow_mut();
+                st.terminal_panel.send_char(c);
+                // 标脏底部面板区域：输入回显只需局部重绘终端，避免全窗口重绘导致卡顿
+                let bp = st.layout.bottom_panel_region();
+                st.dirty_tracker.mark_region(
+                    bp.x,
+                    bp.y,
+                    bp.width,
+                    bp.height,
+                    crate::dirty_rect::DirtyRegionType::BottomPanel,
+                );
+                drop(st);
                 invalidate_window(hwnd);
             }
         });

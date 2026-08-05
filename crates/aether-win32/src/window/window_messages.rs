@@ -607,12 +607,23 @@ pub(crate) unsafe fn on_dropfiles(
         if let Ok(path_str) = String::from_utf16(&path_buf[..path_len as usize]) {
             let path = PathBuf::from(path_str);
             if path.is_dir() {
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().open_folder(path);
-                        invalidate_window(hwnd);
-                    }
-                });
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().open_folder(path);
+                            invalidate_window(hwnd);
+                        }
+                    });
+                } else {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().status_message =
+                                "已取消打开不受信任的工作区".to_string();
+                            invalidate_window(hwnd);
+                        }
+                    });
+                }
                 break;
             } else {
                 EDITOR_STATE.with(|s| {

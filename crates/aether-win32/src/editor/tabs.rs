@@ -103,7 +103,58 @@ impl EditorState {
             self.tab_bar.active_tab = index;
             self.swap_tab_content(self.tab_bar.active_tab);
             self.is_selecting = false;
-            self.sync_file_tree_selection();
+            
+            // 无感切换优化：预先计算新标签页的可见范围并更新缓存签名，
+            // 避免切换后第一帧因签名不匹配而强制重建缓存。
+            // 这样切换回之前打开的标签页时，如果滚动位置没变，缓存立即命中。
+            if self.active_tab_is_file() {
+                let line_height = self.text_renderer.line_height();
+                let editor_region = self.layout.editor_content_region(self.show_tab_bar());
+                let visible_start = (self.content.scroll_y / line_height) as usize;
+                let visible_lines = (editor_region.height / line_height) as usize + 2;
+                let total_lines = self.content.buffer.len_lines().max(1);
+                let visible_end = (visible_start + visible_lines).min(total_lines);
+                let cache_start = visible_start.saturating_sub(2);
+                let cache_end = (visible_end + 2).min(total_lines).max(cache_start);
+                let window_len = cache_end - cache_start;
+                // 预更新签名，使下一帧 rebuild_cache 能立即命中
+                self.content.last_cache_signature = (
+                    self.content.buffer_version,
+                    visible_start,
+                    visible_end,
+                    total_lines,
+                );
+                // 确保 cached_tokens 长度与当前文件匹配
+                if self.content.cached_tokens.len() != total_lines {
+                    self.content.cached_tokens.resize_with(total_lines, Vec::new);
+                }
+                // 如果行文本缓存窗口不匹配，需要重建（但保留已有缓存数据）
+                if self.content.cache_window_start != cache_start
+                    || self.content.cached_lines.len() != window_len
+                {
+                    // 使用 slide_cache_window 保留重叠部分
+                    self.content.slide_cache_window(cache_start, window_len);
+                }
+            }
+            
+            // 异步延迟同步文件树选择，避免阻塞切换
+            let need_sync = self.active_tab_is_file() && self.content.file_path.is_some();
+            if need_sync {
+                // 立即执行（文件树遍历通常很快），但如果项目极大可改为异步
+                self.sync_file_tree_selection();
+            }
+            
+            // 0延迟切换：标记刚切换过来的标签页
+            // 这样 rebuild_cache 首帧会跳过所有工作，直接渲染已有缓存
+            self.content.just_switched = true;
+
+            // 图片预览位图绑定旧标签的图像，切换后需按新标签的 image_data 重建
+            self.image_bitmap = None;
+            // 重置图片缩放状态
+            self.image_zoom = 1.0;
+            self.image_offset_x = 0.0;
+            self.image_offset_y = 0.0;
+            
             let title = self.tab_bar.tabs[self.tab_bar.active_tab].title();
             self.status_message = format!("切换到: {}", title);
             self.emit_event(crate::events::EditorEvent::TabChanged);

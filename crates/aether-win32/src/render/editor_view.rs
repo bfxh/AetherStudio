@@ -124,6 +124,17 @@ impl EditorState {
             };
             target.FillRectangle(&sep_rect, &sep_brush);
 
+            // 编辑区整体裁剪：滚动时首行 line_y = y - (scroll_y % line_height) 会
+            // 部分位于编辑区顶部之上，若无垂直裁剪会覆盖标签栏（编辑器晚于标签栏渲染）。
+            // 此处将后续所有行内容/光标/补全限制在编辑区矩形内。
+            let editor_clip = D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            };
+            target.PushAxisAlignedClip(&editor_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+
             let (start_line, end_line) = self.visible_line_range();
 
             for line_idx in start_line..end_line {
@@ -613,6 +624,8 @@ impl EditorState {
                     target.FillRectangle(&cursor_rect, &cursor_brush);
                 }
             }
+            // 配对弹出编辑区整体裁剪
+            target.PopAxisAlignedClip();
         }
     }
 

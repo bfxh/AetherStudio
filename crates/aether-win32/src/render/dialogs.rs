@@ -409,92 +409,251 @@ impl EditorState {
             };
             target.FillRectangle(&bg_rect, &bg_brush);
 
-            let title_format = self
-                .render_ctx
-                .text_format_cache
-                .get_center_format(20.0, DWRITE_FONT_WEIGHT_BOLD.0 as u32)
-                .unwrap();
-            let info_format = self
-                .render_ctx
-                .text_format_cache
-                .get_center_format(14.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
-                .unwrap();
-
-            let title_color = color_f(0.83, 0.83, 0.83, 1.0);
-            let title_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &title_color)
-                .unwrap();
-            let info_color = color_f(0.5, 0.5, 0.5, 1.0);
-            let info_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &info_color)
-                .unwrap();
-            let icon_color = color_f(0.3, 0.7, 1.0, 1.0);
-            let icon_brush = self
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &icon_color)
-                .unwrap();
-
-            let center_y = y + height / 2.0;
-
-            // 图片图标
-            let icon_text: Vec<u16> = "🖼️".encode_utf16().chain(Some(0)).collect();
-            let icon_rect = D2D_RECT_F {
-                left: x,
-                top: center_y - 60.0,
-                right: x + width,
-                bottom: center_y - 20.0,
-            };
-            target.DrawText(
-                &icon_text,
-                &title_format,
-                &icon_rect,
-                &icon_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-
-            // 标题
-            let title = "图片预览";
-            let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-            let title_rect = D2D_RECT_F {
-                left: x,
-                top: center_y - 20.0,
-                right: x + width,
-                bottom: center_y + 10.0,
-            };
-            target.DrawText(
-                &title_wide,
-                &title_format,
-                &title_rect,
-                &title_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-
-            // 文件路径
-            if let Some(path) = &self.content.file_path {
-                let path_text = format!("{}", path.display());
-                let path_wide: Vec<u16> = path_text.encode_utf16().chain(Some(0)).collect();
-                let path_rect = D2D_RECT_F {
-                    left: x + 20.0,
-                    top: center_y + 20.0,
-                    right: x + width - 20.0,
-                    bottom: center_y + 50.0,
-                };
-                target.DrawText(
-                    &path_wide,
-                    &info_format,
-                    &path_rect,
-                    &info_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
+            // 有解码图像：绘制实际位图 + 顶部信息栏
+            if self.content.image_data.is_some() {
+                self.render_image_bitmap(target, x, y, width, height);
+                return;
             }
+
+            // 无解码图像（不支持的格式 / 解码失败）：占位提示
+            self.render_image_placeholder(target, x, y, width, height);
+        }
+    }
+
+    /// 绘制图片位图（居中、保持宽高比缩放）+ 顶部信息栏
+    fn render_image_bitmap(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) {
+        unsafe {
+        const INFO_BAR_H: f32 = 40.0;
+        const MARGIN: f32 = 20.0;
+
+        // 惰性创建位图缓存（设备相关）
+        if self.image_bitmap.is_none() {
+            if let Some(img) = &self.content.image_data {
+                match crate::bitmap_loader::create_bitmap_from_rgba(
+                    target,
+                    img.width,
+                    img.height,
+                    &img.rgba,
+                ) {
+                    Ok(bmp) => self.image_bitmap = Some(bmp),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "创建图片预览位图失败");
+                    }
+                }
+            }
+        }
+
+        // 顶部信息栏：文件名 + 尺寸/格式（左对齐，垂直居中）
+        let (img_w, img_h, fmt) = self
+            .content
+            .image_data
+            .as_ref()
+            .map(|i| (i.width, i.height, i.format_name))
+            .unwrap_or((0, 0, "?"));
+        let file_name = self
+            .content
+            .file_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "图片".to_string());
+        let zoom_percent = (self.image_zoom * 100.0).round() as i32;
+        let info_text = format!("{}  |  {} x {}  |  {}  |  {}%", file_name, img_w, img_h, fmt, zoom_percent);
+        let info_format = self
+            .render_ctx
+            .text_format_cache
+            .get_format(
+                13.0,
+                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+            )
+            .unwrap();
+        let info_color = color_f(0.6, 0.6, 0.6, 1.0);
+        let info_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &info_color)
+            .unwrap();
+        let info_rect = D2D_RECT_F {
+            left: x + MARGIN,
+            top: y,
+            right: x + width - MARGIN,
+            bottom: y + INFO_BAR_H,
+        };
+        let info_wide: Vec<u16> = info_text.encode_utf16().chain(Some(0)).collect();
+        target.DrawText(
+            &info_wide,
+            &info_format,
+            &info_rect,
+            &info_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        // 图片显示区域（信息栏下方，四周边距）
+        let area_x = x + MARGIN;
+        let area_y = y + INFO_BAR_H + MARGIN;
+        let area_w = (width - MARGIN * 2.0).max(1.0);
+        let area_h = (height - INFO_BAR_H - MARGIN * 2.0).max(1.0);
+
+        if let Some(ref bitmap) = self.image_bitmap {
+            // 计算基础缩放（适应窗口，保持宽高比）
+            let fit_scale = (area_w / img_w as f32).min(area_h / img_h as f32);
+            // 应用用户缩放
+            let scale = fit_scale * self.image_zoom;
+            let draw_w = img_w as f32 * scale;
+            let draw_h = img_h as f32 * scale;
+            // 居中 + 用户偏移
+            let draw_x = area_x + (area_w - draw_w) / 2.0 + self.image_offset_x;
+            let draw_y = area_y + (area_h - draw_h) / 2.0 + self.image_offset_y;
+            let dest_rect = D2D_RECT_F {
+                left: draw_x,
+                top: draw_y,
+                right: draw_x + draw_w,
+                bottom: draw_y + draw_h,
+            };
+            // 裁剪到图片显示区域，防止溢出
+            let clip_rect = D2D_RECT_F {
+                left: area_x,
+                top: area_y,
+                right: area_x + area_w,
+                bottom: area_y + area_h,
+            };
+            target.PushAxisAlignedClip(&clip_rect, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            target.DrawBitmap(
+                bitmap,
+                Some(&dest_rect),
+                1.0,
+                windows::Win32::Graphics::Direct2D::D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                None,
+            );
+            target.PopAxisAlignedClip();
+        }
+        }
+    }
+
+    /// 占位提示（不支持的格式 / 解码失败）
+    fn render_image_placeholder(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) {
+        unsafe {
+        let title_format = self
+            .render_ctx
+            .text_format_cache
+            .get_center_format(20.0, DWRITE_FONT_WEIGHT_BOLD.0 as u32)
+            .unwrap();
+        let info_format = self
+            .render_ctx
+            .text_format_cache
+            .get_center_format(14.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+            .unwrap();
+
+        let title_color = color_f(0.83, 0.83, 0.83, 1.0);
+        let title_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &title_color)
+            .unwrap();
+        let info_color = color_f(0.5, 0.5, 0.5, 1.0);
+        let info_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &info_color)
+            .unwrap();
+        let icon_color = color_f(0.3, 0.7, 1.0, 1.0);
+        let icon_brush = self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &icon_color)
+            .unwrap();
+
+        let center_y = y + height / 2.0;
+
+        // 图片图标
+        let icon_text: Vec<u16> = "🖼️".encode_utf16().chain(Some(0)).collect();
+        let icon_rect = D2D_RECT_F {
+            left: x,
+            top: center_y - 70.0,
+            right: x + width,
+            bottom: center_y - 30.0,
+        };
+        target.DrawText(
+            &icon_text,
+            &title_format,
+            &icon_rect,
+            &icon_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        // 标题
+        let title = "无法预览此图片";
+        let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        let title_rect = D2D_RECT_F {
+            left: x,
+            top: center_y - 30.0,
+            right: x + width,
+            bottom: center_y,
+        };
+        target.DrawText(
+            &title_wide,
+            &title_format,
+            &title_rect,
+            &title_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        // 提示（格式不支持或文件损坏）
+        let hint = "该格式暂不支持预览，或文件已损坏";
+        let hint_wide: Vec<u16> = hint.encode_utf16().chain(Some(0)).collect();
+        let hint_rect = D2D_RECT_F {
+            left: x,
+            top: center_y + 4.0,
+            right: x + width,
+            bottom: center_y + 30.0,
+        };
+        target.DrawText(
+            &hint_wide,
+            &info_format,
+            &hint_rect,
+            &info_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
+        // 文件路径
+        if let Some(path) = &self.content.file_path {
+            let path_text = format!("{}", path.display());
+            let path_wide: Vec<u16> = path_text.encode_utf16().chain(Some(0)).collect();
+            let path_rect = D2D_RECT_F {
+                left: x + 20.0,
+                top: center_y + 34.0,
+                right: x + width - 20.0,
+                bottom: center_y + 64.0,
+            };
+            target.DrawText(
+                &path_wide,
+                &info_format,
+                &path_rect,
+                &info_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
         }
     }
 }

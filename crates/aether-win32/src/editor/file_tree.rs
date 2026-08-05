@@ -312,7 +312,12 @@ impl EditorState {
     /// 刷新文件树（重新扫描当前文件夹）
     pub fn refresh_file_tree(&mut self) {
         if let Some(path) = self.current_folder.clone() {
-            self.open_folder(path);
+            // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+            if crate::editor::files::check_workspace_trust(self.hwnd, &path) {
+                self.open_folder(path);
+            } else {
+                self.status_message = "已取消打开不受信任的工作区".to_string();
+            }
         }
     }
 

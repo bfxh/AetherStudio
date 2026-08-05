@@ -507,31 +507,64 @@ unsafe fn okd_welcome_enter(hwnd: HWND) {
         match action {
             crate::welcome::WelcomeAction::OpenFolder => {
                 if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
+                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                        EDITOR_STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                state.borrow_mut().open_folder(path);
+                                invalidate_window(hwnd);
+                            }
+                        });
+                    } else {
+                        EDITOR_STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                state.borrow_mut().status_message =
+                                    "已取消打开不受信任的工作区".to_string();
+                                invalidate_window(hwnd);
+                            }
+                        });
+                    }
+                }
+            }
+            crate::welcome::WelcomeAction::OpenRecentProject(path_str) => {
+                let path = PathBuf::from(path_str);
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
                             state.borrow_mut().open_folder(path);
+                            invalidate_window(hwnd);
+                        }
+                    });
+                } else {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().status_message =
+                                "已取消打开不受信任的工作区".to_string();
                             invalidate_window(hwnd);
                         }
                     });
                 }
             }
-            crate::welcome::WelcomeAction::OpenRecentProject(path_str) => {
-                let path = PathBuf::from(path_str);
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().open_folder(path);
-                        invalidate_window(hwnd);
-                    }
-                });
-            }
             crate::welcome::WelcomeAction::MoreRecentProjects => {
                 if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    EDITOR_STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().open_folder(path);
-                            invalidate_window(hwnd);
-                        }
-                    });
+                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                        EDITOR_STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                state.borrow_mut().open_folder(path);
+                                invalidate_window(hwnd);
+                            }
+                        });
+                    } else {
+                        EDITOR_STATE.with(|s| {
+                            if let Some(state) = s.borrow().as_ref() {
+                                state.borrow_mut().status_message =
+                                    "已取消打开不受信任的工作区".to_string();
+                                invalidate_window(hwnd);
+                            }
+                        });
+                    }
                 }
             }
             _ => {}

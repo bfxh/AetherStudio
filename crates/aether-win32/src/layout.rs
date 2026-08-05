@@ -131,6 +131,8 @@ pub const STATUS_BAR_HEIGHT: f32 = 16.0;
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
 pub const MIN_SIDEBAR_WIDTH: f32 = 150.0;
 pub const MAX_SIDEBAR_WIDTH: f32 = 500.0;
+/// 拐角手柄（两条分割线交点）的命中区域边长
+pub const CORNER_HANDLE_SIZE: f32 = 12.0;
 
 /// 标题栏右侧按钮布局（单一事实源）。
 ///
@@ -240,6 +242,10 @@ pub struct LayoutManager {
     pub right_panel_resizing: bool,
     pub bottom_panel_resizing: bool,
     pub sidebar_resizing: bool,
+    /// 左下拐角手柄拖拽中（侧边栏右缘 × 底部面板顶缘）
+    pub corner_left_resizing: bool,
+    /// 右下拐角手柄拖拽中（右面板左缘 × 底部面板顶缘）
+    pub corner_right_resizing: bool,
     /// 侧边栏宽度动画状态（None = 静态无动画）
     pub sidebar_anim: Option<SidebarAnim>,
     /// 当前已应用的 DPI 缩放因子（用于 DPI 变化时按比例换算用户可调尺寸）
@@ -299,6 +305,8 @@ impl LayoutManager {
             right_panel_resizing: false,
             bottom_panel_resizing: false,
             sidebar_resizing: false,
+            corner_left_resizing: false,
+            corner_right_resizing: false,
             sidebar_anim: None,
             dpi_scale: 1.0,
         }
@@ -446,6 +454,44 @@ impl LayoutManager {
             return Region::new(editor.x, editor.bottom(), editor.width, 0.0);
         }
         Region::new(editor.x, y, editor.width, self.bottom_panel_height)
+    }
+
+    /// 左下拐角手柄区域（侧边栏右缘 × 底部面板顶缘的交点）。
+    ///
+    /// 拖拽该拐角可同时调整侧边栏宽度（水平）与底部面板高度（垂直）。
+    /// 仅当侧边栏与底部面板同时可见时存在，否则返回 None。
+    pub fn corner_left_handle(&self) -> Option<Region> {
+        if !(self.sidebar_visible && self.bottom_panel_visible) {
+            return None;
+        }
+        let editor = self.editor_region();
+        let cy = self.bottom_panel_region().y;
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        Some(Region::new(
+            editor.x - half,
+            cy - half,
+            CORNER_HANDLE_SIZE,
+            CORNER_HANDLE_SIZE,
+        ))
+    }
+
+    /// 右下拐角手柄区域（右面板左缘 × 底部面板顶缘的交点）。
+    ///
+    /// 拖拽该拐角可同时调整右面板宽度（水平）与底部面板高度（垂直）。
+    /// 仅当右面板与底部面板同时可见时存在，否则返回 None。
+    pub fn corner_right_handle(&self) -> Option<Region> {
+        if !(self.right_panel_visible && self.bottom_panel_visible) {
+            return None;
+        }
+        let editor = self.editor_region();
+        let cy = self.bottom_panel_region().y;
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        Some(Region::new(
+            editor.right() - half,
+            cy - half,
+            CORNER_HANDLE_SIZE,
+            CORNER_HANDLE_SIZE,
+        ))
     }
 
     /// 计算状态栏区域
@@ -781,6 +827,46 @@ mod tests {
             editor.width,
             1280.0 - ACTIVITY_BAR_WIDTH - SIDEBAR_WIDTH - 300.0
         );
+    }
+
+    #[test]
+    fn test_corner_handle_geometry() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        // 默认侧边栏可见、右面板/底部面板隐藏
+        // 底部面板隐藏时两拐角均不存在
+        assert!(layout.corner_left_handle().is_none());
+        assert!(layout.corner_right_handle().is_none());
+
+        // 打开底部面板：左下拐角出现（侧边栏可见），右下拐角仍无（右面板隐藏）
+        layout.toggle_bottom_panel();
+        let left = layout.corner_left_handle().expect("侧边栏+底部面板可见时应有左下拐角");
+        assert!(layout.corner_right_handle().is_none());
+
+        let editor = layout.editor_region();
+        let bottom = layout.bottom_panel_region();
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        // 左下拐角中心 = (editor.x, bottom.y)
+        assert_eq!(left.x, editor.x - half);
+        assert_eq!(left.y, bottom.y - half);
+        assert_eq!(left.width, CORNER_HANDLE_SIZE);
+        assert_eq!(left.height, CORNER_HANDLE_SIZE);
+        // 拐角中心点应命中
+        assert!(left.contains(editor.x, bottom.y));
+
+        // 打开右面板：右下拐角出现，中心 = (editor.right(), bottom.y)
+        layout.toggle_right_panel();
+        let right = layout
+            .corner_right_handle()
+            .expect("右面板+底部面板可见时应有右下拐角");
+        let editor = layout.editor_region();
+        let bottom = layout.bottom_panel_region();
+        assert_eq!(right.x, editor.right() - half);
+        assert_eq!(right.y, bottom.y - half);
+        assert!(right.contains(editor.right(), bottom.y));
+
+        // 隐藏侧边栏后左下拐角消失
+        layout.sidebar_visible = false;
+        assert!(layout.corner_left_handle().is_none());
     }
 
     #[test]
