@@ -83,6 +83,15 @@ pub(super) unsafe fn lbd_panel_resizing(
     layout: &crate::layout::LayoutManager,
 ) -> Option<LRESULT> {
     let editor_region = layout.editor_region();
+    // 拐角手柄命中（优先于单线）：左下 = 侧边栏×底部面板，右下 = 右面板×底部面板
+    let corner_left_hit = layout
+        .corner_left_handle()
+        .map(|r| r.contains(mouse_x, mouse_y))
+        .unwrap_or(false);
+    let corner_right_hit = layout
+        .corner_right_handle()
+        .map(|r| r.contains(mouse_x, mouse_y))
+        .unwrap_or(false);
     let right_panel_resize_zone = layout.right_panel_visible
         && (mouse_x >= editor_region.right() - 4.0 && mouse_x <= editor_region.right() + 4.0)
         && mouse_y >= editor_region.y
@@ -109,6 +118,20 @@ pub(super) unsafe fn lbd_panel_resizing(
             && mouse_y < sidebar_region.y + sidebar_region.height
     };
     let mut st = state.borrow_mut();
+    // 拐角优先：拖拽交点同时调整两条分割线
+    if corner_left_hit {
+        st.layout.corner_left_resizing = true;
+        st.layout.cancel_sidebar_anim();
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+    if corner_right_hit {
+        st.layout.corner_right_resizing = true;
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
     if right_panel_resize_zone {
         st.layout.right_panel_resizing = true;
         drop(st);
@@ -822,10 +845,15 @@ unsafe fn lbd_right_panel_ai_controls(
         if hit {
             // 弹出系统文件夹选择对话框
             if let Some(path) = Dialogs::open_folder_dialog(hwnd, "选择工作区文件夹") {
-                let mut st = state.borrow_mut();
-                st.open_folder(path.clone());
-                st.status_message = format!("已打开: {}", path.display());
-                drop(st);
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    let mut st = state.borrow_mut();
+                    st.open_folder(path.clone());
+                    st.status_message = format!("已打开: {}", path.display());
+                    drop(st);
+                } else {
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+                }
             }
             invalidate_window(hwnd);
             return Some(LRESULT(0));
@@ -1788,8 +1816,13 @@ pub(super) unsafe fn lbd_welcome_or_editor(
     } else {
         let editor_content = layout.editor_content_region(st.show_tab_bar());
         st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
+        // 单击只设置光标位置，不启动选区
+        // 选区在鼠标移动时（WM_MOUSEMOVE + is_dragging）启动
         st.clear_selection();
-        st.start_selection();
+        st.is_selecting = false;
+        // 重置光标闪烁状态并启动定时器
+        st.content.caret_visible = true;
+        let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
         // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘，
         // 点击落光标只需重绘编辑内容与状态栏行列信息
         st.dirty_tracker.mark_region(
@@ -1823,7 +1856,12 @@ unsafe fn lbd_welcome_action(
     match action {
         crate::welcome::WelcomeAction::OpenFolder => {
             if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                state.borrow_mut().open_folder(path);
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    state.borrow_mut().open_folder(path);
+                } else {
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+                }
                 invalidate_window(hwnd);
             }
         }
@@ -1843,12 +1881,22 @@ unsafe fn lbd_welcome_action(
         }
         crate::welcome::WelcomeAction::OpenRecentProject(path_str) => {
             let path = PathBuf::from(path_str);
-            state.borrow_mut().open_folder(path);
+            // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+            if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                state.borrow_mut().open_folder(path);
+            } else {
+                state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+            }
             invalidate_window(hwnd);
         }
         crate::welcome::WelcomeAction::MoreRecentProjects => {
             if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                state.borrow_mut().open_folder(path);
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    state.borrow_mut().open_folder(path);
+                } else {
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+                }
                 invalidate_window(hwnd);
             }
         }

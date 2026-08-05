@@ -132,7 +132,12 @@ impl EditorState {
         match &payload.error {
             None => {
                 self.status_message = format!("克隆成功: {}", payload.target_path.display());
-                self.open_folder(payload.target_path.clone());
+                // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
+                if crate::editor::files::check_workspace_trust(self.hwnd, &payload.target_path) {
+                    self.open_folder(payload.target_path.clone());
+                } else {
+                    self.status_message = "已取消打开不受信任的工作区".to_string();
+                }
             }
             Some(e) => {
                 // 克隆失败：重新打开对话框并显示错误

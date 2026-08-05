@@ -17,6 +17,25 @@ use super::super::{
     HOVER_TIMER_ID, LP_MOVE_TOLERANCE, LP_TIMER_ID,
 };
 
+/// 面板拖拽同步重绘节流（~120fps）。
+///
+/// 高回报率鼠标下每条 WM_MOUSEMOVE 都同步重绘会压垮管线产生卡顿感，
+/// 故节流至 8ms 最小帧间隔；被跳过的帧由后续 WM_PAINT 合并补齐。
+/// 返回 true 表示本帧应调用 UpdateWindow 立即重绘。
+fn panel_drag_should_sync_paint() -> bool {
+    const MIN_FRAME: std::time::Duration = std::time::Duration::from_millis(8);
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let now = std::time::Instant::now();
+    let mut last = LAST.lock().unwrap();
+    match *last {
+        Some(t) if now.duration_since(t) < MIN_FRAME => false,
+        _ => {
+            *last = Some(now);
+            true
+        }
+    }
+}
+
 /// WM_MOUSEMOVE：鼠标移动事件调度器。
 pub(crate) unsafe fn on_mouse_move(
     hwnd: HWND,
@@ -41,52 +60,106 @@ pub(crate) unsafe fn on_mouse_move(
     if let Some(r) = omm_early_returns(hwnd, &state, mouse_x, mouse_y, is_dragging, &layout) {
         return r;
     }
+
+    // 图片预览拖拽：中键拖拽平移（优先级最高，跳过其他 hover 检测）
+    let is_mbutton_dragging = wparam.0 & 0x0010 != 0; // MK_MBUTTON
+    if is_mbutton_dragging {
+        let mut st = state.borrow_mut();
+        if st.mouse_press.image_dragging {
+            if let (Some((start_x, start_y)), Some((orig_offset_x, orig_offset_y))) = (
+                st.mouse_press.image_drag_start,
+                st.mouse_press.image_drag_offset,
+            ) {
+                let dx = mouse_x - start_x;
+                let dy = mouse_y - start_y;
+                st.image_offset_x = orig_offset_x + dx;
+                st.image_offset_y = orig_offset_y + dy;
+                drop(st);
+                invalidate_window(hwnd);
+                return LRESULT(0);
+            }
+        }
+    }
     // 文本拖拽选区：前置为最高优先级（仅次于菜单/对话框）。
     // 旧实现放在所有 hover 判定之后的 else 分支，任一 hover 变化都会
     // 提前走 invalidate 分支跳过选区更新，导致拖拽时预选中高亮跟不上鼠标；
     // 拖拽选区期间 hover/tooltip 状态无意义，直接跳过还能省掉逐帧命中开销。
-    if is_dragging && state.borrow().is_selecting {
+    if is_dragging {
+        // 面板拖拽前置：跳过全部 hover 检测（拖拽中 hover 无意义），
+        // 直接处理分割线/拐角调整并提前返回，避免热路径上 7 个 hover 命中的逐帧开销。
+        let panel_dragging = {
+            let st = state.borrow();
+            st.layout.right_panel_resizing
+                || st.layout.bottom_panel_resizing
+                || st.layout.sidebar_resizing
+                || st.layout.corner_left_resizing
+                || st.layout.corner_right_resizing
+        };
+        if panel_dragging {
+            if let Some(r) = omm_resize_drag(hwnd, &state, mouse_x, mouse_y, is_dragging, &layout) {
+                return r;
+            }
+            return LRESULT(0);
+        }
+
         let mut st = state.borrow_mut();
         let editor_content = layout.editor_content_region(st.show_tab_bar());
-        let before = (
-            st.content.cursor_line,
-            st.content.cursor_col,
-            st.content.selection_end,
-        );
-        st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
-        st.update_selection();
-        let changed = (
-            st.content.cursor_line,
-            st.content.cursor_col,
-            st.content.selection_end,
-        ) != before;
-        if changed {
-            // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘
-            st.dirty_tracker.mark_region(
-                editor_content.x,
-                editor_content.y,
-                editor_content.width,
-                editor_content.height,
-                crate::dirty_rect::DirtyRegionType::EditorContent,
+
+        // 如果尚未进入选区模式，检查鼠标是否移动了足够距离来启动选区
+        if !st.is_selecting {
+            // 记录鼠标按下位置（在 WM_LBUTTONDOWN 时设置）
+            if let Some((press_x, press_y)) = st.mouse_press.lbutton_down_pos {
+                let dx = mouse_x - press_x;
+                let dy = mouse_y - press_y;
+                // 超过 3px 阈值才启动选区（避免单击时的微小抖动）
+                if dx * dx + dy * dy > 9.0 {
+                    st.start_selection();
+                }
+            }
+        }
+
+        if st.is_selecting {
+            let before = (
+                st.content.cursor_line,
+                st.content.cursor_col,
+                st.content.selection_end,
             );
-            let sb = st.layout.status_bar_region();
-            st.dirty_tracker.mark_region(
-                sb.x,
-                sb.y,
-                sb.width,
-                sb.height,
-                crate::dirty_rect::DirtyRegionType::StatusBar,
-            );
+            st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
+            st.update_selection();
+            let changed = (
+                st.content.cursor_line,
+                st.content.cursor_col,
+                st.content.selection_end,
+            ) != before;
+            if changed {
+                // 标记编辑区+状态栏脏区：避免无脏区退化为全窗口无裁剪重绘
+                st.dirty_tracker.mark_region(
+                    editor_content.x,
+                    editor_content.y,
+                    editor_content.width,
+                    editor_content.height,
+                    crate::dirty_rect::DirtyRegionType::EditorContent,
+                );
+                let sb = st.layout.status_bar_region();
+                st.dirty_tracker.mark_region(
+                    sb.x,
+                    sb.y,
+                    sb.width,
+                    sb.height,
+                    crate::dirty_rect::DirtyRegionType::StatusBar,
+                );
+            }
+            drop(st);
+            // 光标未跨过字符边界时跳过重绘，避免鼠标微动刷帧
+            if changed {
+                invalidate_window(hwnd);
+                // WM_PAINT 优先级低于 WM_MOUSEMOVE，快速拖拽时会被消息洪流饿死，
+                // 导致选区/光标视觉滞后——UpdateWindow 绕过队列立即重绘
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
+            return LRESULT(0);
         }
         drop(st);
-        // 光标未跨过字符边界时跳过重绘，避免鼠标微动刷帧
-        if changed {
-            invalidate_window(hwnd);
-            // WM_PAINT 优先级低于 WM_MOUSEMOVE，快速拖拽时会被消息洪流饿死，
-            // 导致选区/光标视觉滞后——UpdateWindow 绕过队列立即重绘
-            let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
-        }
-        return LRESULT(0);
     }
     // 文件树拖拽：按下候选节点后处理阈值判定与放置目标/浮标更新。
     // 进入拖拽后独占本次消息（跳过 hover/tooltip 更新，避免高亮叠加）。
@@ -796,6 +869,15 @@ unsafe fn omm_resize_drag(
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
     let editor_region = layout.editor_region();
+    // 拐角手柄 hover（优先于单线）：左下 = 侧边栏×底部面板，右下 = 右面板×底部面板
+    let corner_left_hit = layout
+        .corner_left_handle()
+        .map(|r| r.contains(mouse_x, mouse_y))
+        .unwrap_or(false);
+    let corner_right_hit = layout
+        .corner_right_handle()
+        .map(|r| r.contains(mouse_x, mouse_y))
+        .unwrap_or(false);
     let right_panel_resize_zone = layout.right_panel_visible
         && (mouse_x >= editor_region.right() - 4.0 && mouse_x <= editor_region.right() + 4.0)
         && mouse_y >= editor_region.y
@@ -825,8 +907,14 @@ unsafe fn omm_resize_drag(
     };
     // 更新 hover 状态
     st.hover_sidebar_resize = sidebar_resize_zone;
-    // 设置拖拽光标
-    if right_panel_resize_zone
+    // 设置拖拽光标（拐角优先，斜向光标）
+    if corner_left_hit || st.layout.corner_left_resizing {
+        let hcursor = LoadCursorW(None, IDC_SIZENWSE).unwrap_or_default();
+        let _ = SetCursor(hcursor);
+    } else if corner_right_hit || st.layout.corner_right_resizing {
+        let hcursor = LoadCursorW(None, IDC_SIZENESW).unwrap_or_default();
+        let _ = SetCursor(hcursor);
+    } else if right_panel_resize_zone
         || st.layout.right_panel_resizing
         || sidebar_resize_zone
         || st.layout.sidebar_resizing
@@ -840,13 +928,46 @@ unsafe fn omm_resize_drag(
         let hcursor = LoadCursorW(None, IDC_HAND).unwrap_or_default();
         let _ = SetCursor(hcursor);
     }
-    // 处理拖拽调整
+    // 处理拖拽调整（拐角优先：同时调整两条分割线）
     if is_dragging {
-        if st.layout.right_panel_resizing {
+        if st.layout.corner_left_resizing {
+            // 左下拐角：水平调侧边栏宽度（绝对值，与单线一致）+ 垂直调底部面板高度（增量）
+            let sidebar_left = if st.layout.activity_bar_visible {
+                st.layout.activity_bar_width
+            } else {
+                0.0
+            };
+            st.layout
+                .set_sidebar_width_or_collapse(mouse_x - sidebar_left);
+            let delta_y = mouse_y - bottom_region.y;
+            st.layout.resize_bottom_panel(-delta_y);
+            drop(st);
+            invalidate_window(hwnd);
+            // 拖拽中 WM_PAINT 被消息洪流饿死，节流 UpdateWindow 立即重绘
+            if panel_drag_should_sync_paint() {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
+            return Some(LRESULT(0));
+        } else if st.layout.corner_right_resizing {
+            // 右下拐角：水平调右面板宽度（增量）+ 垂直调底部面板高度（增量）
+            let delta_x = mouse_x - editor_region.right();
+            st.layout.resize_right_panel(-delta_x);
+            let delta_y = mouse_y - bottom_region.y;
+            st.layout.resize_bottom_panel(-delta_y);
+            drop(st);
+            invalidate_window(hwnd);
+            if panel_drag_should_sync_paint() {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
+            return Some(LRESULT(0));
+        } else if st.layout.right_panel_resizing {
             let delta = mouse_x - editor_region.right();
             st.layout.resize_right_panel(-delta);
             drop(st);
             invalidate_window(hwnd);
+            if panel_drag_should_sync_paint() {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
             return Some(LRESULT(0));
         } else if st.layout.sidebar_resizing {
             // 期望宽度 = 鼠标相对侧边栏左缘；不用 region.right() 做增量，
@@ -860,12 +981,18 @@ unsafe fn omm_resize_drag(
                 .set_sidebar_width_or_collapse(mouse_x - sidebar_left);
             drop(st);
             invalidate_window(hwnd);
+            if panel_drag_should_sync_paint() {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
             return Some(LRESULT(0));
         } else if st.layout.bottom_panel_resizing {
             let delta = mouse_y - bottom_region.y;
             st.layout.resize_bottom_panel(-delta);
             drop(st);
             invalidate_window(hwnd);
+            if panel_drag_should_sync_paint() {
+                let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            }
             return Some(LRESULT(0));
         }
     }
@@ -1045,6 +1172,12 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         }
 
         // 5. 面板拖拽中：固定 resize 光标（无论当前位置）
+        if layout.corner_left_resizing {
+            return CursorType::SizeNWSE;
+        }
+        if layout.corner_right_resizing {
+            return CursorType::SizeNESW;
+        }
         if layout.right_panel_resizing {
             return CursorType::SizeWE;
         }
@@ -1059,6 +1192,18 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         let tab_bar_region = layout.tab_bar_region(st.show_tab_bar());
         if tab_bar_region.contains(mouse_x, mouse_y) && st.tab_bar.hover_tab.is_some() {
             return CursorType::Hand;
+        }
+
+        // 6b. 拐角手柄 hover（优先于单线分隔条）→ 斜向光标
+        if let Some(r) = layout.corner_left_handle() {
+            if r.contains(mouse_x, mouse_y) {
+                return CursorType::SizeNWSE;
+            }
+        }
+        if let Some(r) = layout.corner_right_handle() {
+            if r.contains(mouse_x, mouse_y) {
+                return CursorType::SizeNESW;
+            }
         }
 
         // 7. 侧边栏分隔条（sidebar 右边缘 4px 容差）

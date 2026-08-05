@@ -64,7 +64,10 @@ impl EditorState {
 
         match PieceTable::from_file(&path) {
             Ok(buffer) => {
-                if self.can_reuse_current_tab() {
+                // 仅当存在标签页时才复用当前空标签：tabs 为空（如启动后打开的第一个文件）
+                // 时必须走新建标签路径，否则 show_empty_placeholder() 仍为 true，
+                // 编辑器区域渲染占位页导致文件“点不开”，要再点一次才能打开。
+                if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
                     self.content.buffer = buffer;
                     self.content.file_path = Some(path.clone());
                     self.content.language = lang;
@@ -125,20 +128,39 @@ impl EditorState {
     }
     /// 加载图片文件
     pub(super) fn load_image_file(&mut self, path: PathBuf) {
+        // 解码图片（自动嗅探格式；GIF 取首帧；SVG/RAW/PSD/损坏文件返回 Err → 占位提示）
+        let image_data = match crate::bitmap_loader::decode_image_file(&path) {
+            Ok(img) => Some(img),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "图片解码失败，显示占位提示");
+                None
+            }
+        };
+        // 打开新图片前使旧位图缓存失效（位图绑定具体图片）
+        self.image_bitmap = None;
+        // 重置缩放状态
+        self.image_zoom = 1.0;
+        self.image_offset_x = 0.0;
+        self.image_offset_y = 0.0;
+
         let content = format!("[图片预览] {}", path.display());
-        if self.can_reuse_current_tab() {
+        // tabs 为空时同样不能复用（否则渲染占位页），与 load_file 保持一致
+        if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
             self.content.file_path = Some(path.clone());
             self.content.language = Language::Image;
             self.content.buffer = PieceTable::from_string(content);
+            self.content.image_data = image_data;
             self.reset_editor_state();
             self.status_message = format!("已打开图片: {}", path.display());
         } else {
-            let tab = Tab::File(TabContent::with_loaded_buffer(
+            let mut tab_content = TabContent::with_loaded_buffer(
                 Some(path.clone()),
                 PieceTable::from_string(content),
                 Language::Image,
                 false,
-            ));
+            );
+            tab_content.image_data = image_data;
+            let tab = Tab::File(tab_content);
             self.open_in_new_tab(tab);
             self.status_message = format!("已打开图片: {}", path.display());
         }
@@ -150,7 +172,8 @@ impl EditorState {
             .and_then(|e| e.to_str())
             .unwrap_or("unknown");
         let message = format!("不支持的文件格式: .{}\n文件: {}", ext, path.display());
-        if self.can_reuse_current_tab() {
+        // tabs 为空时同样不能复用（否则渲染占位页），与 load_file 保持一致
+        if self.can_reuse_current_tab() && !self.tab_bar.tabs.is_empty() {
             self.content.file_path = Some(path.to_path_buf());
             self.content.language = Language::PlainText;
             self.content.buffer = PieceTable::from_string(message);
@@ -313,20 +336,9 @@ impl EditorState {
             return;
         }
 
-        // 工作区信任检查：未信任目录先弹窗询问
-        if !crate::dialogs::trusted_folders::is_trusted(&path) {
-            let title = "工作区信任";
-            let msg = format!(
-                "是否信任此文件夹中的代码作者？\n\n{}\n\n\
-                 信任后将允许执行 Git 检测、LSP、插件等可能运行该目录中代码的功能。",
-                path.display()
-            );
-            if !Dialogs::confirm_yes_no(self.hwnd, title, &msg) {
-                self.status_message = "已取消打开不受信任的工作区".to_string();
-                return;
-            }
-            crate::dialogs::trusted_folders::add_trusted(&path);
-        }
+        // 工作区信任检查已上移至调用方（check_workspace_trust），
+        // 避免在持有 RefCell borrow_mut 期间弹模态框泵消息导致重入 panic。
+        // 此处假定调用方已完成信任确认。
 
         // 设置 loading 状态，立即重绘显示 spinner
         self.is_loading_folder = true;
@@ -480,4 +492,28 @@ impl EditorState {
         // UI-T01: 关闭工作区后标题栏需要立即恢复为应用名
         self.dirty_tracker.mark_full_window();
     }
+}
+
+/// 工作区信任检查（自由函数，不持有 EditorState 借用）。
+///
+/// 必须在调用 `open_folder` 之前、且不持有 `RefCell` `borrow_mut` 时调用，
+/// 否则模态确认框（MessageBoxW）会泵消息，导致嵌套的 WM_TIMER/WM_PAINT
+/// 对同一 RefCell 再次借用而触发重入 panic（消息被 catch_unwind 吞掉）。
+///
+/// 返回 true 表示路径已受信任（或用户刚刚确认信任），可以继续 open_folder；
+/// 返回 false 表示用户拒绝信任，调用方应中止并提示。
+pub fn check_workspace_trust(hwnd: HWND, path: &std::path::Path) -> bool {
+    if crate::dialogs::trusted_folders::is_trusted(path) {
+        return true;
+    }
+    let msg = format!(
+        "是否信任此文件夹中的代码作者？\n\n{}\n\n\
+         信任后将允许执行 Git 检测、LSP、插件等可能运行该目录中代码的功能。",
+        path.display()
+    );
+    if !Dialogs::confirm_yes_no(hwnd, "工作区信任", &msg) {
+        return false;
+    }
+    crate::dialogs::trusted_folders::add_trusted(path);
+    true
 }

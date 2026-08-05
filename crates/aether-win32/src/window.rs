@@ -59,8 +59,8 @@ pub const SANDBOX_REFRESH_MS: u32 = 200;
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
 pub(crate) const LP_THRESHOLD_MS: u32 = 500;
-/// 终端刷新间隔（毫秒），约 20fps 足以实时显示 shell 输出
-pub(crate) const TERM_REFRESH_MS: u32 = 50;
+/// 终端刷新间隔（毫秒），约 60fps，让 shell 输出回显更即时流畅
+pub(crate) const TERM_REFRESH_MS: u32 = 16;
 /// AI 后台刷新间隔（毫秒），用于流式生成与测试连接期间的平滑重绘
 pub(crate) const AI_REFRESH_MS: u32 = 80;
 /// 语法高亮刷新间隔（毫秒），约 30fps，让后台高亮结果尽快着色显示
@@ -373,6 +373,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         match msg {
             WM_LBUTTONDOWN => on_l_button_down(hwnd, msg, wparam, lparam),
             WM_MBUTTONDOWN => on_m_button_down(hwnd, msg, wparam, lparam),
+            WM_MBUTTONUP => on_m_button_up(hwnd, msg, wparam, lparam),
             WM_MOUSEMOVE => on_mouse_move(hwnd, msg, wparam, lparam),
             WM_LBUTTONUP => on_l_button_up(hwnd, msg, wparam, lparam),
             WM_LBUTTONDBLCLK => on_l_button_dblclk(hwnd, msg, wparam, lparam),

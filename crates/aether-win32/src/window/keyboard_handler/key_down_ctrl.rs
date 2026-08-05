@@ -64,12 +64,23 @@ unsafe fn okd_ctrl_file_ops(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         }
         VK_K => {
             if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().open_folder(path);
-                        invalidate_window(hwnd);
-                    }
-                });
+                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
+                if crate::editor::files::check_workspace_trust(hwnd, &path) {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().open_folder(path);
+                            invalidate_window(hwnd);
+                        }
+                    });
+                } else {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            state.borrow_mut().status_message =
+                                "已取消打开不受信任的工作区".to_string();
+                            invalidate_window(hwnd);
+                        }
+                    });
+                }
             }
         }
         VK_S => {
@@ -264,30 +275,58 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
 
 /// Ctrl+=/-/0/G：字体缩放、命令面板前缀
 unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
+    // 检查是否是图片预览模式
+    let is_image = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| state.borrow().content.language == aether_core::lexer::Language::Image)
+            .unwrap_or(false)
+    });
+
     match vk {
         VK_OEM_PLUS | VK_ADD => {
-            // P2-3: Ctrl+= 放大字体
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().zoom_font(Some(1.0));
+                    let mut st = state.borrow_mut();
+                    if is_image {
+                        // 图片预览：Ctrl+= 放大图片
+                        st.image_zoom = (st.image_zoom + 0.1).min(10.0);
+                    } else {
+                        // P2-3: Ctrl+= 放大字体
+                        st.zoom_font(Some(1.0));
+                    }
                     invalidate_window(hwnd);
                 }
             });
         }
         VK_OEM_MINUS | VK_SUBTRACT => {
-            // P2-3: Ctrl+- 缩小字体
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().zoom_font(Some(-1.0));
+                    let mut st = state.borrow_mut();
+                    if is_image {
+                        // 图片预览：Ctrl+- 缩小图片
+                        st.image_zoom = (st.image_zoom - 0.1).max(0.1);
+                    } else {
+                        // P2-3: Ctrl+- 缩小字体
+                        st.zoom_font(Some(-1.0));
+                    }
                     invalidate_window(hwnd);
                 }
             });
         }
         VK_0 | VK_NUMPAD0 => {
-            // P2-3: Ctrl+0 重置字体大小
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().zoom_font(None);
+                    let mut st = state.borrow_mut();
+                    if is_image {
+                        // 图片预览：Ctrl+0 重置缩放
+                        st.image_zoom = 1.0;
+                        st.image_offset_x = 0.0;
+                        st.image_offset_y = 0.0;
+                    } else {
+                        // P2-3: Ctrl+0 重置字体大小
+                        st.zoom_font(None);
+                    }
                     invalidate_window(hwnd);
                 }
             });

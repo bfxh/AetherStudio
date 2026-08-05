@@ -14,12 +14,22 @@ impl EditorState {
     }
 
     /// P2.3: 大文件阈值（行数）
-    pub(super) const LARGE_FILE_LINE_THRESHOLD: usize = 100_000;
+    /// 卡顿修复：tree-sitter 全文件解析 10K 行约 400ms、50K 行约 2s（单核 100%），
+    /// 阈值下调到 8K 行/2MB，超过即跳过高亮，避免点击大文件后数秒系统卡顿。
+    pub(super) const LARGE_FILE_LINE_THRESHOLD: usize = 8_000;
     /// P2.3: 大文件阈值（字节数）
-    pub(super) const LARGE_FILE_BYTE_THRESHOLD: usize = 5 * 1024 * 1024;
+    pub(super) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
     /// P2.3: 重建行 Y 偏移前缀和缓存
+    /// 优化：只在行数变化时重建，避免每帧重复计算
     pub fn rebuild_line_y_offsets(&mut self) {
         let total_lines = self.content.buffer.len_lines().max(1);
+        // 如果行数未变且已有缓存，跳过重建
+        if self.content.line_y_offsets_cached_lines == total_lines
+            && !self.content.line_y_offsets.is_empty()
+        {
+            return;
+        }
+        self.content.line_y_offsets_cached_lines = total_lines;
         if self.content.line_y_offsets.len() != total_lines {
             self.content.line_y_offsets.resize(total_lines, 0.0);
         }
@@ -590,15 +600,17 @@ impl EditorState {
         self.content.cursor_line = line.min(total_lines.saturating_sub(1));
 
         if let Some(text) = self.content.buffer.get_line(self.content.cursor_line) {
-            // 与渲染一致：按可视列折算 x（CJK 等宽字符占 2 格，见 render_editor
-            // 的 unicode_char_width 累加），否则行内含中文时光标落点偏左。
+            // 与渲染一致：按可视列折算 x（CJK 等宽字符占 2 格，Tab 占 4 格，
+            // 见 render_editor 的 unicode_char_width 累加），否则行内含中文或
+            // Tab 时光标落点偏左。
             // 就近吸附：点击超过字符一半宽度时落到其后边界，避免永远偏左一格。
             let target_cells = (rel_x / char_width).max(0.0);
             let mut cells = 0f32;
             let mut byte_col = 0usize;
             for ch in text.chars() {
                 let w = unicode_char_width(ch) as f32;
-                if target_cells < cells + w / 2.0 {
+                // 使用 <= 确保点击字符中点时吸附到当前字符（更自然）
+                if target_cells <= cells + w / 2.0 {
                     break;
                 }
                 cells += w;
