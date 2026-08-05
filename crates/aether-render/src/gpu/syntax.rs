@@ -1,7 +1,6 @@
 use windows::core::Result;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11ComputeShader, ID3D11ShaderResourceView,
-    ID3D11UnorderedAccessView,
+    ID3D11Buffer, ID3D11ComputeShader, ID3D11ShaderResourceView, ID3D11UnorderedAccessView,
     D3D11_BUFFER_UAV, D3D11_UNORDERED_ACCESS_VIEW_DESC, D3D11_UNORDERED_ACCESS_VIEW_DESC_0,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT;
@@ -72,10 +71,7 @@ pub struct SyntaxPattern {
 
 impl GpuSyntaxClassifier {
     /// 创建语法分类器
-    pub fn new(
-        context: GpuComputeContext,
-        language: &str,
-    ) -> Result<Self> {
+    pub fn new(context: GpuComputeContext, language: &str) -> Result<Self> {
         let patterns = Self::build_patterns(language);
         let (patterns_buf, patterns_srv) = Self::create_patterns_buffer(&context, &patterns)?;
 
@@ -99,11 +95,7 @@ impl GpuSyntaxClassifier {
     ///
     /// # Returns
     /// 语法分类结果（GPU 缓冲区）
-    pub fn classify(
-        &self,
-        tokens: &ID3D11Buffer,
-        token_count: usize,
-    ) -> Result<ID3D11Buffer> {
+    pub fn classify(&self, tokens: &ID3D11Buffer, token_count: usize) -> Result<ID3D11Buffer> {
         // 创建输出缓冲区
         let output_size = token_count * std::mem::size_of::<SyntaxClass>();
         let output = self.context.create_buffer(
@@ -117,17 +109,10 @@ impl GpuSyntaxClassifier {
 
         // 设置 Shader 资源
         self.context.set_compute_shader(&self.classify_shader);
-        self.context.set_shader_resources(
-            0,
-            &[
-                Some(tokens_srv),
-                Some(self.patterns_srv.clone()),
-            ],
-        );
-        self.context.set_unordered_access_views(
-            0,
-            &[Some(output_uav)],
-        );
+        self.context
+            .set_shader_resources(0, &[Some(tokens_srv), Some(self.patterns_srv.clone())]);
+        self.context
+            .set_unordered_access_views(0, &[Some(output_uav)]);
 
         // 分派
         let groups = ((token_count + 255) / 256) as u32;
@@ -268,10 +253,7 @@ impl GpuSyntaxClassifier {
         Ok((buffer, srv))
     }
 
-    fn load_shader(
-        context: &GpuComputeContext,
-        bytecode: &[u8],
-    ) -> Result<ID3D11ComputeShader> {
+    fn load_shader(context: &GpuComputeContext, bytecode: &[u8]) -> Result<ID3D11ComputeShader> {
         context.create_compute_shader(bytecode)
     }
 
@@ -293,7 +275,11 @@ impl GpuSyntaxClassifier {
         };
         unsafe {
             let mut uav = None;
-            self.context.device().CreateUnorderedAccessView(buffer, Some(&uav_desc), Some(&mut uav))?;
+            self.context.device().CreateUnorderedAccessView(
+                buffer,
+                Some(&uav_desc),
+                Some(&mut uav),
+            )?;
             Ok(uav.unwrap())
         }
     }

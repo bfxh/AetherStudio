@@ -1,19 +1,18 @@
 use windows::core::Result;
+use windows::Win32::Graphics::Direct3D::D3D11_SRV_DIMENSION_BUFFER;
+use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
+use windows::Win32::Graphics::Direct3D11::D3D11CreateDevice;
+use windows::Win32::Graphics::Direct3D11::D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11ComputeShader, ID3D11Device, ID3D11DeviceContext,
-    ID3D11ShaderResourceView, ID3D11UnorderedAccessView,
-    D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE,
+    ID3D11Buffer, ID3D11ComputeShader, ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView,
+    ID3D11UnorderedAccessView, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE,
     D3D11_BIND_UNORDERED_ACCESS, D3D11_BUFFER_DESC, D3D11_BUFFER_SRV, D3D11_BUFFER_UAV,
     D3D11_CPU_ACCESS_READ, D3D11_CPU_ACCESS_WRITE, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
-    D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0,
-    D3D11_SUBRESOURCE_DATA, D3D11_UNORDERED_ACCESS_VIEW_DESC,
-    D3D11_UNORDERED_ACCESS_VIEW_DESC_0, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
+    D3D11_SHADER_RESOURCE_VIEW_DESC, D3D11_SHADER_RESOURCE_VIEW_DESC_0, D3D11_SUBRESOURCE_DATA,
+    D3D11_UNORDERED_ACCESS_VIEW_DESC, D3D11_UNORDERED_ACCESS_VIEW_DESC_0, D3D11_USAGE_DEFAULT,
+    D3D11_USAGE_STAGING,
 };
-use windows::Win32::Graphics::Direct3D::D3D11_SRV_DIMENSION_BUFFER;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT;
-use windows::Win32::Graphics::Direct3D11::D3D11CreateDevice;
-use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
-use windows::Win32::Graphics::Direct3D11::D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
 /// GPU 计算上下文，封装 D3D11 Compute Shader 所需的所有资源
 ///
@@ -49,7 +48,9 @@ impl GpuComputeContext {
     ///
     /// 通过 D3D11CreateDevice 创建独立的 D3D11 设备用于 Compute Shader。
     /// 与 D2D 渲染设备分离，避免互相影响。
-    pub fn create_from_d2d(_d2d_factory: &super::super::d2d::factory::D2DFactory) -> Result<GpuComputeContext> {
+    pub fn create_from_d2d(
+        _d2d_factory: &super::super::d2d::factory::D2DFactory,
+    ) -> Result<GpuComputeContext> {
         unsafe {
             let mut device = None;
             let mut context = None;
@@ -66,14 +67,18 @@ impl GpuComputeContext {
                 Some(&mut context),
             );
             hr?;
-            let device = device.ok_or_else(|| windows::core::Error::new(
-                windows::Win32::Foundation::E_FAIL,
-                "D3D11CreateDevice returned no device",
-            ))?;
-            let context = context.ok_or_else(|| windows::core::Error::new(
-                windows::Win32::Foundation::E_FAIL,
-                "D3D11CreateDevice returned no context",
-            ))?;
+            let device = device.ok_or_else(|| {
+                windows::core::Error::new(
+                    windows::Win32::Foundation::E_FAIL,
+                    "D3D11CreateDevice returned no device",
+                )
+            })?;
+            let context = context.ok_or_else(|| {
+                windows::core::Error::new(
+                    windows::Win32::Foundation::E_FAIL,
+                    "D3D11CreateDevice returned no context",
+                )
+            })?;
             Ok(GpuComputeContext { device, context })
         }
     }
@@ -159,12 +164,10 @@ impl GpuComputeContext {
             StructureByteStride: element_size as u32,
         };
 
-        let subresource = initial_data.map(|data| {
-            D3D11_SUBRESOURCE_DATA {
-                pSysMem: data.as_ptr() as *const _,
-                SysMemPitch: 0,
-                SysMemSlicePitch: 0,
-            }
+        let subresource = initial_data.map(|data| D3D11_SUBRESOURCE_DATA {
+            pSysMem: data.as_ptr() as *const _,
+            SysMemPitch: 0,
+            SysMemSlicePitch: 0,
         });
 
         let buffer = unsafe {
@@ -191,7 +194,8 @@ impl GpuComputeContext {
             };
             let mut uav = None;
             unsafe {
-                self.device.CreateUnorderedAccessView(&buffer, Some(&uav_desc), Some(&mut uav))?;
+                self.device
+                    .CreateUnorderedAccessView(&buffer, Some(&uav_desc), Some(&mut uav))?;
             }
             uav
         } else {
@@ -219,7 +223,8 @@ impl GpuComputeContext {
         };
         unsafe {
             let mut srv = None;
-            self.device.CreateShaderResourceView(buffer, Some(&srv_desc), Some(&mut srv))?;
+            self.device
+                .CreateShaderResourceView(buffer, Some(&srv_desc), Some(&mut srv))?;
             Ok(srv.unwrap())
         }
     }
@@ -229,13 +234,10 @@ impl GpuComputeContext {
     /// # Arguments
     /// * `shader` - Compute Shader
     /// * `thread_groups` - (X, Y, Z) 线程组数量
-    pub fn dispatch(
-        &self,
-        _shader: &ID3D11ComputeShader,
-        thread_groups: (u32, u32, u32),
-    ) {
+    pub fn dispatch(&self, _shader: &ID3D11ComputeShader, thread_groups: (u32, u32, u32)) {
         unsafe {
-            self.context.Dispatch(thread_groups.0, thread_groups.1, thread_groups.2);
+            self.context
+                .Dispatch(thread_groups.0, thread_groups.1, thread_groups.2);
         }
     }
 
@@ -291,7 +293,8 @@ impl GpuComputeContext {
         unsafe {
             self.context.CopyResource(&staging, src);
 
-            let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+            let mut mapped =
+                windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
             self.context.Map(
                 &staging,
                 0,
@@ -300,11 +303,7 @@ impl GpuComputeContext {
                 Some(&mut mapped),
             )?;
 
-            std::ptr::copy_nonoverlapping(
-                mapped.pData as *const u8,
-                dest.as_mut_ptr(),
-                dest.len(),
-            );
+            std::ptr::copy_nonoverlapping(mapped.pData as *const u8, dest.as_mut_ptr(), dest.len());
 
             self.context.Unmap(&staging, 0);
         }
@@ -330,7 +329,8 @@ impl GpuComputeContext {
         };
 
         unsafe {
-            let mut mapped = windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
+            let mut mapped =
+                windows::Win32::Graphics::Direct3D11::D3D11_MAPPED_SUBRESOURCE::default();
             self.context.Map(
                 &staging,
                 0,
@@ -339,11 +339,7 @@ impl GpuComputeContext {
                 Some(&mut mapped),
             )?;
 
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                mapped.pData as *mut u8,
-                data.len(),
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), mapped.pData as *mut u8, data.len());
 
             self.context.Unmap(&staging, 0);
             self.context.CopyResource(buffer, &staging);
@@ -359,16 +355,8 @@ impl GpuComputeContext {
         data: Option<&[u8]>,
     ) -> Result<(D3D11_BUFFER_DESC, Option<D3D11_SUBRESOURCE_DATA>)> {
         let (usage_type, bind_flags, cpu_access) = match usage {
-            BufferUsage::Constant => (
-                D3D11_USAGE_DEFAULT,
-                D3D11_BIND_CONSTANT_BUFFER.0,
-                0,
-            ),
-            BufferUsage::Structured => (
-                D3D11_USAGE_DEFAULT,
-                D3D11_BIND_SHADER_RESOURCE.0,
-                0,
-            ),
+            BufferUsage::Constant => (D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER.0, 0),
+            BufferUsage::Structured => (D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE.0, 0),
             BufferUsage::ReadWrite => (
                 D3D11_USAGE_DEFAULT,
                 D3D11_BIND_UNORDERED_ACCESS.0 | D3D11_BIND_SHADER_RESOURCE.0,

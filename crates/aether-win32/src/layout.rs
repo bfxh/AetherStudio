@@ -839,7 +839,9 @@ mod tests {
 
         // 打开底部面板：左下拐角出现（侧边栏可见），右下拐角仍无（右面板隐藏）
         layout.toggle_bottom_panel();
-        let left = layout.corner_left_handle().expect("侧边栏+底部面板可见时应有左下拐角");
+        let left = layout
+            .corner_left_handle()
+            .expect("侧边栏+底部面板可见时应有左下拐角");
         assert!(layout.corner_right_handle().is_none());
 
         let editor = layout.editor_region();

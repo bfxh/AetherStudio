@@ -215,8 +215,10 @@ pub(crate) unsafe fn on_mouse_wheel(
             // 图片预览：Ctrl+滚轮缩放
             if state.content.language == aether_core::lexer::Language::Image && ctrl {
                 let editor = state.layout.editor_region();
-                if cursor_x >= editor.x && cursor_x < editor.x + editor.width
-                    && cursor_y >= editor.y && cursor_y < editor.y + editor.height
+                if cursor_x >= editor.x
+                    && cursor_x < editor.x + editor.width
+                    && cursor_y >= editor.y
+                    && cursor_y < editor.y + editor.height
                 {
                     // 缩放因子：每 120 单位滚轮 = 10% 缩放
                     let zoom_delta = delta / 120.0 * 0.1;

@@ -1,6 +1,6 @@
 use windows::core::Result;
 use windows::Win32::Graphics::Direct3D::Fxc::{
-    D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL3, D3DCOMPILE_ENABLE_STRICTNESS,
+    D3DCompile, D3DCOMPILE_ENABLE_STRICTNESS, D3DCOMPILE_OPTIMIZATION_LEVEL3,
 };
 use windows::Win32::Graphics::Direct3D::ID3DBlob;
 
@@ -19,11 +19,7 @@ impl ShaderCompiler {
     ///
     /// # Returns
     /// 编译后的字节码
-    pub fn compile_compute_shader(
-        hlsl: &str,
-        entry_point: &str,
-        target: &str,
-    ) -> Result<Vec<u8>> {
+    pub fn compile_compute_shader(hlsl: &str, entry_point: &str, target: &str) -> Result<Vec<u8>> {
         if hlsl.is_empty() {
             return Err(windows::core::Error::new(
                 windows::Win32::Foundation::E_FAIL,
@@ -143,12 +139,11 @@ pub fn create_constant_buffer<T: Sized>(
     data: &T,
 ) -> Result<windows::Win32::Graphics::Direct3D11::ID3D11Buffer> {
     let size = std::mem::size_of::<T>();
-    let bytes = unsafe {
-        std::slice::from_raw_parts(
-            data as *const T as *const u8,
-            size,
-        )
-    };
+    let bytes = unsafe { std::slice::from_raw_parts(data as *const T as *const u8, size) };
 
-    context.create_buffer(size, super::compute_context::BufferUsage::Constant, Some(bytes))
+    context.create_buffer(
+        size,
+        super::compute_context::BufferUsage::Constant,
+        Some(bytes),
+    )
 }

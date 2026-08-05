@@ -373,11 +373,9 @@ impl EditorState {
                 total_lines,
             );
             // 检查可见区域是否已有高亮缓存
-            let has_highlight = (visible_start..visible_end.min(total_lines))
-                .all(|i| {
-                    i < self.content.cached_tokens.len()
-                        && !self.content.cached_tokens[i].is_empty()
-                });
+            let has_highlight = (visible_start..visible_end.min(total_lines)).all(|i| {
+                i < self.content.cached_tokens.len() && !self.content.cached_tokens[i].is_empty()
+            });
             if has_highlight {
                 return; // 缓存完整，0延迟渲染
             }
@@ -482,8 +480,8 @@ impl EditorState {
 
                 // 检查是否需要重新运行 GPU 分析：
                 // 1. 视口范围变化 2. buffer_version 变化（内容编辑）
-                let vp_changed = vp_cache.window_start() != cache_start
-                    || vp_cache.window_len() != window_len;
+                let vp_changed =
+                    vp_cache.window_start() != cache_start || vp_cache.window_len() != window_len;
                 let content_changed = vp_cache.buffer_version() != self.content.buffer_version;
                 let need_gpu_rebuild = vp_changed || content_changed || vp_cache.is_empty();
 
@@ -506,7 +504,9 @@ impl EditorState {
                         if let Ok(tokens) = gpu_lexer.lex(text.as_bytes()) {
                             if !tokens.is_empty() {
                                 let gpu_spans =
-                                    aether_render::gpu::render::gpu_tokens_to_lexeme_spans(&tokens, None);
+                                    aether_render::gpu::render::gpu_tokens_to_lexeme_spans(
+                                        &tokens, None,
+                                    );
                                 gpu_highlighted = true;
 
                                 for line_idx in cache_start..cache_end {
@@ -523,13 +523,14 @@ impl EditorState {
                                         .map(|(_, e)| e as u32)
                                         .unwrap_or(text.len() as u32);
 
-                                    let line_tokens: Vec<aether_core::lexer::LexemeSpan> = gpu_spans
-                                        .iter()
-                                        .filter(|span| {
-                                            span.start >= line_start && span.start < line_end
-                                        })
-                                        .cloned()
-                                        .collect();
+                                    let line_tokens: Vec<aether_core::lexer::LexemeSpan> =
+                                        gpu_spans
+                                            .iter()
+                                            .filter(|span| {
+                                                span.start >= line_start && span.start < line_end
+                                            })
+                                            .cloned()
+                                            .collect();
 
                                     vp_cache.set_line_tokens(
                                         line_idx,
@@ -578,8 +579,12 @@ impl EditorState {
                         .as_ref()
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|| "untitled".to_string());
-                    self.bg_highlighter
-                        .request(&doc_id, lang, self.content.buffer_version, snapshot);
+                    self.bg_highlighter.request(
+                        &doc_id,
+                        lang,
+                        self.content.buffer_version,
+                        snapshot,
+                    );
                     self.hl_request_version = self.content.buffer_version;
                     self.content.tokens_trimmed = false;
                 }
@@ -606,7 +611,14 @@ impl EditorState {
             if i >= cache_start && i < cache_end {
                 let slot = i - cache_start;
                 if self.content.line_cache_versions[slot] != self.content.buffer_version {
-                    self.highlight_line(i, slot, gpu_highlighted, use_sync_lexer, ts_lang, &mut lexer);
+                    self.highlight_line(
+                        i,
+                        slot,
+                        gpu_highlighted,
+                        use_sync_lexer,
+                        ts_lang,
+                        &mut lexer,
+                    );
                 }
             }
         }
@@ -616,7 +628,14 @@ impl EditorState {
             if i < viewport_start || i >= viewport_end {
                 let slot = i - cache_start;
                 if self.content.line_cache_versions[slot] != self.content.buffer_version {
-                    self.highlight_line(i, slot, gpu_highlighted, use_sync_lexer, ts_lang, &mut lexer);
+                    self.highlight_line(
+                        i,
+                        slot,
+                        gpu_highlighted,
+                        use_sync_lexer,
+                        ts_lang,
+                        &mut lexer,
+                    );
                 }
             }
         }

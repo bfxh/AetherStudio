@@ -66,9 +66,10 @@ pub(crate) unsafe fn on_mouse_move(
     if is_mbutton_dragging {
         let mut st = state.borrow_mut();
         if st.mouse_press.image_dragging {
-            if let (Some((start_x, start_y)), Some((orig_offset_x, orig_offset_y))) =
-                (st.mouse_press.image_drag_start, st.mouse_press.image_drag_offset)
-            {
+            if let (Some((start_x, start_y)), Some((orig_offset_x, orig_offset_y))) = (
+                st.mouse_press.image_drag_start,
+                st.mouse_press.image_drag_offset,
+            ) {
                 let dx = mouse_x - start_x;
                 let dy = mouse_y - start_y;
                 st.image_offset_x = orig_offset_x + dx;
@@ -95,8 +96,7 @@ pub(crate) unsafe fn on_mouse_move(
                 || st.layout.corner_right_resizing
         };
         if panel_dragging {
-            if let Some(r) = omm_resize_drag(hwnd, &state, mouse_x, mouse_y, is_dragging, &layout)
-            {
+            if let Some(r) = omm_resize_drag(hwnd, &state, mouse_x, mouse_y, is_dragging, &layout) {
                 return r;
             }
             return LRESULT(0);
@@ -104,7 +104,7 @@ pub(crate) unsafe fn on_mouse_move(
 
         let mut st = state.borrow_mut();
         let editor_content = layout.editor_content_region(st.show_tab_bar());
-        
+
         // 如果尚未进入选区模式，检查鼠标是否移动了足够距离来启动选区
         if !st.is_selecting {
             // 记录鼠标按下位置（在 WM_LBUTTONDOWN 时设置）
@@ -117,7 +117,7 @@ pub(crate) unsafe fn on_mouse_move(
                 }
             }
         }
-        
+
         if st.is_selecting {
             let before = (
                 st.content.cursor_line,

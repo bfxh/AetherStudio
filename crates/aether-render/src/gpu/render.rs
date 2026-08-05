@@ -1,8 +1,8 @@
 use aether_core::lexer::{LexemeSpan, TokenKind};
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 
-use super::lexer::{GpuToken, token_types};
-use super::syntax::{SyntaxClass, syntax_classes};
+use super::lexer::{token_types, GpuToken};
+use super::syntax::{syntax_classes, SyntaxClass};
 
 /// GPU Token 到 LexemeSpan 的转换
 ///
@@ -36,11 +36,13 @@ fn resolve_token_kind(token: &GpuToken, syntax: &SyntaxClass) -> TokenKind {
     // 优先使用语法分类（如果置信度足够高）
     if syntax.confidence >= 70 {
         match syntax.class_id {
-            syntax_classes::SYNTAX_FUNCTION_DECL |
-            syntax_classes::SYNTAX_FUNCTION_CALL => TokenKind::Function,
+            syntax_classes::SYNTAX_FUNCTION_DECL | syntax_classes::SYNTAX_FUNCTION_CALL => {
+                TokenKind::Function
+            }
             syntax_classes::SYNTAX_TYPE_NAME => TokenKind::TypeName,
-            syntax_classes::SYNTAX_VARIABLE_DECL |
-            syntax_classes::SYNTAX_VARIABLE_REF => TokenKind::Identifier,
+            syntax_classes::SYNTAX_VARIABLE_DECL | syntax_classes::SYNTAX_VARIABLE_REF => {
+                TokenKind::Identifier
+            }
             syntax_classes::SYNTAX_PARAMETER => TokenKind::Identifier,
             syntax_classes::SYNTAX_FIELD_ACCESS => TokenKind::Attribute,
             syntax_classes::SYNTAX_MACRO => TokenKind::Macro,
@@ -190,7 +192,8 @@ impl GpuBufferPool {
         }
 
         // 创建新缓冲区
-        let buf = context.create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)?;
+        let buf =
+            context.create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)?;
         self.in_use.push(buf.clone());
         Ok(buf)
     }

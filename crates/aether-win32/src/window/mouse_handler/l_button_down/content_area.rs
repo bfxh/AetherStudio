@@ -852,8 +852,7 @@ unsafe fn lbd_right_panel_ai_controls(
                     st.status_message = format!("已打开: {}", path.display());
                     drop(st);
                 } else {
-                    state.borrow_mut().status_message =
-                        "已取消打开不受信任的工作区".to_string();
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
                 }
             }
             invalidate_window(hwnd);
@@ -1861,8 +1860,7 @@ unsafe fn lbd_welcome_action(
                 if crate::editor::files::check_workspace_trust(hwnd, &path) {
                     state.borrow_mut().open_folder(path);
                 } else {
-                    state.borrow_mut().status_message =
-                        "已取消打开不受信任的工作区".to_string();
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
                 }
                 invalidate_window(hwnd);
             }
@@ -1887,8 +1885,7 @@ unsafe fn lbd_welcome_action(
             if crate::editor::files::check_workspace_trust(hwnd, &path) {
                 state.borrow_mut().open_folder(path);
             } else {
-                state.borrow_mut().status_message =
-                    "已取消打开不受信任的工作区".to_string();
+                state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
             }
             invalidate_window(hwnd);
         }
@@ -1898,8 +1895,7 @@ unsafe fn lbd_welcome_action(
                 if crate::editor::files::check_workspace_trust(hwnd, &path) {
                     state.borrow_mut().open_folder(path);
                 } else {
-                    state.borrow_mut().status_message =
-                        "已取消打开不受信任的工作区".to_string();
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
                 }
                 invalidate_window(hwnd);
             }

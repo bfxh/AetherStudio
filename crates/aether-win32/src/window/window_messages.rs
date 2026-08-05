@@ -322,7 +322,13 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             any_active = true;
         }
         // 编辑器内容区光标闪烁（文件编辑状态）
-        if st.tab_bar.tabs.get(st.tab_bar.active_tab).map(|t| t.is_file()).unwrap_or(false) {
+        if st
+            .tab_bar
+            .tabs
+            .get(st.tab_bar.active_tab)
+            .map(|t| t.is_file())
+            .unwrap_or(false)
+        {
             st.content.caret_visible = !st.content.caret_visible;
             let er = st.layout.editor_region().clone();
             st.dirty_tracker.mark_region(

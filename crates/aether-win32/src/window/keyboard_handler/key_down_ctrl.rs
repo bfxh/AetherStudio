@@ -277,9 +277,10 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
 unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
     // 检查是否是图片预览模式
     let is_image = EDITOR_STATE.with(|s| {
-        s.borrow().as_ref().map(|state| {
-            state.borrow().content.language == aether_core::lexer::Language::Image
-        }).unwrap_or(false)
+        s.borrow()
+            .as_ref()
+            .map(|state| state.borrow().content.language == aether_core::lexer::Language::Image)
+            .unwrap_or(false)
     });
 
     match vk {

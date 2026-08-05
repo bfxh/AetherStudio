@@ -1,12 +1,11 @@
 use windows::core::Result;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11ComputeShader, ID3D11ShaderResourceView,
-    ID3D11UnorderedAccessView,
+    ID3D11Buffer, ID3D11ComputeShader, ID3D11ShaderResourceView, ID3D11UnorderedAccessView,
     D3D11_BUFFER_UAV, D3D11_UNORDERED_ACCESS_VIEW_DESC, D3D11_UNORDERED_ACCESS_VIEW_DESC_0,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT;
 
-use super::compute_context::{GpuComputeContext, BufferUsage};
+use super::compute_context::{BufferUsage, GpuComputeContext};
 use super::shader::ShaderCompiler;
 
 /// GPU Token 结构，与 Shader 中的结构体对齐
@@ -80,11 +79,7 @@ impl GpuLexer {
     /// * `context` - GPU 计算上下文
     /// * `dfa_table` - DFA 状态转换表（256 * num_states 字节）
     /// * `keyword_hash` - 关键字完美哈希表
-    pub fn new(
-        context: GpuComputeContext,
-        dfa_table: &[u8],
-        keyword_hash: &[u32],
-    ) -> Result<Self> {
+    pub fn new(context: GpuComputeContext, dfa_table: &[u8], keyword_hash: &[u32]) -> Result<Self> {
         // 创建 DFA 表缓冲区
         let (dfa_buf, dfa_srv) = Self::create_dfa_buffer(&context, dfa_table)?;
 
@@ -281,7 +276,9 @@ impl GpuLexer {
         // 检查并重新分配 token 计数缓冲区
         if self.token_count_buffer.is_none() {
             let counter_size = std::mem::size_of::<u32>();
-            let buf = self.context.create_buffer(counter_size, BufferUsage::ReadWrite, None)?;
+            let buf = self
+                .context
+                .create_buffer(counter_size, BufferUsage::ReadWrite, None)?;
 
             // 创建 UAV
             let uav_desc = D3D11_UNORDERED_ACCESS_VIEW_DESC {
@@ -291,13 +288,18 @@ impl GpuLexer {
                     Buffer: D3D11_BUFFER_UAV {
                         FirstElement: 0,
                         NumElements: 1,
-                        Flags: windows::Win32::Graphics::Direct3D11::D3D11_BUFFER_UAV_FLAG_COUNTER.0 as u32,
+                        Flags: windows::Win32::Graphics::Direct3D11::D3D11_BUFFER_UAV_FLAG_COUNTER.0
+                            as u32,
                     },
                 },
             };
             let mut uav = None;
             unsafe {
-                self.context.device().CreateUnorderedAccessView(&buf, Some(&uav_desc), Some(&mut uav))?;
+                self.context.device().CreateUnorderedAccessView(
+                    &buf,
+                    Some(&uav_desc),
+                    Some(&mut uav),
+                )?;
             }
 
             self.token_count_buffer = Some(buf);
@@ -308,61 +310,57 @@ impl GpuLexer {
     }
 
     fn upload_text(&self, text: &[u8]) -> Result<ID3D11Buffer> {
-        self.context.create_buffer(text.len(), BufferUsage::Structured, Some(text))
+        self.context
+            .create_buffer(text.len(), BufferUsage::Structured, Some(text))
     }
 
     fn run_char_classify(&self, text_buffer: &ID3D11Buffer, text_len: usize) -> Result<()> {
         let srv = self.context.create_srv(text_buffer)?;
 
-        let char_classes_uav = self.create_uav_from_buffer(
-            self.char_classes_buffer.as_ref().unwrap(),
-            text_len as u32,
-        )?;
+        let char_classes_uav = self
+            .create_uav_from_buffer(self.char_classes_buffer.as_ref().unwrap(), text_len as u32)?;
 
         self.context.set_compute_shader(&self.char_classify_shader);
         self.context.set_shader_resources(0, &[Some(srv)]);
-        self.context.set_unordered_access_views(0, &[Some(char_classes_uav)]);
+        self.context
+            .set_unordered_access_views(0, &[Some(char_classes_uav)]);
 
         let groups = ((text_len + 255) / 256) as u32;
-        self.context.dispatch(&self.char_classify_shader, (groups, 1, 1));
+        self.context
+            .dispatch(&self.char_classify_shader, (groups, 1, 1));
 
         Ok(())
     }
 
     fn run_token_scan(&self, text_len: usize, _max_tokens: usize) -> Result<()> {
-        let srv = self.context.create_srv(self.char_classes_buffer.as_ref().unwrap())?;
+        let srv = self
+            .context
+            .create_srv(self.char_classes_buffer.as_ref().unwrap())?;
 
         self.context.set_compute_shader(&self.token_scan_shader);
         self.context.set_shader_resources(0, &[Some(srv)]);
         self.context.set_unordered_access_views(
             0,
-            &[
-                self.tokens_uav.clone(),
-                self.token_count_uav.clone(),
-            ],
+            &[self.tokens_uav.clone(), self.token_count_uav.clone()],
         );
 
         let groups = ((text_len + 255) / 256) as u32;
-        self.context.dispatch(&self.token_scan_shader, (groups, 1, 1));
+        self.context
+            .dispatch(&self.token_scan_shader, (groups, 1, 1));
 
         Ok(())
     }
 
     fn run_keyword_lookup(&self, max_tokens: usize) -> Result<()> {
         self.context.set_compute_shader(&self.keyword_lookup_shader);
-        self.context.set_shader_resources(
-            0,
-            &[
-                Some(self.keyword_srv.clone()),
-            ],
-        );
-        self.context.set_unordered_access_views(
-            0,
-            &[self.tokens_uav.clone()],
-        );
+        self.context
+            .set_shader_resources(0, &[Some(self.keyword_srv.clone())]);
+        self.context
+            .set_unordered_access_views(0, &[self.tokens_uav.clone()]);
 
         let groups = ((max_tokens + 255) / 256) as u32;
-        self.context.dispatch(&self.keyword_lookup_shader, (groups, 1, 1));
+        self.context
+            .dispatch(&self.keyword_lookup_shader, (groups, 1, 1));
 
         Ok(())
     }
@@ -370,15 +368,13 @@ impl GpuLexer {
     fn readback_tokens(&self, max_tokens: usize) -> Result<Vec<GpuToken>> {
         // 读取 token 数量
         let mut count = 0u32;
-        self.context.read_buffer(
-            self.token_count_buffer.as_ref().unwrap(),
-            unsafe {
+        self.context
+            .read_buffer(self.token_count_buffer.as_ref().unwrap(), unsafe {
                 std::slice::from_raw_parts_mut(
                     &mut count as *mut u32 as *mut u8,
                     std::mem::size_of::<u32>(),
                 )
-            },
-        )?;
+            })?;
 
         let token_count = count.min(max_tokens as u32) as usize;
         if token_count == 0 {
@@ -394,10 +390,8 @@ impl GpuLexer {
             )
         };
 
-        self.context.read_buffer(
-            self.tokens_buffer.as_ref().unwrap(),
-            token_bytes,
-        )?;
+        self.context
+            .read_buffer(self.tokens_buffer.as_ref().unwrap(), token_bytes)?;
 
         Ok(tokens)
     }
@@ -420,7 +414,11 @@ impl GpuLexer {
         };
         unsafe {
             let mut uav = None;
-            self.context.device().CreateUnorderedAccessView(buffer, Some(&uav_desc), Some(&mut uav))?;
+            self.context.device().CreateUnorderedAccessView(
+                buffer,
+                Some(&uav_desc),
+                Some(&mut uav),
+            )?;
             Ok(uav.unwrap())
         }
     }

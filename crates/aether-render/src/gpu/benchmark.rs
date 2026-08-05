@@ -125,11 +125,9 @@ impl LexerBenchmark {
             println!("\n========== 加速比 ==========");
             let baseline = &self.results[0];
             for result in &self.results[1..] {
-                let speedup = baseline.avg_duration.as_secs_f64() / result.avg_duration.as_secs_f64();
-                println!(
-                    "{} vs {}: {:.2}x",
-                    result.name, baseline.name, speedup
-                );
+                let speedup =
+                    baseline.avg_duration.as_secs_f64() / result.avg_duration.as_secs_f64();
+                println!("{} vs {}: {:.2}x", result.name, baseline.name, speedup);
             }
         }
     }
@@ -239,8 +237,8 @@ pub mod test_data {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::test_data::*;
+    use super::*;
 
     #[test]
     fn test_benchmark_rust() {
@@ -248,15 +246,25 @@ mod tests {
         let mut bench = LexerBenchmark::new();
 
         // 模拟 CPU lexer
-        bench.run("CPU Lexer", &code, |text| {
-            let _ = text.split_whitespace().count();
-        }, 100);
+        bench.run(
+            "CPU Lexer",
+            &code,
+            |text| {
+                let _ = text.split_whitespace().count();
+            },
+            100,
+        );
 
         // 模拟 GPU lexer（更快）
-        bench.run("GPU Lexer", &code, |_text| {
-            // 模拟 GPU 处理时间
-            std::thread::sleep(Duration::from_micros(10));
-        }, 100);
+        bench.run(
+            "GPU Lexer",
+            &code,
+            |_text| {
+                // 模拟 GPU 处理时间
+                std::thread::sleep(Duration::from_micros(10));
+            },
+            100,
+        );
 
         bench.print_report();
         assert!(!bench.results.is_empty());

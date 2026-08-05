@@ -27,18 +27,21 @@ impl GpuBufferManager {
     /// 创建 Token 输出缓冲区
     pub fn create_token_buffer(&self, max_tokens: usize) -> Result<ID3D11Buffer> {
         let size = max_tokens * std::mem::size_of::<super::lexer::GpuToken>();
-        self.context.create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
+        self.context
+            .create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
     }
 
     /// 创建字符分类缓冲区
     pub fn create_char_class_buffer(&self, text_len: usize) -> Result<ID3D11Buffer> {
         let size = text_len * std::mem::size_of::<u32>();
-        self.context.create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
+        self.context
+            .create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
     }
 
     /// 创建计数器缓冲区
     pub fn create_counter_buffer(&self) -> Result<ID3D11Buffer> {
         let size = std::mem::size_of::<u32>();
-        self.context.create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
+        self.context
+            .create_buffer(size, super::compute_context::BufferUsage::ReadWrite, None)
     }
 }

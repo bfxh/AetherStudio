@@ -57,7 +57,8 @@ pub struct TabContent {
     // 语言类型
     pub(crate) language: Language,
     /// GPU 视口高亮缓存（增量更新，仅缓存可见行）
-    pub(crate) viewport_highlight_cache: Option<aether_render::gpu::viewport::ViewportHighlightCache>,
+    pub(crate) viewport_highlight_cache:
+        Option<aether_render::gpu::viewport::ViewportHighlightCache>,
     /// 0延迟切换：标记刚切换过来的标签页，跳过首帧 rebuild_cache
     pub(crate) just_switched: bool,
     /// 图片预览：解码后的图像数据（仅 language == Image 时有值），随标签 swap 恢复

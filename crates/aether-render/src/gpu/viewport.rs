@@ -64,7 +64,10 @@ impl ViewportHighlightCache {
     ///
     /// 重叠部分保留，新进入窗口的行标记为脏。
     pub fn resize_window(&mut self, new_start: usize, new_len: usize, version: u64) {
-        if self.window_start == new_start && self.window_len == new_len && version == self.current_version {
+        if self.window_start == new_start
+            && self.window_len == new_len
+            && version == self.current_version
+        {
             return;
         }
 
@@ -105,12 +108,7 @@ impl ViewportHighlightCache {
     /// 使用编辑距离检测增量更新
     ///
     /// 比较新旧文本，只标记真正发生变化的行为脏。
-    pub fn update_with_edit_distance(
-        &mut self,
-        lines: &[String],
-        version: u64,
-        threshold: f32,
-    ) {
+    pub fn update_with_edit_distance(&mut self, lines: &[String], version: u64, threshold: f32) {
         self.current_version = version;
 
         for (slot, new_text) in lines.iter().enumerate() {
