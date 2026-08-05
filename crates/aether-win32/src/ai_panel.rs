@@ -392,7 +392,10 @@ impl AiConversation {
                     // 将 reasoning 内容作为正常回答显示，而非放在"深度思考"区域
                     if last.role == AiRole::Assistant
                         && last.content.trim().is_empty()
-                        && last.reasoning.as_ref().is_some_and(|r| !r.trim().is_empty())
+                        && last
+                            .reasoning
+                            .as_ref()
+                            .is_some_and(|r| !r.trim().is_empty())
                     {
                         last.content = last.reasoning.take().unwrap_or_default();
                         last.reasoning = None;
@@ -1836,7 +1839,10 @@ impl AiPanel {
                     // 将 reasoning 内容作为正常回答显示，而非放在"深度思考"区域
                     if last.role == AiRole::Assistant
                         && last.content.trim().is_empty()
-                        && last.reasoning.as_ref().is_some_and(|r| !r.trim().is_empty())
+                        && last
+                            .reasoning
+                            .as_ref()
+                            .is_some_and(|r| !r.trim().is_empty())
                     {
                         last.content = last.reasoning.take().unwrap_or_default();
                         last.reasoning = None;

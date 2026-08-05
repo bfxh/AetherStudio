@@ -1165,7 +1165,10 @@ impl EditorState {
         use windows::Win32::Graphics::Gdi::ClientToScreen;
         let physical_x = (logical_x * self.dpi_scale) as i32;
         let physical_y = (logical_y * self.dpi_scale) as i32;
-        let mut pt = POINT { x: physical_x, y: physical_y };
+        let mut pt = POINT {
+            x: physical_x,
+            y: physical_y,
+        };
         unsafe {
             let _ = ClientToScreen(self.hwnd, &mut pt);
         }
