@@ -155,6 +155,8 @@ pub enum AiRole {
     User,
     Assistant,
     System,
+    /// Agent 工具结果回喂：不作为用户消息显示，UI 渲染为简洁的工具卡片
+    Tool,
 }
 
 /// 流式响应的共享状态
@@ -386,7 +388,21 @@ impl AiConversation {
                 // 生成完成：自动折叠思考块，保持界面整洁
                 if let Some(last) = self.messages.last_mut() {
                     last.stop_reasoning_timer();
-                    if last.role == AiRole::Assistant && last.reasoning.is_some() {
+                    // 修复：当 content 为空但 reasoning 非空时（DeepSeek 思考模式简单问答场景），
+                    // 将 reasoning 内容作为正常回答显示，而非放在"深度思考"区域
+                    if last.role == AiRole::Assistant
+                        && last.content.trim().is_empty()
+                        && last
+                            .reasoning
+                            .as_ref()
+                            .is_some_and(|r| !r.trim().is_empty())
+                    {
+                        last.content = last.reasoning.take().unwrap_or_default();
+                        last.reasoning = None;
+                        last.reasoning_collapsed = false;
+                        last.reasoning_ms = None;
+                        last.reasoning_started_ms = None;
+                    } else if last.role == AiRole::Assistant && last.reasoning.is_some() {
                         last.reasoning_collapsed = true;
                     }
                 }
@@ -1313,6 +1329,14 @@ impl AiPanel {
         self.sync_hot_data();
     }
 
+    /// 添加工具结果消息（Agent 自续回喂）：不作为用户气泡显示，
+    /// UI 渲染为简洁的工具操作卡片，语义上属于 agent 内部步骤。
+    pub fn add_tool_message(&mut self, content: String) {
+        self.messages.push(AiMessage::new(AiRole::Tool, content));
+        self.stick_to_bottom = true;
+        self.sync_hot_data();
+    }
+
     /// 发送消息（AI-H01: 非阻塞 — HTTP 调用在后台线程执行，结果通过 stream_state 流式返回）
     pub fn send_message(&mut self, settings: &AiSettings) -> Result<String, String> {
         self.agent_iter_count = 0;
@@ -1347,6 +1371,9 @@ impl AiPanel {
 
     /// Agent 工具结果回喂：把终端命令输出作为上下文再次发起请求，驱动
     /// 「推理 → 执行 → 结果回喂 → 继续推理」循环。受最大轮次限制防止无限回环。
+    ///
+    /// 与 `send_message_internal` 的区别：工具结果以 `AiRole::Tool` 消息记录，
+    /// 不作为用户气泡显示，避免用户困惑。
     pub fn continue_agent_with_tool_result(
         &mut self,
         settings: &AiSettings,
@@ -1358,7 +1385,36 @@ impl AiPanel {
             return Err(format!("已达最大自动执行轮次（{}）", MAX_AGENT_ITERATIONS));
         }
         self.agent_iter_count += 1;
-        self.send_message_internal(settings, feedback, mode, None)
+
+        if feedback.is_empty() {
+            return Err("工具结果为空".to_string());
+        }
+        if self.is_generating {
+            return Err("正在等待上一次回复，请稍后再试".to_string());
+        }
+
+        // 工具结果以 Tool 角色记录（不显示为用户气泡）
+        self.add_tool_message(feedback.clone());
+        self.is_generating = true;
+        self.should_stop.store(false, Ordering::SeqCst);
+        if let Ok(mut s) = self.stream_state.lock() {
+            *s = AiStreamState::default();
+        }
+
+        let settings = settings.clone();
+        let context = String::new();
+        let mut messages = build_chat_prompt(&settings, &context, mode);
+        let input_budget = settings
+            .max_input_tokens
+            .map(|v| v as usize)
+            .unwrap_or(24000);
+        messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        let stream_state = Arc::clone(&self.stream_state);
+        let should_stop = Arc::clone(&self.should_stop);
+
+        spawn_ai_stream(settings, messages, stream_state, should_stop);
+
+        Ok("Agent 续跑已提交".to_string())
     }
 
     /// 逐任务 worker 调用：以给定的 system/user 两条消息发起**聚焦**流式请求，
@@ -1558,6 +1614,7 @@ impl AiPanel {
             .into_iter()
             .map(|m| match m.role {
                 AiRole::User => ChatMessage::user(m.content.clone()),
+                AiRole::Tool => ChatMessage::user(m.content.clone()),
                 _ => ChatMessage {
                     role: "assistant".to_string(),
                     content: m.content.clone(),
@@ -1778,7 +1835,21 @@ impl AiPanel {
                 // 生成完成：自动折叠思考块，保持界面整洁
                 if let Some(last) = self.messages.last_mut() {
                     last.stop_reasoning_timer();
-                    if last.role == AiRole::Assistant && last.reasoning.is_some() {
+                    // 修复：当 content 为空但 reasoning 非空时（DeepSeek 思考模式简单问答场景），
+                    // 将 reasoning 内容作为正常回答显示，而非放在"深度思考"区域
+                    if last.role == AiRole::Assistant
+                        && last.content.trim().is_empty()
+                        && last
+                            .reasoning
+                            .as_ref()
+                            .is_some_and(|r| !r.trim().is_empty())
+                    {
+                        last.content = last.reasoning.take().unwrap_or_default();
+                        last.reasoning = None;
+                        last.reasoning_collapsed = false;
+                        last.reasoning_ms = None;
+                        last.reasoning_started_ms = None;
+                    } else if last.role == AiRole::Assistant && last.reasoning.is_some() {
                         last.reasoning_collapsed = true;
                     }
                 }

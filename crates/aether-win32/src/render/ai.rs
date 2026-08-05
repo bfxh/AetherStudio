@@ -85,6 +85,14 @@ impl EditorState {
                 Ok(b) => b,
                 Err(_) => return,
             };
+            let tool_bg_brush = match self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.13, 0.14, 0.16, 1.0))
+            {
+                Ok(b) => b,
+                Err(_) => return,
+            };
             let input_bg_brush = match self
                 .render_ctx
                 .brush_cache
@@ -666,29 +674,32 @@ impl EditorState {
                     continue;
                 }
                 let is_user = msg.role == crate::ai_panel::AiRole::User;
+                let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
 
-                // 角色标签
-                let label = if is_user { "你" } else { "AI" };
-                let label_color: &ID2D1SolidColorBrush =
-                    if is_user { &accent_brush } else { &green_brush };
-                if msg_y + label_h >= chat_top && msg_y <= chat_bottom {
-                    let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                    let label_rect = D2D_RECT_F {
-                        left: content_left + 4.0,
-                        top: msg_y,
-                        right: content_right,
-                        bottom: msg_y + label_h,
-                    };
-                    target.DrawText(
-                        &label_wide,
-                        &small_format,
-                        &label_rect,
-                        label_color,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
+                // 角色标签（Tool 消息不显示角色标签，渲染为简洁的工具结果行）
+                if !is_tool {
+                    let label = if is_user { "你" } else { "AI" };
+                    let label_color: &ID2D1SolidColorBrush =
+                        if is_user { &accent_brush } else { &green_brush };
+                    if msg_y + label_h >= chat_top && msg_y <= chat_bottom {
+                        let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+                        let label_rect = D2D_RECT_F {
+                            left: content_left + 4.0,
+                            top: msg_y,
+                            right: content_right,
+                            bottom: msg_y + label_h,
+                        };
+                        target.DrawText(
+                            &label_wide,
+                            &small_format,
+                            &label_rect,
+                            label_color,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                    msg_y += label_h;
                 }
-                msg_y += label_h;
 
                 // 思考过程（DeepSeek 深度思考 reasoning_content）：独立分类、可折叠展示。
                 // 与"回答"、"操作卡片"分开，视觉上弱化（紫灰、缩进、左强调条）。
@@ -818,8 +829,8 @@ impl EditorState {
 
                 // 将消息拆为渲染项：文本/代码段 + AI 文件/命令操作卡片。
                 // 助手消息里的 <<<<<<< FILE/RUN >>>>>>> 标记转为清晰的操作卡片，隐藏原始标记；
-                // 用户消息无标记，整体作为一段文本。
-                let display_blocks = if is_user {
+                // 用户消息无标记，整体作为一段文本；Tool 消息同样整体作为一段文本。
+                let display_blocks = if is_user || is_tool {
                     vec![crate::ai_agent::AgentDisplayBlock::Text(
                         msg.content.clone(),
                     )]
@@ -1174,6 +1185,8 @@ impl EditorState {
                         &code_bg_brush
                     } else if is_user {
                         &user_bg_brush
+                    } else if is_tool {
+                        &tool_bg_brush
                     } else {
                         &assistant_bg_brush
                     };
@@ -1187,6 +1200,8 @@ impl EditorState {
 
                     let seg_fg: &ID2D1SolidColorBrush = if *is_code {
                         &code_text_brush
+                    } else if is_tool {
+                        &dim_brush
                     } else {
                         text_brush
                     };
@@ -1196,8 +1211,8 @@ impl EditorState {
                     };
                     target.DrawTextLayout(origin, &layout, seg_fg, D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-                    // 代码块添加"保存为文件"按钮
-                    if *is_code && !is_user && !seg_text.is_empty() {
+                    // 代码块添加"保存为文件"按钮（仅 AI 助手消息）
+                    if *is_code && !is_user && !is_tool && !seg_text.is_empty() {
                         let save_btn_w = 60.0f32;
                         let save_btn_h = 18.0f32;
                         let save_btn_x = content_right - save_btn_w - 4.0;
@@ -2106,6 +2121,7 @@ impl EditorState {
                                     crate::ai_panel::AiRole::User => "我",
                                     crate::ai_panel::AiRole::Assistant => "AI",
                                     crate::ai_panel::AiRole::System => "系统",
+                                    crate::ai_panel::AiRole::Tool => "工具",
                                 };
                                 let content: String = msg.content.trim().chars().take(40).collect();
                                 let line: Vec<u16> = format!("{}: {}", role, content)
