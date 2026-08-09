@@ -13,8 +13,7 @@ use crate::dialogs::Dialogs;
 use crate::editor::{BottomPanelTab, EditorState};
 
 use super::super::super::{
-    invalidate_window, AI_REFRESH_MS, AI_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, UI_ANIM_MS,
-    UI_ANIM_TIMER_ID,
+    invalidate_window, AI_REFRESH_MS, AI_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID,
 };
 
 /// 活动栏点击 + 长按检测。
@@ -196,7 +195,11 @@ pub(super) unsafe fn lbd_sidebar(
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
-    None
+    // 点击已确认在侧边栏区域内，即使未命中任何交互元素也应消费事件，
+    // 防止穿透到编辑器区域导致光标被错误设置
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }
 
 /// SSH 管理面板按钮点击（连接/编辑/删除/添加/保存/取消）。
@@ -317,24 +320,6 @@ pub(super) unsafe fn lbd_right_panel(
     // 对话标签条：切换 / 关闭 / 新建 / 历史（命中区为渲染时注册的绝对坐标）
     if let Some(result) = lbd_right_panel_tabs(hwnd, state, mouse_x, mouse_y) {
         return Some(result);
-    }
-    // 历史下拉面板展开时：面板区域为空命中（如留白处）也应消费点击，
-    // 避免穿透到被浮层覆盖的聊天内容
-    {
-        let inside_dropdown = {
-            let st = state.borrow();
-            st.ai_panel.history_open
-                && st
-                    .ai_panel
-                    .history_panel_region
-                    .map(|(px, py, pw, ph)| {
-                        mouse_x >= px && mouse_x < px + pw && mouse_y >= py && mouse_y < py + ph
-                    })
-                    .unwrap_or(false)
-        };
-        if inside_dropdown {
-            return Some(LRESULT(0));
-        }
     }
     // 思考过程块：点击标题折叠/展开（命中区为渲染时注册的绝对坐标）
     {
@@ -474,8 +459,12 @@ pub(super) unsafe fn lbd_right_panel(
     {
         let mut st = state.borrow_mut();
         st.ai_panel.input_focused = false;
+        drop(st);
     }
-    None
+    // 点击已确认在 AI 面板区域内，即使未命中任何交互元素也应消费事件，
+    // 防止穿透到编辑器区域导致光标被错误设置
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }
 
 /// AI 面板：对话标签条点击（历史按钮 / 关闭标签 / 切换标签 / 新建对话 / 历史条目）。
@@ -494,228 +483,21 @@ unsafe fn lbd_right_panel_tabs(
             })
             .map(|(i, ..)| *i)
     };
-    // 1. 历史记录按钮：切换历史列表展开
+    // 1. 历史记录按钮：打开/关闭历史浮窗
     {
         let mut st = state.borrow_mut();
         if let Some((hx, hy, hw, hh)) = st.ai_panel.history_button_region {
             if mouse_x >= hx && mouse_x < hx + hw && mouse_y >= hy && mouse_y < hy + hh {
-                st.ai_panel.history_open = !st.ai_panel.history_open;
                 if st.ai_panel.history_open {
-                    st.refresh_ai_history();
+                    st.ai_panel.close_history_window();
                 } else {
-                    st.ai_panel.close_history_detail();
+                    st.ai_panel.open_history_window();
+                    st.refresh_ai_history();
                 }
-                // 重置下拉面板内部滚动，并启动展开/收起动画定时器
-                st.ai_panel.history_scroll = 0.0;
                 drop(st);
-                let _ = SetTimer(hwnd, UI_ANIM_TIMER_ID, UI_ANIM_MS, None);
                 invalidate_window(hwnd);
                 return Some(LRESULT(0));
             }
-        }
-    }
-    // 1.1 历史详情视图：返回列表
-    {
-        let back_hit = {
-            let st = state.borrow();
-            st.ai_panel
-                .history_detail_back_region
-                .filter(|_| st.ai_panel.history_open)
-                .map(|(rx, ry, rw, rh)| {
-                    mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
-                })
-                .unwrap_or(false)
-        };
-        if back_hit {
-            state.borrow_mut().ai_panel.close_history_detail();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.2 历史详情视图：恢复此对话为活动标签页
-    {
-        let restore_hit = {
-            let st = state.borrow();
-            st.ai_panel
-                .history_detail_restore_region
-                .filter(|_| st.ai_panel.history_open)
-                .map(|(rx, ry, rw, rh)| {
-                    mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
-                })
-                .unwrap_or(false)
-        };
-        if restore_hit {
-            state.borrow_mut().ai_panel.restore_history_detail();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.3 历史面板「清空全部」（需二次确认）
-    {
-        let clear_hit = {
-            let st = state.borrow();
-            st.ai_panel
-                .history_clear_all_region
-                .filter(|_| st.ai_panel.history_open)
-                .map(|(rx, ry, rw, rh)| {
-                    mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
-                })
-                .unwrap_or(false)
-        };
-        if clear_hit {
-            let mut st = state.borrow_mut();
-            if crate::dialogs::Dialogs::confirm_yes_no(
-                hwnd,
-                "清空历史记录",
-                "确定清空全部历史对话吗？此操作不可恢复。",
-            ) {
-                match st.ai_panel.clear_all_history() {
-                    Ok(n) => st.status_message = format!("已清空 {} 条历史记录", n),
-                    Err(e) => st.status_message = format!("清空历史失败: {}", e),
-                }
-            }
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.4 历史时间筛选按钮
-    {
-        let filter_hit = {
-            let st = state.borrow();
-            if st.ai_panel.history_open {
-                hit(&st.ai_panel.history_time_filter_regions)
-            } else {
-                None
-            }
-        };
-        if let Some(fi) = filter_hit {
-            let mut st = state.borrow_mut();
-            if let Some(f) = crate::ai_panel::HistoryTimeFilter::ALL.get(fi).copied() {
-                st.ai_panel.set_history_time_filter(f);
-            }
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.5 历史类型筛选按钮
-    {
-        let filter_hit = {
-            let st = state.borrow();
-            if st.ai_panel.history_open {
-                hit(&st.ai_panel.history_type_filter_regions)
-            } else {
-                None
-            }
-        };
-        if let Some(fi) = filter_hit {
-            let mut st = state.borrow_mut();
-            if let Some(tf) = crate::ai_panel::HISTORY_TYPE_FILTERS.get(fi) {
-                st.ai_panel
-                    .set_history_type_filter(tf.map(|s| s.to_string()));
-            }
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.6 历史分页：上一页 / 下一页
-    {
-        let page_dir = {
-            let st = state.borrow();
-            let in_region = |region: Option<(f32, f32, f32, f32)>| {
-                region
-                    .filter(|_| st.ai_panel.history_open)
-                    .map(|(rx, ry, rw, rh)| {
-                        mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
-                    })
-                    .unwrap_or(false)
-            };
-            if in_region(st.ai_panel.history_page_prev_region) {
-                Some(-1i32)
-            } else if in_region(st.ai_panel.history_page_next_region) {
-                Some(1i32)
-            } else {
-                None
-            }
-        };
-        if let Some(dir) = page_dir {
-            let mut st = state.borrow_mut();
-            if dir < 0 {
-                st.ai_panel.history_prev_page();
-            } else {
-                st.ai_panel.history_next_page();
-            }
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 1.7 历史条目删除按钮（需二次确认；优先于条目点击）
-    {
-        let del_hit = {
-            let st = state.borrow();
-            if st.ai_panel.history_open {
-                hit(&st.ai_panel.history_delete_regions)
-            } else {
-                None
-            }
-        };
-        if let Some(i) = del_hit {
-            let mut st = state.borrow_mut();
-            let title = st
-                .ai_panel
-                .history
-                .get(i)
-                .map(|m| m.title.clone())
-                .unwrap_or_default();
-            let msg = format!("确定删除这条历史对话吗？\n\n{}", title);
-            if crate::dialogs::Dialogs::confirm_yes_no(hwnd, "删除历史记录", &msg) {
-                if let Err(e) = st.ai_panel.delete_history_item(i) {
-                    st.status_message = format!("删除历史失败: {}", e);
-                }
-            }
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 2. 历史条目：打开详情视图（详情中可恢复会话）
-    {
-        let hist_hit = {
-            let st = state.borrow();
-            if st.ai_panel.history_open {
-                hit(&st.ai_panel.history_item_regions)
-            } else {
-                None
-            }
-        };
-        if let Some(i) = hist_hit {
-            state.borrow_mut().open_ai_history_item(i);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 2.1 历史面板「仅当前工作区」开关
-    {
-        let toggle_hit = {
-            let st = state.borrow();
-            st.ai_panel
-                .history_ws_toggle_region
-                .filter(|_| st.ai_panel.history_open)
-                .map(|(rx, ry, rw, rh)| {
-                    mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
-                })
-                .unwrap_or(false)
-        };
-        if toggle_hit {
-            let mut st = state.borrow_mut();
-            st.ai_panel.toggle_history_workspace_only();
-            st.refresh_ai_history();
-            drop(st);
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
         }
     }
     // 2.2 Playbook 策略库按钮：切换管理面板
@@ -1502,6 +1284,8 @@ pub(super) unsafe fn lbd_tab_bar(
         // "+" 新建按钮
         if let Some((pl, pt, pr, pb)) = st.tab_bar.plus_button_rect {
             if mouse_x >= pl && mouse_x < pr && mouse_y >= pt && mouse_y < pb {
+                // 先释放不可变借用，再调用 handle_new_tab（内部会 borrow_mut）
+                drop(st);
                 return handle_new_tab(state, hwnd);
             }
         }
@@ -2095,4 +1879,200 @@ pub(super) unsafe fn lbd_sandbox_page(
         invalidate_window(hwnd);
     }
     Some(LRESULT(0))
+}
+
+/// 历史对话浮动窗口点击（全局最顶层，优先于所有面板/编辑器）。
+///
+/// 命中优先级：关闭按钮 > 搜索框 > 时间标签 > 条目删除 > 条目（单击恢复/双击编辑）
+/// > 分页 > 清空 > 标题栏拖动 > 浮窗体（消费点击防穿透）> 浮窗外部（关闭浮窗）。
+/// 返回 Some 表示已消费点击；浮窗未打开时返回 None。
+pub(super) unsafe fn lbd_history_window(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+) -> Option<LRESULT> {
+    // 浮窗未打开：不处理
+    if !state.borrow().ai_panel.history_open {
+        return None;
+    }
+    let hit = |regions: &[(usize, f32, f32, f32, f32)]| -> Option<usize> {
+        regions
+            .iter()
+            .find(|(_, rx, ry, rw, rh)| {
+                mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+            })
+            .map(|(i, ..)| *i)
+    };
+    let in_region = |region: Option<(f32, f32, f32, f32)>| -> bool {
+        region
+            .map(|(rx, ry, rw, rh)| {
+                mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh
+            })
+            .unwrap_or(false)
+    };
+
+    // 1. 关闭按钮
+    if in_region(state.borrow().ai_panel.history_win_close_region) {
+        state.borrow_mut().ai_panel.close_history_window();
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 2. 搜索框：聚焦（与 AI 输入框互斥）
+    if in_region(state.borrow().ai_panel.history_search_region) {
+        let mut st = state.borrow_mut();
+        st.ai_panel.history_search_focused = true;
+        st.ai_panel.input_focused = false;
+        st.ai_panel.history_editing_id = None; // 点击搜索框时退出标题编辑
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 3. 时间筛选标签
+    if let Some(fi) = hit(&state.borrow().ai_panel.history_time_filter_regions) {
+        let mut st = state.borrow_mut();
+        if let Some(f) = crate::ai_panel::HistoryTimeFilter::ALL.get(fi).copied() {
+            st.ai_panel.set_history_time_filter(f);
+        }
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 4. 条目删除按钮（需二次确认；优先于条目点击）
+    if let Some(i) = hit(&state.borrow().ai_panel.history_delete_regions) {
+        let mut st = state.borrow_mut();
+        let title = st
+            .ai_panel
+            .history
+            .get(i)
+            .map(|m| m.title.clone())
+            .unwrap_or_default();
+        let msg = format!("确定删除这条历史对话吗？\n\n{}", title);
+        if Dialogs::confirm_yes_no(hwnd, "删除历史记录", &msg) {
+            if let Err(e) = st.ai_panel.delete_history_item(i) {
+                st.status_message = format!("删除历史失败: {}", e);
+            }
+        }
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 5. 条目：单击恢复会话 / 双击进入标题编辑
+    if let Some(i) = hit(&state.borrow().ai_panel.history_item_regions) {
+        let conv_id = {
+            let st = state.borrow();
+            st.ai_panel.history.get(i).map(|m| m.id.clone())
+        };
+        if let Some(conv_id) = conv_id {
+            let is_double = state
+                .borrow_mut()
+                .ai_panel
+                .history_click_or_double(&conv_id);
+            if is_double {
+                // 双击：进入标题编辑态
+                state.borrow_mut().ai_panel.begin_history_edit(i);
+                invalidate_window(hwnd);
+            } else {
+                // 单击：恢复会话为活动标签页，并关闭浮窗
+                let mut st = state.borrow_mut();
+                st.ai_panel.restore_from_history(i);
+                st.ai_panel.close_history_window();
+                drop(st);
+                invalidate_window(hwnd);
+            }
+        }
+        return Some(LRESULT(0));
+    }
+
+    // 6. 分页：上一页 / 下一页
+    {
+        let page_dir = {
+            let st = state.borrow();
+            if in_region(st.ai_panel.history_page_prev_region) {
+                Some(-1i32)
+            } else if in_region(st.ai_panel.history_page_next_region) {
+                Some(1i32)
+            } else {
+                None
+            }
+        };
+        if let Some(dir) = page_dir {
+            let mut st = state.borrow_mut();
+            if dir < 0 {
+                st.ai_panel.history_prev_page();
+            } else {
+                st.ai_panel.history_next_page();
+            }
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+
+    // 7. 清空全部（需二次确认）
+    if in_region(state.borrow().ai_panel.history_clear_all_region) {
+        let mut st = state.borrow_mut();
+        let count = st.ai_panel.history.len();
+        let msg = format!("确定清空全部 {} 条历史对话吗？\n\n此操作不可恢复。", count);
+        if Dialogs::confirm_yes_no(hwnd, "清空历史记录", &msg) {
+            match st.ai_panel.clear_all_history() {
+                Ok(n) => st.status_message = format!("已清空 {} 条历史记录", n),
+                Err(e) => st.status_message = format!("清空历史失败: {}", e),
+            }
+        }
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 8. 标题栏：开始拖动（记录鼠标相对浮窗左上角的偏移）
+    if in_region(state.borrow().ai_panel.history_win_titlebar_region) {
+        let mut st = state.borrow_mut();
+        // 计算当前浮窗实际位置（可能与渲染时默认居中一致）
+        let (win_w, win_h) = st.ai_panel.history_win_size;
+        let (px, py) = st.ai_panel.history_win_pos.unwrap_or_else(|| {
+            (
+                ((st.window_width as f32 - win_w) / 2.0).max(0.0),
+                ((st.window_height as f32 - win_h) / 2.0).max(0.0),
+            )
+        });
+        st.ai_panel.history_win_pos = Some((px, py));
+        st.ai_panel.history_win_drag = Some((mouse_x - px, mouse_y - py));
+        drop(st);
+        // 按下标题栏开始拖动：设置握紧手形光标
+        let hcursor = LoadCursorW(None, IDC_SIZEALL).unwrap_or_default();
+        let _ = SetCursor(hcursor);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 9. 浮窗体其他区域（列表留白等）：消费点击防穿透
+    if in_region(state.borrow().ai_panel.history_win_region) {
+        // 点击浮窗内非交互区：仅取消搜索/编辑焦点
+        let mut st = state.borrow_mut();
+        if st.ai_panel.history_search_focused || st.ai_panel.history_editing_id.is_some() {
+            st.ai_panel.history_search_focused = false;
+            // 编辑态点击空白：提交编辑（类 VS Code 行为）
+            if st.ai_panel.history_editing_id.is_some() {
+                let _ = st.ai_panel.commit_history_edit();
+            }
+            drop(st);
+            invalidate_window(hwnd);
+        }
+        return Some(LRESULT(0));
+    }
+
+    // 10. 浮窗外部：关闭浮窗
+    {
+        let mut st = state.borrow_mut();
+        st.ai_panel.close_history_window();
+        drop(st);
+        invalidate_window(hwnd);
+        // 返回 None 让点击继续传递给下层（如编辑器），符合浮窗"点击外部关闭但不拦截"的惯例
+        return None;
+    }
 }

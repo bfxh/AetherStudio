@@ -32,6 +32,11 @@ pub(crate) unsafe fn okd_edit_dispatch(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool)
         return;
     }
 
+    // 历史浮窗：编辑态/搜索态时拦截编辑键（优先于 AI 输入框与编辑器）
+    if !ime_composing && okd_history_window(hwnd, vk) {
+        return;
+    }
+
     match vk {
         VK_RETURN => okd_edit_return(hwnd),
         VK_BACK => okd_edit_back(hwnd),
@@ -149,6 +154,183 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 );
             }
         });
+        invalidate_window(hwnd);
+    }
+    handled
+}
+
+/// 历史浮窗按键处理：编辑态（重命名）优先，其次搜索框。
+/// 返回 true 表示已消费该按键。仅处理 Return/Back/Delete/Escape/Left/Right/Home/End。
+unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
+    let mode = EDITOR_STATE.with(|s| {
+        s.borrow().as_ref().and_then(|state| {
+            let st = state.borrow();
+            if !st.ai_panel.history_open {
+                return None;
+            }
+            if st.ai_panel.history_editing_id.is_some() {
+                Some(1u8) // 编辑态
+            } else if st.ai_panel.history_search_focused {
+                Some(2u8) // 搜索态
+            } else {
+                Some(3u8) // 浮窗打开但无输入焦点（仅响应 Esc 关闭）
+            }
+        })
+    });
+    let mode = match mode {
+        Some(m) => m,
+        None => return false,
+    };
+    let editing = mode == 1;
+    // 浮窗打开但无焦点时，仅 Esc（关闭浮窗）生效
+    if mode == 3 {
+        if vk == VK_ESCAPE {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ai_panel.close_history_window();
+                }
+            });
+            invalidate_window(hwnd);
+            return true;
+        }
+        return false;
+    }
+    let handled = match vk {
+        VK_RETURN => {
+            if editing {
+                // 回车：提交重命名
+                EDITOR_STATE.with(|s| {
+                    if let Some(state) = s.borrow().as_ref() {
+                        let mut st = state.borrow_mut();
+                        match st.ai_panel.commit_history_edit() {
+                            Ok(()) => st.status_message = "已重命名对话".to_string(),
+                            Err(e) => st.status_message = e,
+                        }
+                    }
+                });
+            } else {
+                // 搜索态回车：恢复第一个匹配会话（快速打开）
+                let first = EDITOR_STATE.with(|s| {
+                    s.borrow()
+                        .as_ref()
+                        .map(|state| {
+                            state
+                                .borrow()
+                                .ai_panel
+                                .history_page_indices()
+                                .first()
+                                .copied()
+                        })
+                        .flatten()
+                });
+                if let Some(i) = first {
+                    EDITOR_STATE.with(|s| {
+                        if let Some(state) = s.borrow().as_ref() {
+                            let mut st = state.borrow_mut();
+                            st.ai_panel.restore_from_history(i);
+                            st.ai_panel.close_history_window();
+                        }
+                    });
+                }
+            }
+            true
+        }
+        VK_ESCAPE => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        st.ai_panel.cancel_history_edit();
+                    } else {
+                        // 搜索态 Esc：失焦；再按一次（已失焦）由外层关闭浮窗
+                        st.ai_panel.history_search_focused = false;
+                    }
+                }
+            });
+            true
+        }
+        VK_BACK => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        st.ai_panel.history_edit_backspace();
+                    } else {
+                        st.ai_panel.history_search_backspace();
+                    }
+                }
+            });
+            true
+        }
+        VK_LEFT => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        let text = st.ai_panel.history_editing_text.clone();
+                        let c = st.ai_panel.history_editing_caret;
+                        if c > 0 {
+                            st.ai_panel.history_editing_caret =
+                                text[..c].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                        }
+                    } else {
+                        st.ai_panel.history_search_move_left();
+                    }
+                }
+            });
+            true
+        }
+        VK_RIGHT => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        let text = st.ai_panel.history_editing_text.clone();
+                        let len = text.len();
+                        let c = st.ai_panel.history_editing_caret;
+                        if c < len {
+                            st.ai_panel.history_editing_caret = text[c..]
+                                .char_indices()
+                                .nth(1)
+                                .map(|(i, _)| c + i)
+                                .unwrap_or(len);
+                        }
+                    } else {
+                        st.ai_panel.history_search_move_right();
+                    }
+                }
+            });
+            true
+        }
+        VK_HOME => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        st.ai_panel.history_editing_caret = 0;
+                    } else {
+                        st.ai_panel.history_search_caret = 0;
+                    }
+                }
+            });
+            true
+        }
+        VK_END => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    if editing {
+                        st.ai_panel.history_editing_caret = st.ai_panel.history_editing_text.len();
+                    } else {
+                        st.ai_panel.history_search_caret = st.ai_panel.history_search.len();
+                    }
+                }
+            });
+            true
+        }
+        _ => false,
+    };
+    if handled {
         invalidate_window(hwnd);
     }
     handled

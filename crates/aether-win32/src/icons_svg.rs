@@ -437,6 +437,9 @@ pub(crate) fn build_shape_geometry(
         SvgShape::Circle(_, _, _, _) => {
             return build_circle_geometry(factory, shape);
         }
+        SvgShape::Ellipse(_, _, _, _, _) => {
+            return build_ellipse_geometry(factory, shape);
+        }
     };
 
     let begin = if fill.is_some() {
@@ -583,6 +586,62 @@ fn build_rect_geometry(
     Ok(geo)
 }
 
+fn build_ellipse_geometry(
+    factory: &ID2D1Factory,
+    shape: &SvgShape,
+) -> windows::core::Result<windows::Win32::Graphics::Direct2D::ID2D1PathGeometry> {
+    use windows::Win32::Graphics::Direct2D::Common::D2D1_BEZIER_SEGMENT;
+    use windows::Win32::Graphics::Direct2D::ID2D1PathGeometry;
+    let (cx, cy, rx, ry, fill) = match shape {
+        SvgShape::Ellipse(cx, cy, rx, ry, fill) => (*cx, *cy, *rx, *ry, fill),
+        _ => unreachable!(),
+    };
+    let geo: ID2D1PathGeometry = unsafe { factory.CreatePathGeometry()? };
+    let begin = if fill.is_some() {
+        D2D1_FIGURE_BEGIN_FILLED
+    } else {
+        D2D1_FIGURE_BEGIN_HOLLOW
+    };
+    // 4 段三次贝塞尔近似椭圆，k = r * 0.5523
+    let kx = rx * 0.5523_f32;
+    let ky = ry * 0.5523_f32;
+    unsafe {
+        let sink = geo.Open()?;
+        sink.BeginFigure(pt(cx - rx, cy), begin);
+        // 左 -> 上
+        let seg = D2D1_BEZIER_SEGMENT {
+            point1: pt(cx - rx, cy - ky),
+            point2: pt(cx - kx, cy - ry),
+            point3: pt(cx, cy - ry),
+        };
+        sink.AddBezier(&seg);
+        // 上 -> 右
+        let seg = D2D1_BEZIER_SEGMENT {
+            point1: pt(cx + kx, cy - ry),
+            point2: pt(cx + rx, cy - ky),
+            point3: pt(cx + rx, cy),
+        };
+        sink.AddBezier(&seg);
+        // 右 -> 下
+        let seg = D2D1_BEZIER_SEGMENT {
+            point1: pt(cx + rx, cy + ky),
+            point2: pt(cx + kx, cy + ry),
+            point3: pt(cx, cy + ry),
+        };
+        sink.AddBezier(&seg);
+        // 下 -> 左
+        let seg = D2D1_BEZIER_SEGMENT {
+            point1: pt(cx - kx, cy + ry),
+            point2: pt(cx - rx, cy + ky),
+            point3: pt(cx - rx, cy),
+        };
+        sink.AddBezier(&seg);
+        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink.Close()?;
+    }
+    Ok(geo)
+}
+
 fn build_circle_geometry(
     factory: &ID2D1Factory,
     shape: &SvgShape,
@@ -653,6 +712,7 @@ pub(crate) fn build_def(
         let fill = match shape {
             SvgShape::Path(_, f) => f.map(parse_hex_color),
             SvgShape::Circle(_, _, _, f) => f.map(parse_hex_color),
+            SvgShape::Ellipse(_, _, _, _, f) => f.map(parse_hex_color),
             SvgShape::Rect(_, _, _, _, f, _) => f.map(parse_hex_color),
             SvgShape::Line(_, _, _, _) => None,
         };

@@ -85,6 +85,9 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             if let Some(r) = oc_terminal(hwnd, c) {
                 return r;
             }
+            if let Some(r) = oc_history_window(hwnd, c) {
+                return r;
+            }
             if let Some(r) = oc_ai_panel(hwnd, c) {
                 return r;
             }
@@ -387,6 +390,46 @@ unsafe fn oc_terminal(hwnd: HWND, c: char) -> Option<LRESULT> {
         Some(LRESULT(0))
     } else {
         None
+    }
+}
+
+/// 历史浮窗：标题编辑态优先，其次搜索框聚焦时，输入字符进入对应缓冲
+unsafe fn oc_history_window(hwnd: HWND, c: char) -> Option<LRESULT> {
+    let mode = EDITOR_STATE.with(|s| {
+        s.borrow().as_ref().and_then(|state| {
+            let st = state.borrow();
+            if !st.ai_panel.history_open {
+                return None;
+            }
+            if st.ai_panel.history_editing_id.is_some() {
+                Some(1u8) // 编辑态
+            } else if st.ai_panel.history_search_focused {
+                Some(2u8) // 搜索态
+            } else {
+                None
+            }
+        })
+    });
+    match mode {
+        Some(1) => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ai_panel.history_edit_input_char(c);
+                    invalidate_window(hwnd);
+                }
+            });
+            Some(LRESULT(0))
+        }
+        Some(2) => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ai_panel.history_search_input_char(c);
+                    invalidate_window(hwnd);
+                }
+            });
+            Some(LRESULT(0))
+        }
+        _ => None,
     }
 }
 

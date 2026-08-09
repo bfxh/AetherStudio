@@ -1,7 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="HTML file icon (flat)">
   <title>HTML File (Flat)</title>
-  <path d="M5 3 L14 3 L20 9 L20 20 L4 20 Z" fill="#E34F26"/>
-  <path d="M14 3 L20 9 L14 9 Z" fill="#FFFFFF" fill-opacity="0.5"/>
+  <!-- File body: rounded rectangle with corner fold -->
+  <path d="M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z"
+        fill="#E34F26"/>
+  <!-- Corner fold -->
+  <path d="M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z"
+        fill="#FFFFFF" fill-opacity="0.35"/>
+  <!-- HTML5 shield stylized -->
   <polygon points="8,11.5 10,11.5 8.5,15.5 6.5,15.5" fill="#FFFFFF"/>
   <polygon points="6.5,15.5 8.5,15.5 8,19.5 6.5,19.5" fill="#EBEBEB"/>
   <polygon points="16,11.5 17.5,11.5 15.5,15.5 14,15.5" fill="#FFFFFF"/>
