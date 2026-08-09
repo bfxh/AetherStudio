@@ -340,6 +340,11 @@ impl EditorState {
         // 避免在持有 RefCell borrow_mut 期间弹模态框泵消息导致重入 panic。
         // 此处假定调用方已完成信任确认。
 
+        // 【时序关键】先保存旧工作区的 AI 会话快照，再切换到新工作区。
+        // 若颠倒顺序，save 时 current_folder 已是新工作区，
+        // 旧工作区的对话会被错误地保存到新工作区的哈希名下。
+        self.save_current_workspace_ai_session();
+
         // 设置 loading 状态，立即重绘显示 spinner
         self.is_loading_folder = true;
         self.folder_generation = self.folder_generation.wrapping_add(1);
@@ -358,7 +363,22 @@ impl EditorState {
         }
         self.status_message = format!("正在扫描: {}...", path.display());
         self.recent_projects.add(&path);
+
+        // 工作区 AI 会话隔离：加载目标工作区的会话
+        // （保存已在上面完成，此处仅加载）
+        let workspace_hash = Self::workspace_path_hash(&path);
+        self.load_workspace_ai_session(&workspace_hash);
+
         self.file_tree = Some(FileTree::new());
+        // 重置文件树缓存与交互状态，防止旧索引在新树中越界/错位
+        self.file_tree_visible_rows.clear();
+        self.file_tree_rows_dirty = true;
+        self.file_tree_rows_tree_len = 0;
+        self.selected_file_node = None;
+        self.hover_file_node = None;
+        self.hover_file_tree_root = false;
+        self.file_tree_input = None;
+        self.sidebar_scroll_y = 0.0;
         // UI-T01: 工作区切换后标题栏需要立即更新，标记全窗口重绘
         self.dirty_tracker.mark_full_window();
 
@@ -435,6 +455,8 @@ impl EditorState {
             for entry in &batch.entries {
                 tree.add_node(&entry.name, entry.kind, u32::MAX, entry.depth);
             }
+            // 节点数变化，可见行数组需重建
+            self.mark_file_tree_rows_dirty();
         }
     }
     /// 在打开的文件夹根目录查找 README 并自动加载
@@ -457,6 +479,21 @@ impl EditorState {
         }
     }
     pub fn close_workspace(&mut self) {
+        // 保存当前工作区的 AI 会话状态
+        self.save_current_workspace_ai_session();
+
+        // 清空 AI 面板：关闭工作区后对话标签页不应残留
+        self.ai_panel.conversations = vec![crate::ai_panel::AiConversation::new(
+            crate::ai_panel::gen_conversation_id(),
+            "新对话".to_string(),
+        )];
+        self.ai_panel.load_slot_into_active(0);
+        self.current_workspace_ai_session = None;
+        // 清除温数据存储的工作区绑定，后续归档不再关联旧工作区
+        if let Some(warm) = self.ai_panel.warm_data_store.as_ref() {
+            warm.set_workspace(std::path::Path::new(""));
+        }
+
         self.file_tree = None;
         self.current_folder = None;
         // 同步清空持久化的 last_workspace，避免下次启动重新打开已被用户主动关闭的工作区
@@ -481,6 +518,13 @@ impl EditorState {
         self.tab_bar.tabs.push(crate::tabs::Tab::new());
         self.tab_bar.active_tab = 0;
         self.selected_file_node = None;
+        self.hover_file_node = None;
+        self.hover_file_tree_root = false;
+        self.file_tree_input = None;
+        self.file_tree_visible_rows.clear();
+        self.file_tree_rows_dirty = true;
+        self.file_tree_rows_tree_len = 0;
+        self.sidebar_scroll_y = 0.0;
         self.welcome_focus_action = None;
         // 释放旧工作区的 LSP 诊断与补全缓存（否则随 Url key 永久驻留）
         self.lsp.diagnostics.clear();
@@ -491,6 +535,98 @@ impl EditorState {
         self.status_message = "已关闭工作区".to_string();
         // UI-T01: 关闭工作区后标题栏需要立即恢复为应用名
         self.dirty_tracker.mark_full_window();
+    }
+
+    /// 保存当前工作区的 AI 会话状态（完整标签页组快照）
+    fn save_current_workspace_ai_session(&mut self) {
+        if let Some(ref folder) = self.current_folder {
+            let workspace_hash = Self::workspace_path_hash(folder);
+            // 先把活动会话的扁平状态回填到槽位，保证快照完整
+            self.ai_panel.snapshot_active_into_slot();
+            // 归档所有非空会话到温数据层（异步，不阻塞切换）
+            for conv in &self.ai_panel.conversations {
+                let has_user_msg = conv
+                    .messages
+                    .iter()
+                    .any(|m| m.role == crate::ai_panel::AiRole::User);
+                if has_user_msg && !conv.hibernated {
+                    if let Some(warm) = self.ai_panel.warm_data_store.as_ref() {
+                        warm.request_archive(conv.id.clone(), conv.clone());
+                    }
+                }
+            }
+            // 保存完整标签页组快照
+            let snapshot = crate::editor::WorkspaceAiSessionSnapshot {
+                conversations: self.ai_panel.conversations.clone(),
+                active: self.ai_panel.active,
+            };
+            self.workspace_ai_sessions.insert(workspace_hash, snapshot);
+        }
+    }
+
+    /// 加载目标工作区的 AI 会话（恢复标签页组或从数据库加载）
+    fn load_workspace_ai_session(&mut self, workspace_hash: &str) {
+        // 1. 优先从内存快照恢复该工作区之前的标签页组
+        if let Some(snapshot) = self.workspace_ai_sessions.get(workspace_hash).cloned() {
+            self.ai_panel.conversations = snapshot.conversations;
+            let active = snapshot
+                .active
+                .min(self.ai_panel.conversations.len().saturating_sub(1));
+            if !self.ai_panel.conversations.is_empty() {
+                self.ai_panel.load_slot_into_active(active);
+            }
+            self.current_workspace_ai_session = self
+                .ai_panel
+                .conversations
+                .get(active)
+                .map(|c| c.id.clone());
+            return;
+        }
+
+        // 2. 无内存快照：从温数据存储按工作区过滤加载该工作区的最近会话
+        if let Some(ref warm_store) = self.ai_panel.warm_data_store {
+            // 强制按工作区过滤（不依赖 history_workspace_only 的 UI 状态）
+            let ws_hash = warm_store.current_workspace_hash();
+            if !ws_hash.is_empty() {
+                // 仅加载最近 5 条会话，避免一次打开过多标签页
+                if let Ok(convs) = warm_store.search_conversations("", true, 5) {
+                    if !convs.is_empty() {
+                        // 加载该工作区的所有历史会话为标签页
+                        let mut loaded_convs = Vec::new();
+                        for meta in &convs {
+                            if let Ok(conv) = warm_store.load_conversation(&meta.id) {
+                                loaded_convs.push(conv);
+                            }
+                        }
+                        if !loaded_convs.is_empty() {
+                            self.ai_panel.conversations = loaded_convs;
+                            self.ai_panel.load_slot_into_active(0);
+                            self.current_workspace_ai_session = Some(convs[0].id.clone());
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 该工作区无任何历史会话：创建一个全新的空对话
+        self.ai_panel.conversations = vec![crate::ai_panel::AiConversation::new(
+            crate::ai_panel::gen_conversation_id(),
+            "新对话".to_string(),
+        )];
+        self.ai_panel.load_slot_into_active(0);
+        self.current_workspace_ai_session = None;
+    }
+
+    /// 工作区路径 → 短哈希（与 ai_warm_data.rs 中的 fnv1a_hex 一致）
+    fn workspace_path_hash(path: &Path) -> String {
+        let s = path.to_string_lossy();
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in s.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("{:016x}", hash)
     }
 }
 

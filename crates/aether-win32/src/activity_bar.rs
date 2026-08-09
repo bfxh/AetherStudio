@@ -70,12 +70,13 @@ impl ActivityBar {
         }
     }
 
-    /// 点击检测（48x48 图标区域）
+    /// 点击检测（使用 ACTIVITY_BAR_WIDTH 和 ACTIVITY_BAR_BUTTON_SIZE）
     pub fn hit_test(&self, x: f32, y: f32, bar_y: f32) -> Option<usize> {
-        if !(0.0..=48.0).contains(&x) {
+        let bar_width = crate::layout::ACTIVITY_BAR_WIDTH;
+        if !(0.0..=bar_width).contains(&x) {
             return None;
         }
-        let icon_size = 48.0;
+        let icon_size = crate::layout::ACTIVITY_BAR_BUTTON_SIZE;
         let index = ((y - bar_y) / icon_size) as usize;
         if index < self.items.len() {
             Some(index)
@@ -89,9 +90,9 @@ impl ActivityBar {
         if index >= self.items.len() {
             return None;
         }
-        let icon_size = 48.0;
+        let icon_size = crate::layout::ACTIVITY_BAR_BUTTON_SIZE;
         let y = bar_y + index as f32 * icon_size;
-        Some((0.0, y, 48.0, icon_size))
+        Some((0.0, y, crate::layout::ACTIVITY_BAR_WIDTH, icon_size))
     }
 
     /// 进入自定义模式并开始拖拽指定项

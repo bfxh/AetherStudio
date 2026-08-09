@@ -15,17 +15,17 @@ impl EditorState {
         mouse_x >= handle_x - SIDEBAR_RESIZE_GRAB && mouse_x <= handle_x + SIDEBAR_RESIZE_GRAB
     }
     /// 文件树根目录行（工作区文件夹名）的起始 Y 坐标（相对侧边栏顶部），
-    /// 与 render_tree_nodes 中的 `y + header_h + 6.0 * s - sidebar_scroll_y` 严格一致。
+    /// 与 render_tree_nodes 中的 `y + header_h + 6.0 - sidebar_scroll_y` 严格一致。
     ///
     /// 之前三处（render、handle_file_tree_click、update_local_tree_hover、rbutton_down）
     /// 各自硬编码 34.0，未考虑 dpi_scale 和 sidebar_scroll_y，
     /// 导致高 DPI / 滚动时点击/悬停位置与渲染节点错位，
     /// 表现为"焦点与选中状态分离"。
     /// 内联输入行已改为树内行（见 file_tree_input_row_geom），不再整体下移。
+    /// 使用逻辑像素（与 TAB_BAR_HEIGHT 一致，不乘 dpi_scale，Direct2D 自动处理缩放）
     pub fn file_tree_list_start_y(&self) -> f32 {
-        let s = self.dpi_scale;
-        let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT * s;
-        header_h + 6.0 * s - self.sidebar_scroll_y
+        let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT;
+        header_h + 6.0 - self.sidebar_scroll_y
     }
 
     /// 树节点列表的起始 Y 坐标：根目录行之下一行（根行高度 = 节点行高）

@@ -73,6 +73,10 @@ pub(crate) unsafe fn on_l_button_down(
     if let Some(r) = lbd_submenu(hwnd, &state, mouse_x, mouse_y, &layout) {
         return r;
     }
+    // 历史对话浮动窗口：全局最顶层，覆盖所有面板/编辑器，优先处理
+    if let Some(r) = lbd_history_window(hwnd, &state, mouse_x, mouse_y) {
+        return r;
+    }
     if let Some(r) = lbd_activity_bar(hwnd, &state, mouse_x, mouse_y, &layout) {
         return r;
     }

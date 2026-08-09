@@ -14,7 +14,7 @@ use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
     AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HIGHLIGHT_TIMER_ID,
     HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
-    UI_ANIM_TIMER_ID,
+    TOOLTIP_TIMER_ID, UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
 
@@ -22,6 +22,9 @@ use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
 pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
     if wparam.0 == HOVER_TIMER_ID {
         return on_timer_hover(hwnd);
+    }
+    if wparam.0 == TOOLTIP_TIMER_ID {
+        return on_timer_tooltip(hwnd);
     }
     if wparam.0 == TERM_TIMER_ID {
         return on_timer_term_refresh(hwnd);
@@ -135,6 +138,28 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
                 let ty = st.hover.last_mouse_y + 16.0;
                 let max_w = 400.0;
                 st.hover.tooltip = Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
+                drop(st);
+                invalidate_window(hwnd);
+            }
+        }
+    }
+    LRESULT(0)
+}
+
+/// Tooltip 延迟显示定时器触发（活动栏/标题栏按钮悬停提示）
+unsafe fn on_timer_tooltip(hwnd: HWND) -> LRESULT {
+    let _ = KillTimer(hwnd, TOOLTIP_TIMER_ID);
+    if let Some(state) = get_and_set_state(hwnd) {
+        let mut st = state.borrow_mut();
+        // 仅在 hover_key 仍有效且 tooltip 尚未显示时触发
+        if st.tooltip_state.hover_key.is_some() && st.tooltip_state.visible_text.is_none() {
+            let (_, tooltip_text) = st.compute_tooltip_hover_key();
+            if let Some(text) = tooltip_text {
+                st.tooltip_state.visible_text = Some(text);
+                st.tooltip_state.show_pos = (
+                    st.tooltip_state.anchor.x as f32,
+                    st.tooltip_state.anchor.y as f32,
+                );
                 drop(st);
                 invalidate_window(hwnd);
             }
@@ -588,6 +613,72 @@ pub(crate) unsafe fn on_wm_app_8(
                 }
             }
         }
+    }
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 9
+/// 异步打开文件夹：避免在 RefCell 借用期间弹模态对话框导致重入 panic
+pub(crate) unsafe fn on_wm_app_9(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    if let Some(path) = crate::dialogs::Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
+        if crate::editor::files::check_workspace_trust(hwnd, &path) {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().open_folder(path);
+                }
+            });
+        } else {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+                }
+            });
+        }
+        invalidate_window(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 10
+/// 异步打开文件：避免在 RefCell 借用期间弹模态对话框导致重入 panic
+pub(crate) unsafe fn on_wm_app_10(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    if let Some(path) = crate::dialogs::Dialogs::open_file_dialog(hwnd, "打开文件", &[]) {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().load_file(path);
+            }
+        });
+        invalidate_window(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 11
+/// 异步另存为：避免在 RefCell 借用期间弹模态对话框导致重入 panic
+pub(crate) unsafe fn on_wm_app_11(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    if let Some(path) = crate::dialogs::Dialogs::save_file_dialog(hwnd, "另存为", "untitled.txt")
+    {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().save_as(path);
+            }
+        });
+        invalidate_window(hwnd);
     }
     LRESULT(0)
 }

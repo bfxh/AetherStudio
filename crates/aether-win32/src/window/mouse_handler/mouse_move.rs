@@ -85,6 +85,25 @@ pub(crate) unsafe fn on_mouse_move(
     // 提前走 invalidate 分支跳过选区更新，导致拖拽时预选中高亮跟不上鼠标；
     // 拖拽选区期间 hover/tooltip 状态无意义，直接跳过还能省掉逐帧命中开销。
     if is_dragging {
+        // 历史浮窗拖动：最高优先级（浮窗覆盖所有内容，拖动中跳过其他拖拽/选区）
+        {
+            let mut st = state.borrow_mut();
+            if let Some((off_x, off_y)) = st.ai_panel.history_win_drag {
+                let (win_w, win_h) = st.ai_panel.history_win_size;
+                // 新位置 = 鼠标 - 偏移，钳制在窗口客户区内
+                let max_x = (st.window_width as f32 - win_w).max(0.0);
+                let max_y = (st.window_height as f32 - win_h).max(0.0);
+                let nx = (mouse_x - off_x).clamp(0.0, max_x);
+                let ny = (mouse_y - off_y).clamp(0.0, max_y);
+                st.ai_panel.history_win_pos = Some((nx, ny));
+                drop(st);
+                // 拖动中设置握紧手形光标
+                let hcursor = LoadCursorW(None, IDC_SIZEALL).unwrap_or_default();
+                let _ = SetCursor(hcursor);
+                invalidate_window(hwnd);
+                return LRESULT(0);
+            }
+        }
         // 面板拖拽前置：跳过全部 hover 检测（拖拽中 hover 无意义），
         // 直接处理分割线/拐角调整并提前返回，避免热路径上 7 个 hover 命中的逐帧开销。
         let panel_dragging = {
@@ -108,12 +127,16 @@ pub(crate) unsafe fn on_mouse_move(
         // 如果尚未进入选区模式，检查鼠标是否移动了足够距离来启动选区
         if !st.is_selecting {
             // 记录鼠标按下位置（在 WM_LBUTTONDOWN 时设置）
+            // 仅当按下位置在编辑区内时才允许启动选区，
+            // 防止从菜单栏/侧边栏/AI面板拖入编辑区时误触选区
             if let Some((press_x, press_y)) = st.mouse_press.lbutton_down_pos {
-                let dx = mouse_x - press_x;
-                let dy = mouse_y - press_y;
-                // 超过 3px 阈值才启动选区（避免单击时的微小抖动）
-                if dx * dx + dy * dy > 9.0 {
-                    st.start_selection();
+                if editor_content.contains(press_x, press_y) {
+                    let dx = mouse_x - press_x;
+                    let dy = mouse_y - press_y;
+                    // 超过 3px 阈值才启动选区（避免单击时的微小抖动）
+                    if dx * dx + dy * dy > 9.0 {
+                        st.start_selection();
+                    }
                 }
             }
         }
@@ -225,6 +248,65 @@ pub(crate) unsafe fn on_mouse_move(
     let tooltip_changed = omm_tooltip_state(hwnd, &state, mouse_x, mouse_y);
     // 最终失效判定（文本拖拽选区已在前置分支处理并提前返回）
     if any_hover_changed || tooltip_changed {
+        // 标记 hover 相关脏区域，避免全窗口重绘
+        let mut st = state.borrow_mut();
+        if titlebar_changed || tab_changed {
+            // 标题栏 + 活动栏区域
+            let ar = layout.activity_bar_region();
+            st.dirty_tracker.mark_region(
+                ar.x,
+                ar.y,
+                ar.width,
+                ar.height,
+                crate::dirty_rect::DirtyRegionType::ActivityBar,
+            );
+            let tr = layout.tab_bar_region(st.show_tab_bar());
+            st.dirty_tracker.mark_region(
+                tr.x,
+                tr.y,
+                tr.width,
+                tr.height,
+                crate::dirty_rect::DirtyRegionType::TabBar,
+            );
+        }
+        if tree_changed || settings_changed {
+            let sr = layout.sidebar_region();
+            st.dirty_tracker.mark_region(
+                sr.x,
+                sr.y,
+                sr.width,
+                sr.height,
+                crate::dirty_rect::DirtyRegionType::Sidebar,
+            );
+        }
+        if ai_changed {
+            let rp = layout.right_panel_region();
+            st.dirty_tracker.mark_region(
+                rp.x,
+                rp.y,
+                rp.width,
+                rp.height,
+                crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
+        }
+        if welcome_changed {
+            st.dirty_tracker.mark_full_window();
+        }
+        if status_bar_changed {
+            let sb = layout.status_bar_region();
+            st.dirty_tracker.mark_region(
+                sb.x,
+                sb.y,
+                sb.width,
+                sb.height,
+                crate::dirty_rect::DirtyRegionType::StatusBar,
+            );
+        }
+        if tooltip_changed {
+            // tooltip 显示/隐藏需要全窗口重绘（位置不固定）
+            st.dirty_tracker.mark_full_window();
+        }
+        drop(st);
         invalidate_window(hwnd);
     }
     LRESULT(0)
@@ -529,14 +611,17 @@ unsafe fn omm_activity_tab_hover(
     let mut st = state.borrow_mut();
     // 活动栏悬停
     let activity_region = layout.activity_bar_region();
+    let old_activity_hover = st.activity_bar.hover_index;
     st.activity_bar.hover_index = st
         .activity_bar
         .hit_test(mouse_x, mouse_y, activity_region.y);
+    let activity_changed = old_activity_hover != st.activity_bar.hover_index;
     // 标签栏悬停
     let editor_content = layout.editor_content_region(st.show_tab_bar());
     let old_hover = st.tab_bar.hover_tab;
     st.update_hover_tab(mouse_x, mouse_y, editor_content.x);
-    (old_hover != st.tab_bar.hover_tab, editor_content)
+    let tab_changed = old_hover != st.tab_bar.hover_tab;
+    (activity_changed || tab_changed, editor_content)
 }
 
 /// 文件树 / SSH 管理面板 / 源代码管理面板悬停更新。返回是否有变化。
@@ -739,6 +824,34 @@ unsafe fn omm_ai_hover(
     layout: &crate::layout::LayoutManager,
 ) -> bool {
     let mut st = state.borrow_mut();
+    // 历史浮窗打开时：hover 基于浮窗实际区域（浮窗可拖出/居中于整个窗口，
+    // 不受右面板区域限制），直接用浮窗条目命中区更新 hover_tab。
+    if st.ai_panel.history_open {
+        let in_win = st
+            .ai_panel
+            .history_win_region
+            .map(|(px, py, pw, ph)| {
+                mouse_x >= px && mouse_x < px + pw && mouse_y >= py && mouse_y < py + ph
+            })
+            .unwrap_or(false);
+        let old_tab_hover = st.ai_panel.hover_tab;
+        st.ai_panel.hover_tab = if in_win {
+            st.ai_panel
+                .history_item_regions
+                .iter()
+                .find(|(_, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(i, ..)| *i)
+        } else {
+            None
+        };
+        // 浮窗打开期间不处理 Apply 按钮 hover（浮窗覆盖于面板之上）
+        let old_apply_hover = st.ai_panel.hover_apply_button;
+        st.ai_panel.hover_apply_button = false;
+        return old_tab_hover != st.ai_panel.hover_tab
+            || old_apply_hover != st.ai_panel.hover_apply_button;
+    }
     let right_panel_region = layout.right_panel_region();
     if layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y) {
         // Apply 按钮悬停
@@ -1039,7 +1152,7 @@ unsafe fn omm_hover_tooltip(
 /// 2. hover_key 相同且鼠标移动 > 4px：重置 anchor/timer_start，清空 visible_text
 /// 3. hover_key 相同且静止 ≥ 500ms：设置 visible_text + show_pos
 unsafe fn omm_tooltip_state(
-    _hwnd: HWND,
+    hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
     mouse_x: f32,
     mouse_y: f32,
@@ -1065,6 +1178,17 @@ unsafe fn omm_tooltip_state(
             None
         };
         st.tooltip_state.visible_text = None;
+        // 启动/取消 tooltip 定时器
+        if new_key.is_some() {
+            let _ = SetTimer(
+                hwnd,
+                super::super::TOOLTIP_TIMER_ID,
+                TOOLTIP_DELAY_MS as u32,
+                None,
+            );
+        } else {
+            let _ = KillTimer(hwnd, super::super::TOOLTIP_TIMER_ID);
+        }
         // 离开元素或切换元素时，若之前有显示，需要重绘清除
         return was_visible;
     }
@@ -1085,6 +1209,14 @@ unsafe fn omm_tooltip_state(
             y: mouse_y as i32,
         };
         st.tooltip_state.timer_start = Some(GetTickCount64());
+        // 移动超限时重置定时器
+        let _ = KillTimer(hwnd, super::super::TOOLTIP_TIMER_ID);
+        let _ = SetTimer(
+            hwnd,
+            super::super::TOOLTIP_TIMER_ID,
+            TOOLTIP_DELAY_MS as u32,
+            None,
+        );
         if was_visible {
             st.tooltip_state.visible_text = None;
             return true;
@@ -1148,6 +1280,32 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             || st.command_palette.visible
         {
             return CursorType::Arrow;
+        }
+
+        // 1b. 历史浮窗：拖动中 → Grabbing；悬停标题栏 → Grab；悬停关闭按钮 → Hand
+        if st.ai_panel.history_open {
+            // 拖动中（按住标题栏拖拽）→ 握紧手形
+            if st.ai_panel.history_win_drag.is_some() {
+                return CursorType::Grabbing;
+            }
+            // 悬停标题栏（可拖动区域）→ 张开手形
+            if let Some((tx, ty, tw, th)) = st.ai_panel.history_win_titlebar_region {
+                if mouse_x >= tx && mouse_x < tx + tw && mouse_y >= ty && mouse_y < ty + th {
+                    return CursorType::Grab;
+                }
+            }
+            // 悬停关闭按钮 → Hand
+            if let Some((cx, cy, cw, ch)) = st.ai_panel.history_win_close_region {
+                if mouse_x >= cx && mouse_x < cx + cw && mouse_y >= cy && mouse_y < cy + ch {
+                    return CursorType::Hand;
+                }
+            }
+            // 悬停浮窗其他区域 → Arrow（浮窗覆盖下层 UI，不穿透）
+            if let Some((wx, wy, ww, wh)) = st.ai_panel.history_win_region {
+                if mouse_x >= wx && mouse_x < wx + ww && mouse_y >= wy && mouse_y < wy + wh {
+                    return CursorType::Arrow;
+                }
+            }
         }
 
         // 2. 欢迎页 hover 项 → Hand

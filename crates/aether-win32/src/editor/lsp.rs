@@ -360,13 +360,15 @@ impl LspState {
     }
     /// 轮询 LSP 事件，将诊断同步到 LspClient 缓存和 diagnostics 表
     /// 应在渲染循环中每帧调用
+    /// 返回 true 表示诊断表有变化（调用方应标记编辑区脏矩形，避免波浪线残留）
     pub fn poll_events(
         &mut self,
         diagnostics: &mut HashMap<String, Vec<DiagnosticItem>>,
         status_message: &mut String,
-    ) {
+    ) -> bool {
+        let mut diagnostics_changed = false;
         let Some(rx) = self.rx.as_mut() else {
-            return;
+            return false;
         };
         while let Ok(event) = rx.try_recv() {
             use aether_lsp::client::LspEvent;
@@ -410,6 +412,7 @@ impl LspState {
                     } else {
                         diagnostics.insert(path_str, items);
                     }
+                    diagnostics_changed = true;
                 }
                 LspEvent::ServerReady { language_id } => {
                     *status_message = format!("LSP 服务器就绪: {}", language_id);
@@ -433,6 +436,7 @@ impl LspState {
                 _ => {}
             }
         }
+        diagnostics_changed
     }
 }
 

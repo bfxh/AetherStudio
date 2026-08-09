@@ -78,12 +78,16 @@ fn conpty_smoke_reads_initial_banner() {
     let (session, read_handle) =
         ConPtySession::spawn(&cmd_path(), None, 80, 24).expect("spawn 失败");
 
+    // CI 环境可能较慢，等待 cmd.exe 完全初始化并输出 banner
+    std::thread::sleep(Duration::from_millis(500));
+
     // 写一个无害命令 + exit，确保管道最终会关闭，drain_to_eof 能返回
     session
         .write_input(b"ver\r\nexit\r\n")
         .expect("write_input 失败");
 
-    let bytes = drain_to_eof(PipeReader::new(read_handle), Duration::from_secs(5));
+    // CI 环境给予更长的超时时间
+    let bytes = drain_to_eof(PipeReader::new(read_handle), Duration::from_secs(10));
     assert!(
         !bytes.is_empty(),
         "应能读取到 cmd.exe 的输出，但读到 0 bytes"

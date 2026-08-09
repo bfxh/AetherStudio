@@ -29,12 +29,12 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
                 .unwrap();
-            // 章节标题：9px 加粗，紧凑风格
+            // 章节标题：8px 加粗，紧凑风格
             let header_format = self
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    9.0 * s,
+                    8.0 * s,
                     DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
@@ -44,7 +44,7 @@ impl EditorState {
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    9.5 * s,
+                    8.0 * s,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
@@ -55,7 +55,7 @@ impl EditorState {
                 .render_ctx
                 .text_format_cache
                 .get_format(
-                    9.5 * s,
+                    8.0 * s,
                     DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
@@ -109,7 +109,8 @@ impl EditorState {
                 .unwrap();
 
             // 章节标题栏（紧凑风格，高度与 file_tree_list_start_y 共用常量）
-            let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT * s;
+            // 使用逻辑像素（与 TAB_BAR_HEIGHT 一致，不乘 dpi_scale，Direct2D 自动处理缩放）
+            let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT;
             let header_text: Vec<u16> = "资源管理器".encode_utf16().chain(Some(0)).collect();
             let header_text_rect = D2D_RECT_F {
                 left: x + 10.0 * s,
@@ -236,10 +237,11 @@ impl EditorState {
                     crate::icons::IconKind::ChevronRight
                 };
                 let ch_size = 9.0 * s;
+                // chevron 左边缘对齐"资源管理器"标题文字（x + 10*s）
                 self.icons.draw(
                     target,
                     chevron,
-                    base_x + (arrow_w - ch_size) / 2.0,
+                    base_x,
                     root_top + (node_h - ch_size) / 2.0,
                     ch_size,
                     ch_size,
@@ -251,7 +253,7 @@ impl EditorState {
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "工作区".to_string());
-                let root_text_left = base_x + arrow_w + 4.0 * s;
+                let root_text_left = base_x + arrow_w + 1.0 * s;
                 let max_text_w = (x + width - 10.0 * s - root_text_left).max(1.0);
                 if let Ok(layout) = self.render_ctx.text_layout_cache.create_ellipsis_layout(
                     &root_name,
@@ -394,7 +396,7 @@ impl EditorState {
                         target.DrawRectangle(&box_rect, &focus_brush, 1.0 * s, None);
 
                         // 文本：与树行同字号，垂直居中
-                        let ft_font_size = 9.5f32 * s;
+                        let ft_font_size = 8.0f32 * s;
                         let input_format = self
                             .render_ctx
                             .text_format_cache
