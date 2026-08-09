@@ -6,6 +6,7 @@
 /// REQ-P2-10: release 构建中所有 Mutex 锁和文件 I/O 均被 cfg 门控移除，
 /// register_hit_region / clear_hit_regions / flush_hit_regions_to_file 在
 /// release 构建中编译为空实现，零运行时开销。
+#[cfg(debug_assertions)]
 use std::io::Write;
 
 /// 单个可点击区域
@@ -147,8 +148,6 @@ mod debug_impl {
 // ============================================================================
 #[cfg(not(debug_assertions))]
 mod release_impl {
-    use super::*;
-
     #[inline]
     pub fn register_hit_region(
         _action: impl Into<String>,

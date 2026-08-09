@@ -111,11 +111,28 @@ pub enum IconKind {
     FileSwift,
     FileKotlin,
     FileDocker,
+    FileDart,
+    FileHaskell,
+    FileVue,
+    FileReact,
+    FileSvelte,
+    FileZig,
+    FileR,
+    FileScala,
+    FilePerl,
+    FileClojure,
+    FileElixir,
+    FileErlang,
+    FileJulia,
+    FileFSharp,
+    Clock,
+    /// 垃圾桶（删除）
+    Trash,
 }
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 68] = [
+    pub const ALL: [IconKind; 84] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
@@ -184,6 +201,22 @@ impl IconKind {
         IconKind::FileDocker,
         IconKind::PanelRight,
         IconKind::ChevronDown,
+        IconKind::FileDart,
+        IconKind::FileHaskell,
+        IconKind::FileVue,
+        IconKind::FileReact,
+        IconKind::FileSvelte,
+        IconKind::FileZig,
+        IconKind::FileR,
+        IconKind::FileScala,
+        IconKind::FilePerl,
+        IconKind::FileClojure,
+        IconKind::FileElixir,
+        IconKind::FileErlang,
+        IconKind::FileJulia,
+        IconKind::FileFSharp,
+        IconKind::Clock,
+        IconKind::Trash,
     ];
 
     /// 索引到 SVG_DEFS 数组下标
@@ -327,7 +360,7 @@ mod tests {
     /// 验证 ALL 数组长度与 SVG_DEFS 一致
     #[test]
     fn all_icons_count_matches() {
-        assert_eq!(IconKind::ALL.len(), 68);
+        assert_eq!(IconKind::ALL.len(), 84);
     }
 
     /// 验证 ALL 数组中无重复项

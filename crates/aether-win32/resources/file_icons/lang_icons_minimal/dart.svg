@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="#0175C2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Dart 飞镖（箭头朝右） -->
+  <path d="M12 8l-6-3.5 1.5 3.5-1.5 3.5L12 8z" />
+  <line x1="6" y1="8" x2="4" y2="8" />
+</svg>

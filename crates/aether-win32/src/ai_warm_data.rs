@@ -20,16 +20,20 @@ const EMBEDDING_DIM: usize = crate::embedding::EmbeddingModel::DIM;
 /// 温数据归档请求
 #[derive(Clone, Debug)]
 pub enum ArchiveRequest {
-    /// 归档指定会话
+    /// 归档指定会话（携带归档发起时的工作区哈希，避免异步线程读到切换后的新值）
     ArchiveConversation {
         conv_id: String,
         conv: AiConversation,
+        /// 归档发起时的工作区哈希（由调用方捕获，保证归属正确）
+        workspace_hash: String,
     },
     /// 归档所有脏会话
     /// reflect=false 用于退出场景：只落盘不做 LLM 反思，避免退出被网络请求阻塞
     ArchiveAllDirty {
         sessions: Vec<AiConversation>,
         reflect: bool,
+        /// 归档发起时的工作区哈希
+        workspace_hash: String,
     },
     /// 删除指定会话的临时日志
     RemoveHotLog { conv_id: String },
@@ -80,13 +84,11 @@ impl WarmDataStore {
 
         let worker_store = Arc::clone(&store);
         let worker_base = base_dir.clone();
-        let worker_hash = Arc::clone(&workspace_hash);
         let worker_reflector = Arc::clone(&reflector_client);
         let handle = std::thread::spawn(move || {
             Self::archive_worker(
                 worker_store,
                 worker_base,
-                worker_hash,
                 worker_reflector,
                 request_rx,
                 result_tx,
@@ -178,6 +180,11 @@ impl WarmDataStore {
             .search_conversations(keyword, ws.as_deref(), limit)
     }
 
+    /// 重命名会话标题（直接走 SQLite UPDATE，不经后台线程，保证立即生效）
+    pub fn rename_conversation(&self, conv_id: &str, new_title: &str) -> Result<(), String> {
+        self.store.rename_conversation(conv_id, new_title)
+    }
+
     /// 列出 playbook 条目（管理面板数据源）
     pub fn list_playbook(
         &self,
@@ -211,7 +218,6 @@ impl WarmDataStore {
     fn archive_worker(
         store: Arc<dyn MemoryStore>,
         base_dir: PathBuf,
-        workspace_hash: Arc<RwLock<String>>,
         reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>>,
         request_rx: Receiver<ArchiveRequest>,
         result_tx: Sender<ArchiveResult>,
@@ -229,8 +235,7 @@ impl WarmDataStore {
 
         while let Ok(req) = request_rx.recv() {
             match req {
-                ArchiveRequest::ArchiveConversation { conv_id, conv } => {
-                    let hash = workspace_hash.read().map(|g| g.clone()).unwrap_or_default();
+                ArchiveRequest::ArchiveConversation { conv_id, conv, workspace_hash: hash } => {
                     let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);
                     if result.is_ok() {
                         Self::maybe_reflect(&store, &reflector_client, &conv);
@@ -240,8 +245,7 @@ impl WarmDataStore {
                         Err(e) => ArchiveResult::Failed { conv_id, error: e },
                     });
                 }
-                ArchiveRequest::ArchiveAllDirty { sessions, reflect } => {
-                    let hash = workspace_hash.read().map(|g| g.clone()).unwrap_or_default();
+                ArchiveRequest::ArchiveAllDirty { sessions, reflect, workspace_hash: hash } => {
                     for conv in sessions {
                         let conv_id = conv.id.clone();
                         let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);
@@ -334,18 +338,28 @@ impl WarmDataStore {
         Ok(())
     }
 
-    /// 发送归档请求（非阻塞）
+    /// 发送归档请求（非阻塞）；自动捕获当前工作区哈希，保证归属正确
     pub fn request_archive(&self, conv_id: String, conv: AiConversation) {
         if let Some(tx) = &self.request_tx {
-            let _ = tx.send(ArchiveRequest::ArchiveConversation { conv_id, conv });
+            let hash = self.current_workspace_hash();
+            let _ = tx.send(ArchiveRequest::ArchiveConversation {
+                conv_id,
+                conv,
+                workspace_hash: hash,
+            });
         }
     }
 
-    /// 批量归档所有脏会话
+    /// 批量归档所有脏会话；自动捕获当前工作区哈希
     /// reflect=false 用于退出场景：只落盘不做 LLM 反思，避免退出被网络请求阻塞
     pub fn request_archive_all(&self, sessions: Vec<AiConversation>, reflect: bool) {
         if let Some(tx) = &self.request_tx {
-            let _ = tx.send(ArchiveRequest::ArchiveAllDirty { sessions, reflect });
+            let hash = self.current_workspace_hash();
+            let _ = tx.send(ArchiveRequest::ArchiveAllDirty {
+                sessions,
+                reflect,
+                workspace_hash: hash,
+            });
         }
     }
 
@@ -399,6 +413,11 @@ impl WarmDataStore {
     /// 清空全部历史会话；返回删除条数
     pub fn clear_all_conversations(&self) -> Result<usize, String> {
         self.store.clear_all_conversations()
+    }
+
+    /// 清理无工作区绑定的历史会话；返回删除条数
+    pub fn clear_orphan_conversations(&self) -> Result<usize, String> {
+        self.store.clear_orphan_conversations()
     }
 
     /// 加载完整会话

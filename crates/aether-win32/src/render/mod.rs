@@ -75,9 +75,36 @@ impl EditorState {
             self.salvage_ai_partial_edits(conv_idx);
         }
 
+        // AI 流式生成中：标记右侧面板脏区域，确保新 token 及时渲染。
+        // 若缺少此标记，infer_from_state 返回 None（右侧面板可见性未变），
+        // 依赖 on_paint 的全窗口防护导致每帧全量重绘，产生重影和性能浪费。
+        if self.ai_panel.any_generating() && self.layout.right_panel_visible {
+            let rp = self.layout.right_panel_region();
+            if rp.width > 0.0 && rp.height > 0.0 {
+                self.dirty_tracker.mark_region(
+                    rp.x,
+                    rp.y,
+                    rp.width,
+                    rp.height,
+                    crate::dirty_rect::DirtyRegionType::RightPanel,
+                );
+            }
+        }
+
         // LSP: 轮询诊断事件，更新 diagnostics 字段
-        self.lsp
-            .poll_events(&mut self.diagnostics, &mut self.status_message);
+        // 诊断变化时标记编辑区脏矩形，确保波浪线及时出现/消失（否则残留为重影）
+        if self.lsp
+            .poll_events(&mut self.diagnostics, &mut self.status_message)
+        {
+            let er = self.layout.editor_content_region(self.show_tab_bar());
+            self.dirty_tracker.mark_region(
+                er.x,
+                er.y,
+                er.width,
+                er.height,
+                crate::dirty_rect::DirtyRegionType::EditorContent,
+            );
+        }
 
         // 终端输出轮询：从读取线程拉取子进程 stdout/stderr 并写入输出缓存。
         // 此前未调用 flush_output 导致 shell 输出无法显示，现在每帧轮询保证实时性。
@@ -231,6 +258,18 @@ impl EditorState {
 
         // P1.2: 先把事件队列中累积的事件转换为脏矩形
         self.flush_events_to_dirty_tracker();
+
+        // 标签栏平滑滚动动画 tick
+        if self.tick_tab_scroll() {
+            // 动画进行中：标记标签栏区域脏，并请求下一帧
+            let show_tab_bar = self.show_tab_bar();
+            let tr = self.layout.tab_bar_region(show_tab_bar);
+            self.dirty_tracker.mark_region(
+                tr.x, tr.y, tr.width, tr.height,
+                crate::dirty_rect::DirtyRegionType::TabBar,
+            );
+            crate::window::invalidate_window(self.hwnd);
+        }
 
         // 侧边栏宽度动画 tick：每帧 lerp，到达终态后布可见性并清除动画
         if let Some(anim) = self.layout.sidebar_anim {
@@ -891,6 +930,11 @@ impl EditorState {
             self.render_activity_bar_context_menu(&target);
         }
 
+        // 15c. AI 历史对话浮动窗口（可拖动，覆盖于所有面板/编辑器之上）
+        if self.ai_panel.history_open {
+            self.render_history_float_window(&target);
+        }
+
         // 16. P3.4: hover tooltip + UI Tooltip（最上层，必须在 EndDraw 之前）。
         // 此前二者在 EndDraw 之后调用：批次外命令被 D2D 静默丢弃（tooltip
         // 实际画不出来），且错误会锁存到下一次 EndDraw 返回 D2DERR_WRONG_STATE，
@@ -1016,6 +1060,7 @@ impl EditorState {
 
 mod account;
 mod ai;
+mod ai_history_window;
 mod chrome;
 mod dialogs;
 mod editor_view;

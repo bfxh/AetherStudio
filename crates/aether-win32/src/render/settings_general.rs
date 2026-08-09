@@ -622,6 +622,7 @@ impl EditorState {
                     }
                 }
                 crate::settings::SettingsTab::Ai => ("AI", "AI 接口配置"),
+                                crate::settings::SettingsTab::Playbook => ("策略", "管理 AI 沉淀策略库"),
                 crate::settings::SettingsTab::Appearance => ("外观", "主题与界面自定义"),
                 crate::settings::SettingsTab::Remote => ("远程", "SSH 与容器远程连接"),
                 crate::settings::SettingsTab::Update => ("更新", "版本与更新策略"),
@@ -752,6 +753,119 @@ impl EditorState {
                     self.render_update_settings(target, page_x, page_w, page_y);
                 }
                 crate::settings::SettingsTab::Ai => {}
+                                crate::settings::SettingsTab::Playbook => {
+                                    self.render_playbook_settings(target, page_x, page_w, page_y);
+                                }
+            }
+        }
+    }
+
+    /// 渲染"策略"标签页内容（AI 沉淀策略库管理）
+    pub(super) fn render_playbook_settings(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        x: f32,
+        width: f32,
+        start_y: f32,
+    ) {
+        use aether_render::d2d::factory::color_f;
+        use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+        use windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_NONE;
+        use windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL;
+
+        unsafe {
+            let mut cy = start_y;
+            let small_format = self
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let white_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
+                .unwrap();
+            let dim_brush = self
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(0.55, 0.56, 0.60, 1.0))
+                .unwrap();
+
+            // 标题
+            let header: Vec<u16> = format!(
+                "已沉淀策略（共 {} 条）",
+                self.ai_panel.playbook_items.len()
+            )
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+            let header_rect = D2D_RECT_F {
+                left: x,
+                top: cy,
+                right: x + width,
+                bottom: cy + 24.0,
+            };
+            target.DrawText(
+                &header,
+                &small_format,
+                &header_rect,
+                &white_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+            cy += 28.0;
+
+            // 策略列表
+            let item_h = 30.0f32;
+            for bullet in self.ai_panel.playbook_items.iter() {
+                let line: Vec<u16> = format!(
+                    "[{}] {}  (+{}/-{})",
+                    bullet.section, bullet.content, bullet.helpful_count, bullet.harmful_count
+                )
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+                let line_rect = D2D_RECT_F {
+                    left: x + 6.0,
+                    top: cy + 3.0,
+                    right: x + width - 6.0,
+                    bottom: cy + item_h - 3.0,
+                };
+                target.DrawText(
+                    &line,
+                    &small_format,
+                    &line_rect,
+                    &dim_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                cy += item_h;
+            }
+
+            if self.ai_panel.playbook_items.is_empty() {
+                let empty: Vec<u16> = "暂无沉淀策略，对话归档后会自动提炼"
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
+                let empty_rect = D2D_RECT_F {
+                    left: x + 6.0,
+                    top: cy + 3.0,
+                    right: x + width - 6.0,
+                    bottom: cy + item_h,
+                };
+                target.DrawText(
+                    &empty,
+                    &small_format,
+                    &empty_rect,
+                    &dim_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
             }
         }
     }

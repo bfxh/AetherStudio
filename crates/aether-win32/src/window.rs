@@ -55,6 +55,8 @@ pub(crate) const POWER_TIMER_ID: usize = 0xA009;
 pub const SANDBOX_TIMER_ID: usize = 0xA00A;
 /// 沙盒评测刷新间隔（毫秒）
 pub const SANDBOX_REFRESH_MS: u32 = 200;
+/// Tooltip 延迟显示定时器 ID（活动栏/标题栏按钮悬停提示）
+pub(crate) const TOOLTIP_TIMER_ID: usize = 0xA00B;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -65,8 +67,6 @@ pub(crate) const TERM_REFRESH_MS: u32 = 16;
 pub(crate) const AI_REFRESH_MS: u32 = 80;
 /// 语法高亮刷新间隔（毫秒），约 30fps，让后台高亮结果尽快着色显示
 pub(crate) const HIGHLIGHT_REFRESH_MS: u32 = 33;
-/// UI 动画帧间隔（毫秒），约 60fps，用于下拉面板展开/收起动画
-pub(crate) const UI_ANIM_MS: u32 = 16;
 /// P3.4: Hover tooltip 触发延迟（毫秒）
 pub(crate) const HOVER_DELAY_MS: u32 = 500;
 /// 长按期间允许的鼠标移动容差（逻辑像素，超过则取消长按检测）
@@ -387,6 +387,9 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             msg if msg == WM_APP + 5 => on_wm_app_5(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 6 => on_wm_app_6(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 7 => on_wm_app_7(hwnd, msg, wparam, lparam),
+            msg if msg == WM_APP + 9 => on_wm_app_9(hwnd, msg, wparam, lparam),
+            msg if msg == WM_APP + 10 => on_wm_app_10(hwnd, msg, wparam, lparam),
+            msg if msg == WM_APP + 11 => on_wm_app_11(hwnd, msg, wparam, lparam),
             msg if msg == crate::updater::WM_UPDATE_CHECK_DONE => {
                 on_wm_app_8(hwnd, msg, wparam, lparam)
             }

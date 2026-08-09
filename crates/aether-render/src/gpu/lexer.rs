@@ -52,10 +52,14 @@ pub struct GpuLexer {
     context: GpuComputeContext,
 
     // DFA 状态表（常量缓冲区）
+    // 注意：这些缓冲区必须保持存活，以确保 GPU 资源不被释放
+    #[allow(dead_code)]
     dfa_table: ID3D11Buffer,
+    #[allow(dead_code)]
     dfa_srv: ID3D11ShaderResourceView,
 
     // 关键字完美哈希表（常量缓冲区）
+    #[allow(dead_code)]
     keyword_table: ID3D11Buffer,
     keyword_srv: ID3D11ShaderResourceView,
 

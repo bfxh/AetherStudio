@@ -17,6 +17,8 @@ pub(crate) enum SvgShape {
     Path(&'static str, Option<&'static str>),
     /// 圆形：cx, cy, r, fill
     Circle(f32, f32, f32, Option<&'static str>),
+    /// 椭圆：cx, cy, rx, ry, fill
+    Ellipse(f32, f32, f32, f32, Option<&'static str>),
     /// 矩形：x, y, w, h, fill, rx（圆角，可选）
     Rect(f32, f32, f32, f32, Option<&'static str>, Option<f32>),
     /// 直线：x1, y1, x2, y2
@@ -267,13 +269,22 @@ const UI_TERMINAL: SvgDef = SvgDef {
     ],
 };
 
-/// Lucide "git-branch" - Git 分支
+/// Git 分支 — 菱形轮廓 + 分支线（镂空描边风格）
 const UI_GIT_BRANCH: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
     shapes: &[
-        SvgShape::Path("M15 6a9 9 0 0 0-9 9V3", None),
-        SvgShape::Circle(18.0, 6.0, 3.0, None),
-        SvgShape::Circle(6.0, 18.0, 3.0, None),
+        // 菱形轮廓
+        SvgShape::Path("M12 1.5 L22.5 12 L12 22.5 L1.5 12 Z", None),
+        // 主干线
+        SvgShape::Path("M12 19.5 L12 13.5", None),
+        // 分支线
+        SvgShape::Path("M12 13.5 L17.5 8", None),
+        // 底部圆
+        SvgShape::Circle(12.0, 19.5, 1.8, None),
+        // 中心圆
+        SvgShape::Circle(12.0, 13.5, 1.5, None),
+        // 右上圆
+        SvgShape::Circle(17.5, 8.0, 1.8, None),
     ],
 };
 
@@ -405,29 +416,34 @@ const UI_BOT: SvgDef = SvgDef {
     ],
 };
 
-/// Lucide "plug" - SSH/插头
+/// SSH/远程链接 — 显示器 + 插头（远程连接语义）
 const UI_SSH: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
     shapes: &[
-        SvgShape::Path("M12 22v-5", None),
-        SvgShape::Path("M15 8V2", None),
-        SvgShape::Path(
-            "M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z",
-            None,
-        ),
-        SvgShape::Path("M9 8V2", None),
+        // 显示器轮廓
+        SvgShape::Rect(2.0, 4.0, 20.0, 13.0, None, Some(2.0)),
+        // 屏幕内的终端提示符 >_
+        SvgShape::Path("m7 9 3 3-3 3", None),
+        SvgShape::Path("M12 15h4", None),
+        // 底座
+        SvgShape::Path("M8 21h8", None),
+        SvgShape::Path("M12 17v4", None),
     ],
 };
 
-/// Lucide "git-fork" - 克隆（fork 风格）
+/// 克隆仓库 — 双圆 + 下载箭头（克隆语义）
 const UI_CLONE: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
     shapes: &[
-        SvgShape::Circle(6.0, 3.0, 2.0, None),
-        SvgShape::Circle(6.0, 21.0, 2.0, None),
-        SvgShape::Circle(18.0, 12.0, 2.0, None),
-        SvgShape::Path("M6 5v14", None),
-        SvgShape::Path("M6 11a6 6 0 0 0 6 6h0a4 4 0 0 1 4-4", None),
+        // 源仓库圆
+        SvgShape::Circle(7.0, 5.0, 3.0, None),
+        // 目标仓库圆
+        SvgShape::Circle(17.0, 19.0, 3.0, None),
+        // 连接曲线
+        SvgShape::Path("M7 8v3a5 5 0 0 0 5 5h5", None),
+        // 下载箭头
+        SvgShape::Path("M17 13v3", None),
+        SvgShape::Path("m15 14 2 2 2-2", None),
     ],
 };
 
@@ -462,321 +478,402 @@ const UI_EMOJI_SHEEP: SvgDef = SvgDef {
 };
 
 // ===========================================================================
-// 文件类型图标（彩色 fill 模式 — Devicon / Material Theme 风格）
+// 文件类型图标（极简风格 — 透明背景 + 品牌色）
+// viewBox: 16x16，适配文件树小尺寸显示
 // ===========================================================================
 
-/// 通用文件型 SVG：右上折角文件 + 内嵌符号
-/// 在 fill 模式下，path 元素携带 fill 颜色
+/// 通用文本文件图标（三条横线）
 const FILE_TEXT: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        // 文件体
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#5A5A5A")),
-        // 折角
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 三条文本行
-        SvgShape::Path("M7.5 12 L16.5 12", Some("#FFFFFF")),
-        SvgShape::Path("M7.5 15 L16.5 15", Some("#FFFFFF")),
-        SvgShape::Path("M7.5 18 L13 18", Some("#FFFFFF")),
+        SvgShape::Line(4.0, 5.0, 12.0, 5.0),
+        SvgShape::Line(4.0, 8.0, 12.0, 8.0),
+        SvgShape::Line(4.0, 11.0, 10.0, 11.0),
     ],
 };
 
-/// Python 文件图标（基于 Material Theme Python）
+/// Python 文件图标（双蛇互锁简化）
 const FILE_PYTHON: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        // 文件体 - Python 蓝
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#3776AB")),
-        // 折角 - Python 黄
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFD43B")),
-        // 双圆互锁
-        SvgShape::Circle(9.5, 15.0, 3.0, Some("#FFD43B")),
-        SvgShape::Circle(14.5, 15.0, 3.0, Some("#FFFFFF")),
+        SvgShape::Path("M8 3c-1.5 0-2.7 0.7-2.7 2v1.3h2.7v0.7H4.7c-1.1 0-2 0.9-2 2s0.9 2 2 2H6v-1.3c0-0.4 0.3-0.7 0.7-0.7h2.7c0.4 0 0.7-0.3 0.7-0.7V5c0-1.3-1.2-2-2.7-2z", None),
+        SvgShape::Circle(6.7, 5.0, 0.4, Some("#3776AB")),
+        SvgShape::Path("M8 13c1.5 0 2.7-0.7 2.7-2V9.7H8V9h3.3c1.1 0 2-0.9 2-2s-0.9-2-2-2H10v1.3c0 0.4-0.3 0.7-0.7 0.7H6.7c-0.4 0-0.7 0.3-0.7 0.7v2.7c0 1.3 1.2 2 2.7 2z", None),
+        SvgShape::Circle(9.3, 11.0, 0.4, Some("#3776AB")),
     ],
 };
 
-/// Java 文件图标（基于 Material Theme Java）
+/// Java 文件图标（咖啡杯）
 const FILE_JAVA: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        // 文件体 - Java 红
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#E76F00")),
-        // 折角
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 咖啡杯主体（梯形）
-        SvgShape::Path("M8 12 L16 12 L15.2 18.5 Q15.1 19.5 14.1 19.5 L9.9 19.5 Q8.9 19.5 8.8 18.5 Z", Some("#FFFFFF")),
-        // 杯把手
-        SvgShape::Path("M16 14 Q18.5 14 18.5 16 Q18.5 18 16 18", Some("#FFFFFF")),
-        // 蒸汽
-        SvgShape::Path("M10 9 Q11 7.5 10 6", Some("#FFFFFF")),
-        SvgShape::Path("M14 9 Q15 7.5 14 6", Some("#FFFFFF")),
+        SvgShape::Path("M10.5 6h0.6a2 2 0 1 1 0 4h-0.6", None),
+        SvgShape::Path("M3.5 6h7v4.5a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6z", None),
+        SvgShape::Line(4.5, 3.5, 4.5, 4.8),
+        SvgShape::Line(7.0, 3.5, 7.0, 4.8),
+        SvgShape::Line(9.5, 3.5, 9.5, 4.8),
     ],
 };
 
-/// C 文件图标（基于 Devicon C 风格）
+/// C 文件图标
 const FILE_C: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#5879A2")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
         // C 字符（马蹄形）
-        SvgShape::Path("M15.5 12.5 Q14 11 9 11 Q9 15.5 9 20 Q14 20 15.5 18.5 L14.5 17.5 Q13 19 11 19 Q10.5 19 10.5 15.5 Q10.5 12 11 12 Q13 12 14.5 13.5 Z", Some("#FFFFFF")),
+        SvgShape::Path("M11 5.5 Q9.5 4 6.5 4 Q4 4 4 8 Q4 12 6.5 12 Q9.5 12 11 10.5 L10 9.5 Q8.8 11 7 11 Q5.5 11 5.5 8 Q5.5 5 7 5 Q8.8 5 10 6.5 Z", Some("#00599C")),
     ],
 };
 
 /// C++ 文件图标
 const FILE_CPP: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#00599C")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // C
-        SvgShape::Path("M12 12.5 Q11 11.5 8 11.5 Q8 15.5 8 19.5 Q11 19.5 12 18.5 L11.2 17.7 Q10 19 9.2 19 Q8.9 19 8.9 15.5 Q8.9 12 9.2 12 Q10 12 11.2 13.3 Z", Some("#FFFFFF")),
-        // 两个 +
-        SvgShape::Path("M14 13.5 L16 13.5 M15 12.5 L15 14.5", Some("#FFFFFF")),
-        SvgShape::Path("M17 17 L19 17 M18 16 L18 18", Some("#FFFFFF")),
+        // C 字符
+        SvgShape::Path("M9.5 5.5 Q8 4 5.5 4 Q3 4 3 8 Q3 12 5.5 12 Q8 12 9.5 10.5 L8.5 9.5 Q7.3 11 6 11 Q4.5 11 4.5 8 Q4.5 5 6 5 Q7.3 5 8.5 6.5 Z", Some("#00599C")),
+        // 第一个 +（横竖两条窄矩形）
+        SvgShape::Rect(10.5, 6.7, 3.0, 0.7, Some("#00599C"), None),
+        SvgShape::Rect(11.7, 5.5, 0.7, 3.0, Some("#00599C"), None),
+        // 第二个 +（横竖两条窄矩形）
+        SvgShape::Rect(10.5, 9.7, 3.0, 0.7, Some("#00599C"), None),
+        SvgShape::Rect(11.7, 8.5, 0.7, 3.0, Some("#00599C"), None),
     ],
 };
 
 /// C# 文件图标
 const FILE_CSHARP: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#68217A")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
+        // C 字符
+        SvgShape::Path("M9 5.5 Q7.5 4 5 4 Q2.5 4 2.5 8 Q2.5 12 5 12 Q7.5 12 9 10.5 L8 9.5 Q6.8 11 5.5 11 Q4 11 4 8 Q4 5 5.5 5 Q6.8 5 8 6.5 Z", Some("#239120")),
         // # 符号
-        SvgShape::Path("M10 11 L11 11 L9.5 20 L8.5 20 Z", Some("#FFFFFF")),
-        SvgShape::Path("M14 11 L15 11 L13.5 20 L12.5 20 Z", Some("#FFFFFF")),
-        SvgShape::Path("M8 13.5 L15 13 L15 14 L8 14.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M7.5 17 L14.5 16.5 L14.5 17.5 L7.5 18 Z", Some("#FFFFFF")),
+        SvgShape::Path("M10.5 4 L11 4 L10.5 12 L10 12 Z", Some("#239120")),
+        SvgShape::Path("M12.5 4 L13 4 L12.5 12 L12 12 Z", Some("#239120")),
+        SvgShape::Path("M9.5 6.5 L13.5 6.5 L13.5 7 L9.5 7 Z", Some("#239120")),
+        SvgShape::Path("M9.5 9.5 L13.5 9.5 L13.5 10 L9.5 10 Z", Some("#239120")),
     ],
 };
 
 /// Go 文件图标
 const FILE_GO: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#00ADD8")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // G 字
-        SvgShape::Path("M15 12.5 Q14 11 9.5 11 Q9.5 15.5 9.5 20 Q14 20 15 18.5 L15 15.5 L12 15.5 L12 16.5 L14 16.5 L14 18 Q13 19 11 19 Q10.5 19 10.5 15.5 Q10.5 12 11 12 Q13 12 14 13.5 Z", Some("#FFFFFF")),
+        SvgShape::Line(3.5, 7.0, 4.5, 7.0),
+        SvgShape::Line(3.5, 8.0, 5.0, 8.0),
+        SvgShape::Line(3.5, 9.0, 4.5, 9.0),
+        // Go 字符
+        SvgShape::Path("M10 5.5 Q9 4.5 7.5 4.5 Q6 4.5 6 8 Q6 11.5 7.5 11.5 Q9 11.5 10 10.5 L10 8.5 L8 8.5 L8 9.5 L9 9.5 L9 10 Q8.5 10.5 7.5 10.5 Q7 10.5 7 8 Q7 5.5 7.5 5.5 Q8.5 5.5 9 6.5 Z", Some("#00ADD8")),
     ],
 };
 
-/// Rust 文件图标（基于 Devicon Rust 风格）
+/// Rust 文件图标（齿轮蟹）
 const FILE_RUST: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#DEA584")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 简化的齿轮（rust 标识是齿轮）
-        SvgShape::Circle(12.5, 15.5, 3.8, Some("#FFFFFF")),
-        SvgShape::Circle(12.5, 15.5, 1.5, Some("#DEA584")),
-        SvgShape::Path("M11 9.5 L11 11 L14 11 L14 9.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M17.5 12 L15.5 13 L16.5 15.5 L18.5 14.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M17.5 19 L15.5 18 L14.5 20.5 L16.5 21.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M11 21.5 L11 20 L14 20 L14 21.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M7.5 19 L9.5 18 L10.5 20.5 L8.5 21.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M7.5 12 L9.5 13 L8.5 15.5 L6.5 14.5 Z", Some("#FFFFFF")),
+        SvgShape::Ellipse(8.0, 9.0, 4.0, 3.3, None),
+        SvgShape::Path("M4 7.5l-1.3-1.3", None),
+        SvgShape::Circle(2.7, 6.2, 0.7, None),
+        SvgShape::Path("M12 7.5l1.3-1.3", None),
+        SvgShape::Circle(13.3, 6.2, 0.7, None),
+        SvgShape::Circle(6.3, 8.0, 0.6, Some("#CE422B")),
+        SvgShape::Circle(9.7, 8.0, 0.6, Some("#CE422B")),
+        SvgShape::Path("M6.7 10c0.7 0.5 2 0.5 2.7 0", None),
+        SvgShape::Path("M4.7 12l-0.7 1.3", None),
+        SvgShape::Path("M11.3 12l0.7 1.3", None),
     ],
 };
 
 /// JavaScript 文件图标
 const FILE_JS: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#F7DF1E")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#000000")),
         // JS 字符
-        SvgShape::Path("M9 11 L10.5 11 L10.5 17.5 Q10.5 18.5 9.5 18.5 Q8.5 18.5 8 17.5 L7 18 Q7.8 19.5 9.5 19.5 Q11.5 19.5 11.5 17.5 L11.5 11 Z", Some("#000000")),
-        SvgShape::Path("M13 18 L14 17.5 Q14.5 18.5 15.5 18.5 Q16.5 18.5 16.5 17.5 Q16.5 16.5 15 16 Q13 15.5 13 14 Q13 12.5 14.5 12.5 Q15.8 12.5 16.5 13.5 L15.5 14 Q15 13.5 14.5 13.5 Q14 13.5 14 14 Q14 14.7 15.5 15 Q17 15.5 17 17 Q17 19 15.5 19 Q14 19 13 18 Z", Some("#000000")),
+        SvgShape::Path("M5 5 L6.5 5 L6.5 10.5 Q6.5 11.5 5.5 11.5 Q4.5 11.5 4 10.5 L3 11 Q3.8 12.5 5.5 12.5 Q7.5 12.5 7.5 10.5 L7.5 5 Z", Some("#E8C300")),
+        SvgShape::Path("M9 11 L10 10.5 Q10.5 11.5 11.5 11.5 Q12.5 11.5 12.5 10.5 Q12.5 9.5 11 9 Q9 8.5 9 7 Q9 5.5 10.5 5.5 Q11.8 5.5 12.5 6.5 L11.5 7 Q11 6.5 10.5 6.5 Q10 6.5 10 7 Q10 7.7 11.5 8 Q13 8.5 13 10 Q13 12 11.5 12 Q10 12 9 11 Z", Some("#E8C300")),
     ],
 };
 
 /// TypeScript 文件图标
 const FILE_TS: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#3178C6")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
         // TS 字符
-        SvgShape::Path("M7.5 11 L13.5 11 L13.5 12.5 L11.25 12.5 L11.25 19 L9.75 19 L9.75 12.5 L7.5 12.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M14.5 17.3 L15.7 16.7 Q16 17.5 16.8 17.5 Q17.6 17.5 17.6 16.7 Q17.6 15.9 16 15.5 Q14.3 15.1 14.3 13.7 Q14.3 12.3 15.7 12.3 Q16.9 12.3 17.6 13.3 L16.5 14 Q16.2 13.5 15.7 13.5 Q15.2 13.5 15.2 14 Q15.2 14.6 16.8 15 Q18.5 15.4 18.5 16.9 Q18.5 18.5 16.9 18.5 Q15.4 18.5 14.5 17.3 Z", Some("#FFFFFF")),
+        SvgShape::Path("M3 5 L9.5 5 L9.5 6.5 L7.25 6.5 L7.25 12 L5.75 12 L5.75 6.5 L3 6.5 Z", Some("#3178C6")),
+        SvgShape::Path("M10.5 10.3 L11.7 9.7 Q12 10.5 12.8 10.5 Q13.6 10.5 13.6 9.7 Q13.6 8.9 12 8.5 Q10.3 8.1 10.3 6.7 Q10.3 5.3 11.7 5.3 Q12.9 5.3 13.6 6.3 L12.5 7 Q12.2 6.5 11.7 6.5 Q11.2 6.5 11.2 7 Q11.2 7.6 12.8 8 Q14.5 8.4 14.5 9.9 Q14.5 11.5 12.9 11.5 Q11.4 11.5 10.5 10.3 Z", Some("#3178C6")),
     ],
 };
 
-/// HTML 文件图标
+/// HTML 文件图标（尖括号）
 const FILE_HTML: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#E34F26")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // <> 字符
-        SvgShape::Path("M8 11.5 L10 15.5 L8 19.5 L6.5 19.5 L8.5 15.5 L6.5 11.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M16 11.5 L17.5 11.5 L15.5 15.5 L17.5 19.5 L16 19.5 L14 15.5 Z", Some("#FFFFFF")),
+        SvgShape::Path("M5 5 L2 8 L5 11", None),
+        SvgShape::Path("M11 5 L14 8 L11 11", None),
     ],
 };
 
-/// CSS 文件图标
+/// CSS 文件图标（# 符号）
 const FILE_CSS: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#1572B6")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // {} 字符
-        SvgShape::Path("M8.5 11 L10 11 L9 14 L10 14 L10 15 L9 15 L10 19 L8.5 19 L7.5 15 L8.5 14.5 L8.5 14 L7.5 14 Z", Some("#FFFFFF")),
-        SvgShape::Path("M15.5 11 L16.5 19 L15 19 L14.5 15 L15.5 14.5 L15.5 14 L14.5 11 Z", Some("#FFFFFF")),
+        SvgShape::Line(4.0, 5.0, 12.0, 5.0),
+        SvgShape::Line(4.0, 11.0, 12.0, 11.0),
+        SvgShape::Line(6.0, 3.0, 5.0, 13.0),
+        SvgShape::Line(11.0, 3.0, 10.0, 13.0),
     ],
 };
 
-/// JSON 文件图标
+/// JSON 文件图标（大括号）
 const FILE_JSON: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#5A5A5A")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // {} 字符
-        SvgShape::Path("M8 11 L9.5 11 L8.5 14.5 L9.5 14.5 L9.5 15.5 L8.5 15.5 L9.5 19 L8 19 L7 15 L8 15 L7 11 Z", Some("#FFFFFF")),
-        SvgShape::Path("M15.5 11 L16.5 19 L15 19 L14.5 15.5 L15.5 15.5 L14.5 11 Z", Some("#FFFFFF")),
+        SvgShape::Path("M5 4c-1.5 0-2 1-2 2v2c0 1-0.5 1.5-1 2 0.5 0.5 1 1 1 2v2c0 1 0.5 2 2 2", None),
+        SvgShape::Path("M11 4c1.5 0 2 1 2 2v2c0 1 0.5 1.5 1 2-0.5 0.5-1 1-1 2v2c0 1-0.5 2-2 2", None),
     ],
 };
 
 /// YAML 文件图标
 const FILE_YAML: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#CB171E")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // Y 字符
-        SvgShape::Path("M8 11 L9.5 11 L11.5 14 L13.5 11 L15 11 L12 15.5 L12 19.5 L11 19.5 L11 15.5 Z", Some("#FFFFFF")),
+        // Yml 文字简化为 Y 形路径
+        SvgShape::Path("M4 4 L5.5 4 L8 7.5 L10.5 4 L12 4 L8.5 9 L8.5 12 L7.5 12 L7.5 9 Z", Some("#C72C48")),
     ],
 };
 
 /// TOML 文件图标
 const FILE_TOML: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#9C4221")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
         // T 字符
-        SvgShape::Path("M7 11 L14.5 11 L14.5 12.5 L11.5 12.5 L11.5 19.5 L10 19.5 L10 12.5 L7 12.5 Z", Some("#FFFFFF")),
+        SvgShape::Path("M3 4 L13 4 L13 5.5 L9.5 5.5 L9.5 12 L8 12 L8 5.5 L3 5.5 Z", Some("#D24939")),
     ],
 };
 
 /// Markdown 文件图标
 const FILE_MARKDOWN: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#083FA1")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // MD 字符
-        SvgShape::Rect(6.5, 11.0, 2.0, 8.0, Some("#FFFFFF"), None),
-        SvgShape::Rect(15.5, 11.0, 2.0, 8.0, Some("#FFFFFF"), None),
-        SvgShape::Path("M9.5 14 L11 15.5 L12.5 14 L12.5 19 L11.5 19 L11.5 16 L11 16.5 L10.5 16 L10.5 19 L9.5 19 Z", Some("#FFFFFF")),
-        SvgShape::Path("M14 13 L15.5 14.5 L15.5 19 L14.5 19 L14.5 15.5 L13.5 16 L13 15.5 Z", Some("#FFFFFF")),
+        // Md 简化为 M 形路径
+        SvgShape::Path("M3 12 L3 4 L4.5 4 L8 9.5 L11.5 4 L13 4 L13 12 L11.5 12 L11.5 6.5 L8 12 L4.5 6.5 L4.5 12 Z", Some("#FFFFFF")),
     ],
 };
 
 /// Shell 脚本文件图标
 const FILE_SHELL: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#4EAA25")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // $ 字符
-        SvgShape::Path("M14.5 11 L14.5 12.3 L12.5 12.3 L12.5 14.3 L14.5 14.3 L14.5 17.5 L12 17.5 L12 16.2 L13.5 16.2 L13.5 15.2 L11.5 15.2 L11.5 11.5 L14.5 11.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M12.8 9.5 L13.5 9.5 L13.5 19.5 L12.8 19.5 Z", Some("#FFFFFF")),
-        // > 字符
-        SvgShape::Path("M6.5 13 L8 14.5 L6.5 16 L6 15.5 L7 14.5 L6 13.5 Z", Some("#FFFFFF")),
-        SvgShape::Path("M8.5 16.5 L11 16.5 L11 17.5 L8.5 17.5 Z", Some("#FFFFFF")),
+        // sh 简化为 >_ 提示符
+        SvgShape::Path("M4 5 L7 8 L4 11 L3 10 L5 8 L3 6 Z", Some("#4EAA25")),
+        SvgShape::Path("M8 11 L13 11 L13 12 L8 12 Z", Some("#4EAA25")),
     ],
 };
 
-/// SQL 文件图标（数据库造型）
+/// SQL 文件图标（数据库圆柱）
 const FILE_SQL: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#E38C00")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 数据库（圆柱）
-        SvgShape::Path("M8 13 Q8 11.5 12.5 11.5 Q17 11.5 17 13 L17 17 Q17 18.5 12.5 18.5 Q8 18.5 8 17 Z", Some("#FFFFFF")),
-        SvgShape::Path("M8 13 Q8 14.5 12.5 14.5 Q17 14.5 17 13", Some("#E38C00")),
-        SvgShape::Path("M8 15 Q8 16.5 12.5 16.5 Q17 16.5 17 15", Some("#E38C00")),
+        SvgShape::Path("M4 6 Q4 4.5 8 4.5 Q12 4.5 12 6 L12 10 Q12 11.5 8 11.5 Q4 11.5 4 10 Z", Some("#E38C00")),
+        SvgShape::Path("M4 6 Q4 7.5 8 7.5 Q12 7.5 12 6", Some("#E38C00")),
+        SvgShape::Path("M4 8 Q4 9.5 8 9.5 Q12 9.5 12 8", Some("#E38C00")),
     ],
 };
 
-/// Ruby 文件图标（红宝石造型）
+/// Ruby 文件图标（红宝石）
 const FILE_RUBY: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#CC342D")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 钻石/红宝石造型
-        SvgShape::Path("M12 11 L16.5 11 L18 13.5 L12 19.5 L6 13.5 L7.5 11 Z", Some("#FFFFFF")),
-        SvgShape::Path("M12 11 L12 19.5", Some("#CC342D")),
-        SvgShape::Path("M7.5 11 L16.5 11", Some("#CC342D")),
+        SvgShape::Path("M4.5 3.5h7l1.5 2.7-5 4.8-5-4.8 1.5-2.7z", None),
     ],
 };
 
-/// PHP 文件图标
+/// PHP 文件图标（大象简化）
 const FILE_PHP: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#777BB4")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // P 字符
-        SvgShape::Path("M8 11 L11.5 11 Q14 11 14 13.5 Q14 16 11.5 16 L9.5 16 L9.5 19.5 L8 19.5 Z M9.5 12.5 L9.5 14.5 L11 14.5 Q12 14.5 12 13.5 Q12 12.5 11 12.5 Z", Some("#FFFFFF")),
+        SvgShape::Path("M5 6.5c0-0.8 0.7-1.5 1.5-1.5h5c1.4 0 2.5 1.1 2.5 2.5v2c0 0.8-0.7 1.5-1.5 1.5h-6c-0.8 0-1.5-0.7-1.5-1.5v-3z", None),
+        SvgShape::Path("M5 7c-0.8 0-1.5 0.7-1.5 1.5v2.5c0 0.3 0.2 0.5 0.5 0.5s0.5-0.2 0.5-0.5v-2", None),
+        SvgShape::Ellipse(6.5, 6.0, 1.0, 1.2, None),
+        SvgShape::Path("M12.5 8.5l1-0.3c0.3 0.2 0.3 0.6 0 0.8l-1-0.3", None),
+        SvgShape::Line(6.0, 11.0, 6.0, 12.5),
+        SvgShape::Line(7.5, 11.0, 7.5, 12.5),
+        SvgShape::Line(10.0, 11.0, 10.0, 12.5),
+        SvgShape::Line(11.5, 11.0, 11.5, 12.5),
+        SvgShape::Circle(6.2, 7.5, 0.4, Some("#777BB4")),
     ],
 };
 
-/// Lua 文件图标
+/// Lua 文件图标（月牙）
 const FILE_LUA: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#000080")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // L 字符
-        SvgShape::Path("M9 11 L10.5 11 L10.5 18 L15 18 L15 19.5 L9 19.5 Z", Some("#FFFFFF")),
+        SvgShape::Path("M7 3.5a4.5 4.5 0 1 0 0 9 3.5 3.5 0 0 1 0-7 3.5 3.5 0 0 1 0-2z", None),
     ],
 };
 
-/// Swift 文件图标
+/// Swift 文件图标（鸟形）
 const FILE_SWIFT: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#FA7343")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // Swift 鸟翅膀简化
-        SvgShape::Path("M8 19 L18 11 L13 11 L9 14 L8 19 Z", Some("#FFFFFF")),
-        SvgShape::Path("M8 19 L15 13 L11 13 L8 16 L8 19 Z", Some("#FA7343")),
+        SvgShape::Path("M8 1.5c1.3 3.3 4.7 4.7 6.7 5.3-2 0.7-4.7 2.7-6.7 8-0.7-3.3-4-5.3-6.7-6 2-0.7 5.3-2 6.7-7.3z", None),
     ],
 };
 
 /// Kotlin 文件图标
 const FILE_KOTLIN: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#7F52FF")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // K 字符
-        SvgShape::Path("M8.5 11 L10 11 L10 14.5 L13 11 L15 11 L11.5 15 L15 19.5 L13 19.5 L10 15.5 L10 19.5 L8.5 19.5 Z", Some("#FFFFFF")),
+        // Kt 简化为 K 形路径
+        SvgShape::Path("M4 4 L5.5 4 L5.5 7 L9 4 L11 4 L7 8 L11 12 L9 12 L5.5 9 L5.5 12 L4 12 Z", Some("#7F52FF")),
     ],
 };
 
-/// Docker 文件图标（鲸鱼/集装箱简化）
+/// Docker 文件图标（鲸鱼）
 const FILE_DOCKER: SvgDef = SvgDef {
-    viewbox: (0.0, 0.0, 24.0, 24.0),
+    viewbox: (0.0, 0.0, 16.0, 16.0),
     shapes: &[
-        SvgShape::Path("M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z", Some("#384D54")),
-        SvgShape::Path("M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z", Some("#FFFFFF")),
-        // 集装箱
-        SvgShape::Rect(7.0, 13.0, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Rect(9.7, 13.0, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Rect(12.4, 13.0, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Rect(7.0, 15.7, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Rect(9.7, 15.7, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Rect(7.0, 10.3, 2.5, 2.5, Some("#FFFFFF"), None),
-        SvgShape::Path("M15 18.5 Q18 18.5 18 16.5 Q17 16.5 16.5 17 Q16 17 15.5 17.5", Some("#FFFFFF")),
+        SvgShape::Path("M2 10c1-2 3.5-4 7-4s5.5 1.5 6 3.5c-0.8 1.2-2.8 2-5 2H3.5c-1 0-1.5-0.7-1.5-1.5z", None),
+        SvgShape::Path("M2 10l-0.8-1.2", None),
+        SvgShape::Path("M2 10l-0.8 1.2", None),
+        SvgShape::Rect(6.0, 4.5, 1.3, 1.3, None, Some(0.2)),
+        SvgShape::Rect(8.0, 4.5, 1.3, 1.3, None, Some(0.2)),
+        SvgShape::Rect(10.0, 4.5, 1.3, 1.3, None, Some(0.2)),
+        SvgShape::Circle(11.5, 9.2, 0.5, Some("#2496ED")),
+    ],
+};
+
+// ===========================================================================
+// 新增语言图标
+// ===========================================================================
+
+/// Dart 文件图标（飞镖）
+const FILE_DART: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        SvgShape::Path("M12 8l-6-3.5 1.5 3.5-1.5 3.5L12 8z", None),
+        SvgShape::Line(6.0, 8.0, 4.0, 8.0),
+    ],
+};
+
+/// Haskell 文件图标（λ 符号）
+const FILE_HASKELL: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        SvgShape::Path("M5 11l3-6 2 3 3-3", None),
+    ],
+};
+
+/// Vue 文件图标
+const FILE_VUE: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // V 形路径
+        SvgShape::Path("M3 4 L8 12 L13 4 L11 4 L8 9 L5 4 Z", Some("#359969")),
+    ],
+};
+
+/// React 文件图标
+const FILE_REACT: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // 原子轨道简化
+        SvgShape::Ellipse(8.0, 8.0, 6.0, 2.5, None),
+        SvgShape::Ellipse(8.0, 8.0, 6.0, 2.5, None),
+        SvgShape::Circle(8.0, 8.0, 1.0, Some("#08A4B9")),
+    ],
+};
+
+/// Svelte 文件图标
+const FILE_SVELTE: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // S 形路径
+        SvgShape::Path("M11 5.5 Q10 4 8 4 Q5.5 4 5.5 6.5 Q5.5 8.5 8 9 Q10.5 9.5 10.5 11.5 Q10.5 13 8 13 Q6 13 5 11.5 L6 10.5 Q6.8 12 8 12 Q9.5 12 9.5 11 Q9.5 10 8 9.5 Q5.5 9 5.5 6.5 Q5.5 4 8 4 Q10 4 11 5.5 Z", Some("#FF3E00")),
+    ],
+};
+
+/// Zig 文件图标
+const FILE_ZIG: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Z 形路径
+        SvgShape::Path("M4 4 L12 4 L12 5.5 L6 10.5 L12 10.5 L12 12 L4 12 L4 10.5 L10 5.5 L4 5.5 Z", Some("#D48806")),
+    ],
+};
+
+/// R 文件图标
+const FILE_R: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // R 字符路径
+        SvgShape::Path("M5 4 L5 12 L6.5 12 L6.5 9 L8 9 L10 12 L11.5 12 L9.5 8.5 Q11 8 11 6.5 Q11 4 8.5 4 Z M6.5 5.5 L8.5 5.5 Q9.5 5.5 9.5 6.5 Q9.5 7.5 8.5 7.5 L6.5 7.5 Z", Some("#165CAA")),
+    ],
+};
+
+/// Scala 文件图标
+const FILE_SCALA: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Sc 简化为 S 形路径
+        SvgShape::Path("M11 5.5 Q10 4 8 4 Q5.5 4 5.5 6.5 Q5.5 8.5 8 9 Q10.5 9.5 10.5 11.5 Q10.5 13 8 13 Q6 13 5 11.5 L6 10.5 Q6.8 12 8 12 Q9.5 12 9.5 11 Q9.5 10 8 9.5 Q5.5 9 5.5 6.5 Q5.5 4 8 4 Q10 4 11 5.5 Z", Some("#DC322F")),
+    ],
+};
+
+/// Perl 文件图标
+const FILE_PERL: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // P 字符路径
+        SvgShape::Path("M5 4 L5 12 L6.5 12 L6.5 9.5 L8.5 9.5 Q11 9.5 11 7 Q11 4 8.5 4 Z M6.5 5.5 L8.5 5.5 Q9.5 5.5 9.5 7 Q9.5 8.5 8.5 8.5 L6.5 8.5 Z", Some("#394578")),
+    ],
+};
+
+/// Clojure 文件图标
+const FILE_CLOJURE: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Cl 简化为 C 形路径
+        SvgShape::Path("M11 5.5 Q9.5 4 6.5 4 Q4 4 4 8 Q4 12 6.5 12 Q9.5 12 11 10.5 L10 9.5 Q8.8 11 7 11 Q5.5 11 5.5 8 Q5.5 5 7 5 Q8.8 5 10 6.5 Z", Some("#5881D8")),
+    ],
+};
+
+/// Elixir 文件图标
+const FILE_ELIXIR: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Ex 简化为 E 形路径
+        SvgShape::Path("M5 4 L5 12 L11 12 L11 10.5 L6.5 10.5 L6.5 8.5 L10 8.5 L10 7 L6.5 7 L6.5 5.5 L11 5.5 L11 4 Z", Some("#6E4A7E")),
+    ],
+};
+
+/// Erlang 文件图标
+const FILE_ERLANG: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Er 简化为 E 形路径
+        SvgShape::Path("M5 4 L5 12 L11 12 L11 10.5 L6.5 10.5 L6.5 8.5 L10 8.5 L10 7 L6.5 7 L6.5 5.5 L11 5.5 L11 4 Z", Some("#B93821")),
+    ],
+};
+
+/// Julia 文件图标
+const FILE_JULIA: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // Jl 简化为 J 形路径
+        SvgShape::Path("M9 4 L9 10 Q9 12 7 12 Q5 12 4.5 10.5 L6 10 Q6.5 11 7.5 11 Q8 11 8 10 L8 4 Z", Some("#9558B2")),
+    ],
+};
+
+/// F# 文件图标
+const FILE_FSHARP: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 16.0, 16.0),
+    shapes: &[
+        // F 字符
+        SvgShape::Path("M5 4 L5 12 L6.5 12 L6.5 8.5 L10 8.5 L10 7 L6.5 7 L6.5 5.5 L11 5.5 L11 4 Z", Some("#378BBA")),
+        // # 符号
+        SvgShape::Path("M12 4 L12.5 4 L12 12 L11.5 12 Z", Some("#378BBA")),
+        SvgShape::Path("M13.5 4 L14 4 L13.5 12 L13 12 Z", Some("#378BBA")),
+        SvgShape::Path("M11.5 6.5 L14.5 6.5 L14.5 7 L11.5 7 Z", Some("#378BBA")),
+        SvgShape::Path("M11.5 9.5 L14.5 9.5 L14.5 10 L11.5 10 Z", Some("#378BBA")),
     ],
 };
 
@@ -830,6 +927,27 @@ const UI_LIST: SvgDef = SvgDef {
         SvgShape::Path("M3 6h.01", None),
         SvgShape::Path("M3 12h.01", None),
         SvgShape::Path("M3 18h.01", None),
+    ],
+};
+
+/// Lucide "clock" - 时钟（历史记录）
+const UI_CLOCK: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Circle(12.0, 12.0, 10.0, None),
+        SvgShape::Path("M12 6v6l4 2", None),
+    ],
+};
+
+/// Lucide "trash-2" - 垃圾桶（删除）
+const UI_TRASH: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Path("M3 6h18", None),
+        SvgShape::Path("M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6", None),
+        SvgShape::Path("M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2", None),
+        SvgShape::Line(10.0, 11.0, 10.0, 17.0),
+        SvgShape::Line(14.0, 11.0, 14.0, 17.0),
     ],
 };
 
@@ -907,4 +1025,20 @@ pub(crate) const SVG_DEFS: &[SvgDef] = &[
     /* 65 FileDocker    */ FILE_DOCKER,
     /* 66 PanelRight    */ UI_PANEL_RIGHT,
     /* 67 ChevronDown   */ UI_CHEVRON_DOWN,
+    /* 68 FileDart      */ FILE_DART,
+    /* 69 FileHaskell   */ FILE_HASKELL,
+    /* 70 FileVue       */ FILE_VUE,
+    /* 71 FileReact     */ FILE_REACT,
+    /* 72 FileSvelte    */ FILE_SVELTE,
+    /* 73 FileZig       */ FILE_ZIG,
+    /* 74 FileR         */ FILE_R,
+    /* 75 FileScala     */ FILE_SCALA,
+    /* 76 FilePerl      */ FILE_PERL,
+    /* 77 FileClojure   */ FILE_CLOJURE,
+    /* 78 FileElixir    */ FILE_ELIXIR,
+    /* 79 FileErlang    */ FILE_ERLANG,
+    /* 80 FileJulia     */ FILE_JULIA,
+    /* 81 FileFSharp    */ FILE_FSHARP,
+    /* 82 Clock         */ UI_CLOCK,
+    /* 83 Trash         */ UI_TRASH,
 ];

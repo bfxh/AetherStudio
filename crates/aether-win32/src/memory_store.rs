@@ -83,11 +83,37 @@ pub trait MemoryStore: Send + Sync {
     fn upsert_conversation(&self, conv: &Conversation) -> Result<(), String>;
     fn list_conversations(&self, limit: usize) -> Result<Vec<Conversation>, String>;
     fn delete_conversation(&self, conv_id: &str) -> Result<(), String>;
+    /// 重命名会话标题（仅更新 title，不触碰 updated_at/message_count）
+    fn rename_conversation(&self, conv_id: &str, new_title: &str) -> Result<(), String> {
+        // 默认实现：读出 -> 改 title -> upsert 回写（注意会刷新 updated_at 由实现决定）
+        let all = self.list_conversations(1_000_000)?;
+        if let Some(mut c) = all.into_iter().find(|c| c.id == conv_id) {
+            c.title = new_title.to_string();
+            self.upsert_conversation(&c)?;
+            Ok(())
+        } else {
+            Err(format!("会话不存在: {}", conv_id))
+        }
+    }
     /// 清空全部会话（级联删除消息与向量索引）；返回删除条数
     fn clear_all_conversations(&self) -> Result<usize, String> {
         let all = self.list_conversations(1_000_000)?;
         let n = all.len();
         for c in all {
+            self.delete_conversation(&c.id)?;
+        }
+        Ok(n)
+    }
+
+    /// 清理无工作区绑定的历史会话（workspace_hash 为空）；返回删除条数
+    fn clear_orphan_conversations(&self) -> Result<usize, String> {
+        let all = self.list_conversations(1_000_000)?;
+        let orphans: Vec<_> = all
+            .into_iter()
+            .filter(|c| c.workspace_hash.is_empty())
+            .collect();
+        let n = orphans.len();
+        for c in orphans {
             self.delete_conversation(&c.id)?;
         }
         Ok(n)
@@ -456,6 +482,20 @@ impl MemoryStore for SqliteMemoryStore {
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM conversations WHERE id = ?", params![conv_id])
             .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn rename_conversation(&self, conv_id: &str, new_title: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                params![new_title, conv_id],
+            )
+            .map_err(|e| format!("重命名会话失败: {}", e))?;
+        if n == 0 {
+            return Err(format!("会话不存在: {}", conv_id));
+        }
         Ok(())
     }
 

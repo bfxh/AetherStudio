@@ -582,8 +582,6 @@ pub struct AiPanel {
     pub history_scroll: f32,
     /// 历史下拉面板最大滚动量（渲染时计算，供滚轮钳制）
     pub history_max_scroll: f32,
-    /// 历史下拉面板整体命中区（渲染时注册，供滚轮路由）
-    pub history_panel_region: Option<(f32, f32, f32, f32)>,
     /// 历史记录条目命中区 (history_index, x, y, w, h)
     pub history_item_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 历史索引（懒加载：仅元数据，点击时才读取完整会话）
@@ -604,8 +602,6 @@ pub struct AiPanel {
     pub playbook_button_region: Option<(f32, f32, f32, f32)>,
     /// Playbook 条目删除按钮命中区 (item_index, x, y, w, h)
     pub playbook_delete_regions: Vec<(usize, f32, f32, f32, f32)>,
-    /// 历史面板「仅当前工作区」开关命中区 (x, y, w, h)
-    pub history_ws_toggle_region: Option<(f32, f32, f32, f32)>,
     /// 历史列表当前页码（0 起）
     pub history_page: usize,
     /// 历史时间筛选
@@ -624,14 +620,37 @@ pub struct AiPanel {
     pub history_page_next_region: Option<(f32, f32, f32, f32)>,
     /// 历史时间筛选按钮命中区 (HistoryTimeFilter::ALL 下标, x, y, w, h)
     pub history_time_filter_regions: Vec<(usize, f32, f32, f32, f32)>,
-    /// 历史类型筛选按钮命中区 (HISTORY_TYPE_FILTERS 下标, x, y, w, h)
-    pub history_type_filter_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 「清空全部」按钮命中区
     pub history_clear_all_region: Option<(f32, f32, f32, f32)>,
-    /// 详情视图「返回」按钮命中区
-    pub history_detail_back_region: Option<(f32, f32, f32, f32)>,
-    /// 详情视图「恢复此对话」按钮命中区
-    pub history_detail_restore_region: Option<(f32, f32, f32, f32)>,
+    // ===== 历史浮窗（可拖动独立窗口）=====
+    /// 浮窗左上角位置（窗口客户区逻辑像素）；None = 未拖动过（渲染时默认居中）
+    pub history_win_pos: Option<(f32, f32)>,
+    /// 拖动中：鼠标相对浮窗左上角的偏移（按下标题栏时记录，抬起清空）
+    pub history_win_drag: Option<(f32, f32)>,
+    /// 浮窗尺寸（宽, 高），固定初始值，后续可扩展拖拽缩放
+    pub history_win_size: (f32, f32),
+    /// 浮窗整体命中区（渲染时注册，供点击外部关闭与滚轮路由）
+    pub history_win_region: Option<(f32, f32, f32, f32)>,
+    /// 浮窗标题栏命中区（拖动区）
+    pub history_win_titlebar_region: Option<(f32, f32, f32, f32)>,
+    /// 浮窗关闭按钮命中区
+    pub history_win_close_region: Option<(f32, f32, f32, f32)>,
+    /// 搜索框文本（按标题实时过滤）
+    pub history_search: String,
+    /// 搜索框是否聚焦（键盘路由）
+    pub history_search_focused: bool,
+    /// 搜索框光标位置（字节索引）
+    pub history_search_caret: usize,
+    /// 搜索框命中区
+    pub history_search_region: Option<(f32, f32, f32, f32)>,
+    /// 正在编辑标题的会话 id（Some 时该条目渲染为输入框）
+    pub history_editing_id: Option<String>,
+    /// 编辑中的标题文本缓冲
+    pub history_editing_text: String,
+    /// 编辑光标（字节索引）
+    pub history_editing_caret: usize,
+    /// 双击检测：上次点击的条目 id + 时间戳
+    pub history_last_click: Option<(String, std::time::Instant)>,
     /// Agent 自动续跑轮次计数（用户手动发消息时重置；防止工具回环无限迭代）
     pub agent_iter_count: u32,
     /// 最后一次生成是否被截断（达到 max_tokens）
@@ -756,18 +775,16 @@ impl AiPanel {
             history_anim: 0.0,
             history_scroll: 0.0,
             history_max_scroll: 0.0,
-            history_panel_region: None,
             history_item_regions: Vec::new(),
             history: Vec::new(),
             reasoning_toggle_regions: Vec::new(),
             hot_data_store: Self::init_hot_data_store(),
             warm_data_store: Self::init_warm_data_store(),
-            history_workspace_only: false,
+            history_workspace_only: true,
             playbook_open: false,
             playbook_items: Vec::new(),
             playbook_button_region: None,
             playbook_delete_regions: Vec::new(),
-            history_ws_toggle_region: None,
             history_page: 0,
             history_time_filter: HistoryTimeFilter::All,
             history_type_filter: None,
@@ -777,10 +794,21 @@ impl AiPanel {
             history_page_prev_region: None,
             history_page_next_region: None,
             history_time_filter_regions: Vec::new(),
-            history_type_filter_regions: Vec::new(),
             history_clear_all_region: None,
-            history_detail_back_region: None,
-            history_detail_restore_region: None,
+            history_win_pos: None,
+            history_win_drag: None,
+            history_win_size: (480.0, 420.0),
+            history_win_region: None,
+            history_win_titlebar_region: None,
+            history_win_close_region: None,
+            history_search: String::new(),
+            history_search_focused: false,
+            history_search_caret: 0,
+            history_search_region: None,
+            history_editing_id: None,
+            history_editing_text: String::new(),
+            history_editing_caret: 0,
+            history_last_click: None,
             agent_iter_count: 0,
             last_truncated: false,
             continue_button_region: None,
@@ -897,14 +925,22 @@ impl AiPanel {
     }
 
     /// 启动时恢复最近一次的会话（若数据库中有归档），否则保持新建的"新对话"
+    /// 仅恢复当前工作区绑定的会话；无工作区（启动未打开文件夹）时不恢复，
+    /// 避免全局最新会话串到无工作区的空白页。
     fn restore_latest_conversation(&mut self) {
         let Some(store) = self.warm_data_store.as_ref() else {
             return;
         };
-        let Ok(meta_list) = store.load_history_meta() else {
+        // 无工作区上下文时不恢复任何会话，防止串工作区
+        let ws_hash = store.current_workspace_hash();
+        if ws_hash.is_empty() {
+            return;
+        }
+        // 按当前工作区过滤：仅恢复属于本工作区的会话
+        let Ok(convs) = store.search_conversations("", true, 1) else {
             return;
         };
-        let Some(latest) = meta_list.first() else {
+        let Some(latest) = convs.first() else {
             return;
         };
         if let Ok(conv) = store.load_conversation(&latest.id) {
@@ -959,7 +995,7 @@ impl AiPanel {
 
     /// 把某槽位会话加载为活动会话的实时（扁平）状态。
     /// 休眠槽位先从温数据层水合消息体，覆盖所有激活路径（切换/关闭接管/历史恢复）。
-    fn load_slot_into_active(&mut self, idx: usize) {
+    pub fn load_slot_into_active(&mut self, idx: usize) {
         if idx >= self.conversations.len() {
             return;
         }
@@ -2075,16 +2111,15 @@ impl AiPanel {
         self.reasoning_toggle_regions.clear();
         self.playbook_button_region = None;
         self.playbook_delete_regions.clear();
-        self.history_ws_toggle_region = None;
         self.history_delete_regions.clear();
         self.history_page_prev_region = None;
         self.history_page_next_region = None;
         self.history_time_filter_regions.clear();
-        self.history_type_filter_regions.clear();
         self.history_clear_all_region = None;
-        self.history_detail_back_region = None;
-        self.history_detail_restore_region = None;
-        self.history_panel_region = None;
+        self.history_win_region = None;
+        self.history_win_titlebar_region = None;
+        self.history_win_close_region = None;
+        self.history_search_region = None;
         self.browse_folder_region = None;
     }
 
@@ -2104,11 +2139,10 @@ impl AiPanel {
         (self.history_anim - target).abs() > f32::EPSILON
     }
 
-    /// 立即关闭历史下拉面板（跳过收起动画，用于标签切换/关闭等场景）
+    /// 立即关闭历史浮窗（跳过收起动画，用于标签切换/关闭/恢复会话等场景）。
+    /// 委托给 close_history_window，彻底清理拖动/搜索焦点/编辑态。
     pub fn dismiss_history_dropdown(&mut self) {
-        self.history_open = false;
-        self.history_anim = 0.0;
-        self.history_scroll = 0.0;
+        self.close_history_window();
     }
 
     // ===== Playbook 管理面板 =====
@@ -2150,9 +2184,10 @@ impl AiPanel {
 
     // ===== 历史记录：筛选 / 分页 / 详情 / 清除 =====
 
-    /// 应用时间 + 类型筛选后的历史下标（对应 self.history 的原始下标）
+    /// 应用时间 + 类型 + 搜索关键词筛选后的历史下标（对应 self.history 的原始下标）
     pub fn filtered_history_indices(&self) -> Vec<usize> {
         let cutoff = self.history_time_filter.cutoff(now_secs());
+        let kw = self.history_search.trim().to_lowercase();
         self.history
             .iter()
             .enumerate()
@@ -2163,7 +2198,8 @@ impl AiPanel {
                     .as_ref()
                     .map(|t| m.mode.eq_ignore_ascii_case(t))
                     .unwrap_or(true);
-                time_ok && type_ok
+                let kw_ok = kw.is_empty() || m.title.to_lowercase().contains(&kw);
+                time_ok && type_ok && kw_ok
             })
             .map(|(i, _)| i)
             .collect()
@@ -2193,16 +2229,180 @@ impl AiPanel {
             .collect()
     }
 
-    /// 设置时间筛选（回到第一页）
+    /// 设置时间筛选（回到第一页；取消进行中的标题编辑，避免编辑条目被过滤后状态卡住）
     pub fn set_history_time_filter(&mut self, f: HistoryTimeFilter) {
         self.history_time_filter = f;
         self.history_page = 0;
+        if self.history_editing_id.is_some() {
+            self.cancel_history_edit();
+        }
     }
 
     /// 设置类型筛选（回到第一页）
     pub fn set_history_type_filter(&mut self, f: Option<String>) {
         self.history_type_filter = f;
         self.history_page = 0;
+    }
+
+    // ===== 历史浮窗：搜索 / 标题编辑 / 拖动 =====
+
+    /// 打开历史浮窗（居中默认位置，重置搜索与编辑态）
+    pub fn open_history_window(&mut self) {
+        self.history_open = true;
+        self.history_anim = 1.0;
+        self.history_scroll = 0.0;
+        self.history_win_drag = None;
+        self.history_editing_id = None;
+        self.history_last_click = None;
+        // 保留搜索词与位置，用户再次打开时延续上次状态
+    }
+
+    /// 关闭历史浮窗（清理拖动/搜索焦点/编辑态）
+    pub fn close_history_window(&mut self) {
+        self.history_open = false;
+        self.history_anim = 0.0;
+        self.history_win_drag = None;
+        self.history_search_focused = false;
+        self.history_editing_id = None;
+        self.history_last_click = None;
+        self.close_history_detail();
+    }
+
+    /// 搜索框输入一个字符（在光标处插入）
+    pub fn history_search_input_char(&mut self, ch: char) {
+        if self.history_search_caret > self.history_search.len() {
+            self.history_search_caret = self.history_search.len();
+        }
+        self.history_search.insert(self.history_search_caret, ch);
+        self.history_search_caret += ch.len_utf8();
+        self.history_page = 0;
+    }
+
+    /// 搜索框退格（删除光标前一个字符）
+    pub fn history_search_backspace(&mut self) {
+        if self.history_search_caret == 0 {
+            return;
+        }
+        // 找到前一个字符边界
+        let prev = self.history_search[..self.history_search_caret]
+            .char_indices()
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        self.history_search.remove(prev);
+        self.history_search_caret = prev;
+        self.history_page = 0;
+    }
+
+    /// 搜索框光标左移
+    pub fn history_search_move_left(&mut self) {
+        if self.history_search_caret > 0 {
+            self.history_search_caret = self.history_search[..self.history_search_caret]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+    }
+
+    /// 搜索框光标右移
+    pub fn history_search_move_right(&mut self) {
+        if self.history_search_caret < self.history_search.len() {
+            self.history_search_caret = self.history_search[self.history_search_caret..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.history_search_caret + i)
+                .unwrap_or(self.history_search.len());
+        }
+    }
+
+    /// 进入标题编辑态（双击条目触发）
+    pub fn begin_history_edit(&mut self, hist_idx: usize) {
+        if let Some(m) = self.history.get(hist_idx) {
+            self.history_editing_id = Some(m.id.clone());
+            self.history_editing_text = m.title.clone();
+            self.history_editing_caret = self.history_editing_text.len();
+            self.history_search_focused = false;
+        }
+    }
+
+    /// 取消标题编辑（Esc）
+    pub fn cancel_history_edit(&mut self) {
+        self.history_editing_id = None;
+        self.history_editing_text.clear();
+        self.history_editing_caret = 0;
+    }
+
+    /// 编辑态输入一个字符
+    pub fn history_edit_input_char(&mut self, ch: char) {
+        if self.history_editing_caret > self.history_editing_text.len() {
+            self.history_editing_caret = self.history_editing_text.len();
+        }
+        self.history_editing_text.insert(self.history_editing_caret, ch);
+        self.history_editing_caret += ch.len_utf8();
+    }
+
+    /// 编辑态退格
+    pub fn history_edit_backspace(&mut self) {
+        if self.history_editing_caret == 0 {
+            return;
+        }
+        let prev = self.history_editing_text[..self.history_editing_caret]
+            .char_indices()
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        self.history_editing_text.remove(prev);
+        self.history_editing_caret = prev;
+    }
+
+    /// 提交标题编辑（回车）：持久化到 SQLite 并同步内存
+    pub fn commit_history_edit(&mut self) -> Result<(), String> {
+        let id = match self.history_editing_id.take() {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let new_title = self.history_editing_text.trim().to_string();
+        self.history_editing_text.clear();
+        self.history_editing_caret = 0;
+        if new_title.is_empty() {
+            return Err("标题不能为空".to_string());
+        }
+        // 1. 持久化
+        if let Some(warm) = self.warm_data_store.as_ref() {
+            warm.rename_conversation(&id, &new_title)?;
+        }
+        // 2. 同步内存 history
+        if let Some(m) = self.history.iter_mut().find(|m| m.id == id) {
+            m.title = new_title.clone();
+        }
+        // 3. 同步 conversations 中的活动标签
+        if let Some(c) = self.conversations.iter_mut().find(|c| c.id == id) {
+            c.title = new_title;
+        }
+        Ok(())
+    }
+
+    /// 双击检测：判断本次点击是否构成对同一条目的双击（<500ms）
+    /// 返回 true 表示是双击，调用方应进入编辑态
+    pub fn history_click_or_double(&mut self, conv_id: &str) -> bool {
+        const DOUBLE_CLICK_MS: u128 = 500;
+        let now = std::time::Instant::now();
+        let is_double = match &self.history_last_click {
+            Some((last_id, last_t))
+                if last_id == conv_id
+                    && now.duration_since(*last_t).as_millis() < DOUBLE_CLICK_MS =>
+            {
+                true
+            }
+            _ => false,
+        };
+        self.history_last_click = if is_double {
+            None // 双击后重置，避免三击误判
+        } else {
+            Some((conv_id.to_string(), now))
+        };
+        is_double
     }
 
     /// 下一页（到末页为止）
@@ -2245,6 +2445,40 @@ impl AiPanel {
         self.history.clear();
         self.history_page = 0;
         self.close_history_detail();
+        // 重置筛选状态，避免清空后筛选条件残留导致困惑
+        self.history_time_filter = HistoryTimeFilter::All;
+        self.history_type_filter = None;
+        Ok(n)
+    }
+
+    /// 清理无工作区绑定的历史记录（旧版本未隔离工作区的数据）；返回删除条数
+    pub fn clear_orphan_history(&mut self) -> Result<usize, String> {
+        let n = if let Some(warm) = self.warm_data_store.as_ref() {
+            warm.clear_orphan_conversations()?
+        } else {
+            // 无温数据存储时，从内存 history 中移除无 workspace_hash 的条目
+            let before = self.history.len();
+            self.history.retain(|m| !m.id.is_empty());
+            before - self.history.len()
+        };
+        // 同步刷新内存中的历史列表（移除已删除的条目）
+        if let Some(warm) = self.warm_data_store.as_ref() {
+            let ws_only = self.history_workspace_only;
+            if let Ok(convs) = warm.search_conversations("", ws_only, 500) {
+                self.history = convs
+                    .into_iter()
+                    .map(|c| ConversationMeta {
+                        id: c.id,
+                        title: c.title,
+                        updated_at: c.updated_at,
+                        message_count: c.message_count as usize,
+                        preview: String::new(),
+                        mode: c.mode,
+                    })
+                    .collect();
+            }
+        }
+        self.clamp_history_page();
         Ok(n)
     }
 
@@ -2556,12 +2790,17 @@ mod tests {
             .map(|i| meta(&format!("c{}", i), now, "Ask"))
             .collect();
         p.history_page = 1;
+        p.history_time_filter = HistoryTimeFilter::Week;
+        p.history_type_filter = Some("Agent".to_string());
         p.open_history_detail(0);
         let n = p.clear_all_history().unwrap();
         assert_eq!(n, 8);
         assert!(p.history.is_empty());
         assert_eq!(p.history_page, 0);
         assert!(p.history_detail_id.is_none());
+        // 筛选状态应重置为默认值
+        assert_eq!(p.history_time_filter, HistoryTimeFilter::All);
+        assert!(p.history_type_filter.is_none());
     }
 
     #[test]
@@ -2591,6 +2830,135 @@ mod tests {
         assert_eq!(relative_time(now - 60 * 86400, now), "2 个月前");
         // 未来时间戳不回绕
         assert_eq!(relative_time(now + 100, now), "刚刚");
+    }
+
+    // ===== 历史浮窗：搜索过滤 / 标题编辑 / 双击检测 =====
+
+    #[test]
+    fn history_search_filters_by_title_case_insensitive() {
+        let now = now_secs();
+        let mut p = test_panel();
+        let mut m1 = meta("a", now, "Ask");
+        m1.title = "Rust 生命周期问题".to_string();
+        let mut m2 = meta("b", now, "Ask");
+        m2.title = "Python 装饰器".to_string();
+        let mut m3 = meta("c", now, "Ask");
+        m3.title = "RUST 所有权".to_string();
+        p.history = vec![m1, m2, m3];
+        // 空搜索：全部
+        assert_eq!(p.filtered_history_indices(), vec![0, 1, 2]);
+        // 关键词 "rust" 命中 0 和 2（大小写不敏感）
+        p.history_search = "rust".to_string();
+        assert_eq!(p.filtered_history_indices(), vec![0, 2]);
+        // 无命中
+        p.history_search = "java".to_string();
+        assert!(p.filtered_history_indices().is_empty());
+        // 清空恢复
+        p.history_search.clear();
+        assert_eq!(p.filtered_history_indices(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn history_search_input_and_backspace() {
+        let mut p = test_panel();
+        p.history_search_input_char('r');
+        p.history_search_input_char('u');
+        p.history_search_input_char('s');
+        assert_eq!(p.history_search, "rus");
+        assert_eq!(p.history_search_caret, 3);
+        p.history_search_backspace();
+        assert_eq!(p.history_search, "ru");
+        assert_eq!(p.history_search_caret, 2);
+        // 中文按字符删除
+        p.history_search_input_char('生');
+        assert_eq!(p.history_search, "ru生");
+        p.history_search_backspace();
+        assert_eq!(p.history_search, "ru");
+    }
+
+    #[test]
+    fn history_search_caret_move_respects_char_boundary() {
+        let mut p = test_panel();
+        p.history_search = "a生b".to_string();
+        p.history_search_caret = p.history_search.len();
+        p.history_search_move_left(); // 移到 'b' 前
+        assert_eq!(&p.history_search[p.history_search_caret..], "b");
+        p.history_search_move_left(); // 移到 '生' 前
+        assert_eq!(&p.history_search[p.history_search_caret..], "生b");
+        p.history_search_move_right(); // 移到 'b' 前
+        assert_eq!(&p.history_search[p.history_search_caret..], "b");
+    }
+
+    #[test]
+    fn history_edit_commit_updates_memory_and_conversations() {
+        let now = now_secs();
+        let mut p = test_panel();
+        p.history = vec![meta("a", now, "Ask")];
+        // 活动标签中有一个同 id 会话
+        p.conversations.push(AiConversation::new("a".into(), "旧标题".into()));
+        p.begin_history_edit(0);
+        assert_eq!(p.history_editing_id.as_deref(), Some("a"));
+        assert_eq!(p.history_editing_text, "会话a");
+        // 清空并输入新标题
+        p.history_editing_text = "新标题".to_string();
+        p.history_editing_caret = p.history_editing_text.len();
+        p.commit_history_edit().unwrap();
+        assert_eq!(p.history[0].title, "新标题");
+        assert_eq!(p.conversations[1].title, "新标题");
+        assert!(p.history_editing_id.is_none());
+    }
+
+    #[test]
+    fn history_edit_commit_rejects_empty_title() {
+        let now = now_secs();
+        let mut p = test_panel();
+        p.history = vec![meta("a", now, "Ask")];
+        p.begin_history_edit(0);
+        p.history_editing_text = "   ".to_string();
+        assert!(p.commit_history_edit().is_err());
+        // 原标题不变
+        assert_eq!(p.history[0].title, "会话a");
+    }
+
+    #[test]
+    fn history_edit_cancel_discards_changes() {
+        let now = now_secs();
+        let mut p = test_panel();
+        p.history = vec![meta("a", now, "Ask")];
+        p.begin_history_edit(0);
+        p.history_editing_text = "被丢弃".to_string();
+        p.cancel_history_edit();
+        assert!(p.history_editing_id.is_none());
+        assert_eq!(p.history[0].title, "会话a");
+    }
+
+    #[test]
+    fn history_double_click_detection() {
+        let mut p = test_panel();
+        // 第一次点击：不是双击
+        assert!(!p.history_click_or_double("a"));
+        // 紧接着同一条目：是双击
+        assert!(p.history_click_or_double("a"));
+        // 双击后重置，再点不是双击
+        assert!(!p.history_click_or_double("a"));
+        // 不同条目：不是双击
+        assert!(!p.history_click_or_double("b"));
+    }
+
+    #[test]
+    fn history_window_open_close_resets_state() {
+        let mut p = test_panel();
+        p.history_search_focused = true;
+        p.history_editing_id = Some("x".to_string());
+        p.history_win_drag = Some((1.0, 2.0));
+        p.close_history_window();
+        assert!(!p.history_open);
+        assert!(!p.history_search_focused);
+        assert!(p.history_editing_id.is_none());
+        assert!(p.history_win_drag.is_none());
+        p.open_history_window();
+        assert!(p.history_open);
+        assert!(p.history_editing_id.is_none());
     }
 
     // ===== 流式中断：drain_background 中断边沿（文件块抢救的前提）=====
