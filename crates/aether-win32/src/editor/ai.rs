@@ -743,13 +743,32 @@ impl EditorState {
         Ok(applied)
     }
     pub(crate) fn resolve_edit_path(&self, path: &Path) -> PathBuf {
+        // 安全：拒绝绝对路径与逃逸工作区的相对路径（.. 越界），
+        // 防 AI 输出 <<<<<<< AETHER_FILE ../../outside.txt 写入工作区外（路径穿越漏洞）。
         if path.is_absolute() {
-            return path.to_path_buf();
+            return PathBuf::new(); // 调用方会因空路径/不存在而失败，不产生副作用
         }
-        self.current_folder
-            .as_ref()
-            .map(|root| root.join(path))
-            .unwrap_or_else(|| path.to_path_buf())
+        let root = match self.current_folder.as_ref() {
+            Some(r) => r,
+            None => return path.to_path_buf(),
+        };
+        // 逐组件规范化：.. 越出 root 即拒绝（不 resolve 符号链接，避免 TOCTOU）
+        let mut cur = root.to_path_buf();
+        for comp in path.components() {
+            match comp {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if !cur.pop() || !cur.starts_with(root) {
+                        return PathBuf::new();
+                    }
+                }
+                std::path::Component::Normal(c) => cur.push(c),
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return PathBuf::new();
+                }
+            }
+        }
+        cur
     }
 
     /// 将工作区相对路径解析为经沙箱校验的绝对路径（仅允许工作区内，禁止逃逸）。
