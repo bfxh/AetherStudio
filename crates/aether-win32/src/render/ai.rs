@@ -321,7 +321,13 @@ impl EditorState {
                     &dim_brush,
                 );
                 self.ai_panel.history_button_region = Some((hb_x, tab_y, icon_btn, tab_h));
-                crate::hit_test::register_hit_region("ai:history_button", hb_x, tab_y, icon_btn, tab_h);
+                crate::hit_test::register_hit_region(
+                    "ai:history_button",
+                    hb_x,
+                    tab_y,
+                    icon_btn,
+                    tab_h,
+                );
 
                 cy += tab_h + 8.0;
                 let sep2 = D2D_RECT_F {

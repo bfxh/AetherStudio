@@ -248,7 +248,11 @@ impl EditorState {
                 };
                 target.FillRectangle(&box_rect, &box_bg);
                 // 聚焦时高亮边框
-                let border = if focused { &accent_brush } else { &border_brush };
+                let border = if focused {
+                    &accent_brush
+                } else {
+                    &border_brush
+                };
                 draw_input_borders(
                     target,
                     box_rect.left,
@@ -286,14 +290,10 @@ impl EditorState {
                 // 聚焦时绘制光标
                 if focused && self.ai_panel.caret_visible {
                     // 用字节索引切片更安全
-                    let byte_caret = self
-                        .ai_panel
-                        .history_search_caret
-                        .min(search_text.len());
+                    let byte_caret = self.ai_panel.history_search_caret.min(search_text.len());
                     let before = &search_text[..byte_caret];
-                    let approx_x = content_left
-                        + 8.0
-                        + measure_text_width(&title_format, before) as f32;
+                    let approx_x =
+                        content_left + 8.0 + measure_text_width(&title_format, before) as f32;
                     target.FillRectangle(
                         &D2D_RECT_F {
                             left: approx_x,
@@ -304,8 +304,7 @@ impl EditorState {
                         &white_brush,
                     );
                 }
-                self.ai_panel.history_search_region =
-                    Some((content_left, cy, content_w, search_h));
+                self.ai_panel.history_search_region = Some((content_left, cy, content_w, search_h));
                 crate::hit_test::register_hit_region(
                     "ai:history_search",
                     content_left,
@@ -434,7 +433,8 @@ impl EditorState {
                     }
                 }
 
-                let editing = self.ai_panel.history_editing_id.as_deref() == Some(hmeta.id.as_str());
+                let editing =
+                    self.ai_panel.history_editing_id.as_deref() == Some(hmeta.id.as_str());
                 let del_w = 30.0f32;
 
                 if editing {
@@ -479,8 +479,7 @@ impl EditorState {
                     );
                     // 光标
                     if self.ai_panel.caret_visible {
-                        let byte_caret =
-                            self.ai_panel.history_editing_caret.min(edit_text.len());
+                        let byte_caret = self.ai_panel.history_editing_caret.min(edit_text.len());
                         let before = &edit_text[..byte_caret];
                         let cx = edit_rect.left + 4.0 + measure_text_width(&title_format, before);
                         target.FillRectangle(
@@ -495,8 +494,7 @@ impl EditorState {
                     }
                 } else {
                     // 正常态：标题 + 相对时间
-                    let title_text: Vec<u16> =
-                        hmeta.title.encode_utf16().chain(Some(0)).collect();
+                    let title_text: Vec<u16> = hmeta.title.encode_utf16().chain(Some(0)).collect();
                     target.DrawText(
                         &title_text,
                         &text_format,
@@ -557,9 +555,13 @@ impl EditorState {
                     trash_size,
                     &white_brush,
                 );
-                self.ai_panel
-                    .history_delete_regions
-                    .push((hi, del_rect.left, del_rect.top, del_w, 22.0));
+                self.ai_panel.history_delete_regions.push((
+                    hi,
+                    del_rect.left,
+                    del_rect.top,
+                    del_w,
+                    22.0,
+                ));
                 crate::hit_test::register_hit_region(
                     format!("ai:history_delete:{}", hi),
                     del_rect.left,
@@ -677,7 +679,11 @@ impl EditorState {
                         right: px0 + pw,
                         bottom: btn_y + btn_h,
                     },
-                    if prev_enabled { &white_brush } else { &dim_brush },
+                    if prev_enabled {
+                        &white_brush
+                    } else {
+                        &dim_brush
+                    },
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
@@ -740,7 +746,11 @@ impl EditorState {
                         right: nx + pw,
                         bottom: btn_y + btn_h,
                     },
-                    if next_enabled { &white_brush } else { &dim_brush },
+                    if next_enabled {
+                        &white_brush
+                    } else {
+                        &dim_brush
+                    },
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
@@ -786,13 +796,21 @@ impl EditorState {
                         right: cx + cw,
                         bottom: btn_y + btn_h,
                     },
-                    if has_history { &white_brush } else { &dim_brush },
+                    if has_history {
+                        &white_brush
+                    } else {
+                        &dim_brush
+                    },
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 self.ai_panel.history_clear_all_region = if has_history {
                     crate::hit_test::register_hit_region(
-                        "ai:history_clear_all", cx, btn_y, cw, btn_h,
+                        "ai:history_clear_all",
+                        cx,
+                        btn_y,
+                        cw,
+                        btn_h,
                     );
                     Some((cx, btn_y, cw, btn_h))
                 } else {

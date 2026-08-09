@@ -235,7 +235,11 @@ impl WarmDataStore {
 
         while let Ok(req) = request_rx.recv() {
             match req {
-                ArchiveRequest::ArchiveConversation { conv_id, conv, workspace_hash: hash } => {
+                ArchiveRequest::ArchiveConversation {
+                    conv_id,
+                    conv,
+                    workspace_hash: hash,
+                } => {
                     let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);
                     if result.is_ok() {
                         Self::maybe_reflect(&store, &reflector_client, &conv);
@@ -245,7 +249,11 @@ impl WarmDataStore {
                         Err(e) => ArchiveResult::Failed { conv_id, error: e },
                     });
                 }
-                ArchiveRequest::ArchiveAllDirty { sessions, reflect, workspace_hash: hash } => {
+                ArchiveRequest::ArchiveAllDirty {
+                    sessions,
+                    reflect,
+                    workspace_hash: hash,
+                } => {
                     for conv in sessions {
                         let conv_id = conv.id.clone();
                         let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);

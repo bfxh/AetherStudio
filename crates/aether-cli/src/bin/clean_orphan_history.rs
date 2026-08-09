@@ -44,17 +44,18 @@ fn main() {
             .expect("准备查询失败");
         let rows = stmt
             .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
             .expect("查询失败");
 
         println!("\nworkspace_hash 分布:");
         for row in rows {
             if let Ok((hash, count)) = row {
-                let display = if hash.is_empty() { "(空)".to_string() } else { hash };
+                let display = if hash.is_empty() {
+                    "(空)".to_string()
+                } else {
+                    hash
+                };
                 println!("  {}: {} 条", display, count);
             }
         }
@@ -98,7 +99,10 @@ fn main() {
         }
 
         // 确认删除
-        print!("\n确认清空全部 {} 条会话（{} 条消息）吗？此操作不可恢复！(y/N): ", total, msg_total);
+        print!(
+            "\n确认清空全部 {} 条会话（{} 条消息）吗？此操作不可恢复！(y/N): ",
+            total, msg_total
+        );
         std::io::stdout().flush().unwrap();
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
@@ -118,21 +122,15 @@ fn main() {
         };
 
         // 1. 删除全部向量索引
-        let vec_deleted = tx
-            .execute("DELETE FROM vec_messages", [])
-            .unwrap_or(0);
+        let vec_deleted = tx.execute("DELETE FROM vec_messages", []).unwrap_or(0);
         println!("已删除 {} 条向量索引", vec_deleted);
 
         // 2. 删除全部消息
-        let msg_deleted = tx
-            .execute("DELETE FROM messages", [])
-            .unwrap_or(0);
+        let msg_deleted = tx.execute("DELETE FROM messages", []).unwrap_or(0);
         println!("已删除 {} 条消息", msg_deleted);
 
         // 3. 删除全部会话
-        let conv_deleted = tx
-            .execute("DELETE FROM conversations", [])
-            .unwrap_or(0);
+        let conv_deleted = tx.execute("DELETE FROM conversations", []).unwrap_or(0);
         println!("已删除 {} 条会话", conv_deleted);
 
         if let Err(e) = tx.commit() {
@@ -140,7 +138,10 @@ fn main() {
             std::process::exit(1);
         }
 
-        println!("\n清空完成！共删除 {} 条会话、{} 条消息。", conv_deleted, msg_deleted);
+        println!(
+            "\n清空完成！共删除 {} 条会话、{} 条消息。",
+            conv_deleted, msg_deleted
+        );
     } else {
         // ===== 清理无工作区绑定的记录 =====
         let orphan_count: i64 = conn
@@ -241,6 +242,9 @@ fn main() {
             std::process::exit(1);
         }
 
-        println!("\n清理完成！共删除 {} 条无工作区绑定的历史会话。", conv_deleted);
+        println!(
+            "\n清理完成！共删除 {} 条无工作区绑定的历史会话。",
+            conv_deleted
+        );
     }
 }

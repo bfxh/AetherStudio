@@ -46,7 +46,10 @@ impl EditorState {
                 right: x + width,
                 bottom: y + height,
             };
-            target.PushAxisAlignedClip(&clip_rect, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED);
+            target.PushAxisAlignedClip(
+                &clip_rect,
+                windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED,
+            );
 
             let bg_color = if self.theme.glass_enabled {
                 self.theme.tab_inactive_bg

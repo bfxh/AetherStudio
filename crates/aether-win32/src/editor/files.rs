@@ -368,7 +368,7 @@ impl EditorState {
         // （保存已在上面完成，此处仅加载）
         let workspace_hash = Self::workspace_path_hash(&path);
         self.load_workspace_ai_session(&workspace_hash);
-        
+
         self.file_tree = Some(FileTree::new());
         // 重置文件树缓存与交互状态，防止旧索引在新树中越界/错位
         self.file_tree_visible_rows.clear();
@@ -545,7 +545,10 @@ impl EditorState {
             self.ai_panel.snapshot_active_into_slot();
             // 归档所有非空会话到温数据层（异步，不阻塞切换）
             for conv in &self.ai_panel.conversations {
-                let has_user_msg = conv.messages.iter().any(|m| m.role == crate::ai_panel::AiRole::User);
+                let has_user_msg = conv
+                    .messages
+                    .iter()
+                    .any(|m| m.role == crate::ai_panel::AiRole::User);
                 if has_user_msg && !conv.hibernated {
                     if let Some(warm) = self.ai_panel.warm_data_store.as_ref() {
                         warm.request_archive(conv.id.clone(), conv.clone());
@@ -566,11 +569,15 @@ impl EditorState {
         // 1. 优先从内存快照恢复该工作区之前的标签页组
         if let Some(snapshot) = self.workspace_ai_sessions.get(workspace_hash).cloned() {
             self.ai_panel.conversations = snapshot.conversations;
-            let active = snapshot.active.min(self.ai_panel.conversations.len().saturating_sub(1));
+            let active = snapshot
+                .active
+                .min(self.ai_panel.conversations.len().saturating_sub(1));
             if !self.ai_panel.conversations.is_empty() {
                 self.ai_panel.load_slot_into_active(active);
             }
-            self.current_workspace_ai_session = self.ai_panel.conversations
+            self.current_workspace_ai_session = self
+                .ai_panel
+                .conversations
                 .get(active)
                 .map(|c| c.id.clone());
             return;

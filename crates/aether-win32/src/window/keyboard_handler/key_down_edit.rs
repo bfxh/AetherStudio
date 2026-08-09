@@ -213,7 +213,14 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 let first = EDITOR_STATE.with(|s| {
                     s.borrow()
                         .as_ref()
-                        .map(|state| state.borrow().ai_panel.history_page_indices().first().copied())
+                        .map(|state| {
+                            state
+                                .borrow()
+                                .ai_panel
+                                .history_page_indices()
+                                .first()
+                                .copied()
+                        })
                         .flatten()
                 });
                 if let Some(i) = first {
@@ -263,11 +270,8 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                         let text = st.ai_panel.history_editing_text.clone();
                         let c = st.ai_panel.history_editing_caret;
                         if c > 0 {
-                            st.ai_panel.history_editing_caret = text[..c]
-                                .char_indices()
-                                .last()
-                                .map(|(i, _)| i)
-                                .unwrap_or(0);
+                            st.ai_panel.history_editing_caret =
+                                text[..c].char_indices().last().map(|(i, _)| i).unwrap_or(0);
                         }
                     } else {
                         st.ai_panel.history_search_move_left();

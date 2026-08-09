@@ -254,26 +254,38 @@ pub(crate) unsafe fn on_mouse_move(
             // 标题栏 + 活动栏区域
             let ar = layout.activity_bar_region();
             st.dirty_tracker.mark_region(
-                ar.x, ar.y, ar.width, ar.height,
+                ar.x,
+                ar.y,
+                ar.width,
+                ar.height,
                 crate::dirty_rect::DirtyRegionType::ActivityBar,
             );
             let tr = layout.tab_bar_region(st.show_tab_bar());
             st.dirty_tracker.mark_region(
-                tr.x, tr.y, tr.width, tr.height,
+                tr.x,
+                tr.y,
+                tr.width,
+                tr.height,
                 crate::dirty_rect::DirtyRegionType::TabBar,
             );
         }
         if tree_changed || settings_changed {
             let sr = layout.sidebar_region();
             st.dirty_tracker.mark_region(
-                sr.x, sr.y, sr.width, sr.height,
+                sr.x,
+                sr.y,
+                sr.width,
+                sr.height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
         }
         if ai_changed {
             let rp = layout.right_panel_region();
             st.dirty_tracker.mark_region(
-                rp.x, rp.y, rp.width, rp.height,
+                rp.x,
+                rp.y,
+                rp.width,
+                rp.height,
                 crate::dirty_rect::DirtyRegionType::RightPanel,
             );
         }
@@ -283,7 +295,10 @@ pub(crate) unsafe fn on_mouse_move(
         if status_bar_changed {
             let sb = layout.status_bar_region();
             st.dirty_tracker.mark_region(
-                sb.x, sb.y, sb.width, sb.height,
+                sb.x,
+                sb.y,
+                sb.width,
+                sb.height,
                 crate::dirty_rect::DirtyRegionType::StatusBar,
             );
         }
@@ -1165,7 +1180,12 @@ unsafe fn omm_tooltip_state(
         st.tooltip_state.visible_text = None;
         // 启动/取消 tooltip 定时器
         if new_key.is_some() {
-            let _ = SetTimer(hwnd, super::super::TOOLTIP_TIMER_ID, TOOLTIP_DELAY_MS as u32, None);
+            let _ = SetTimer(
+                hwnd,
+                super::super::TOOLTIP_TIMER_ID,
+                TOOLTIP_DELAY_MS as u32,
+                None,
+            );
         } else {
             let _ = KillTimer(hwnd, super::super::TOOLTIP_TIMER_ID);
         }
@@ -1191,7 +1211,12 @@ unsafe fn omm_tooltip_state(
         st.tooltip_state.timer_start = Some(GetTickCount64());
         // 移动超限时重置定时器
         let _ = KillTimer(hwnd, super::super::TOOLTIP_TIMER_ID);
-        let _ = SetTimer(hwnd, super::super::TOOLTIP_TIMER_ID, TOOLTIP_DELAY_MS as u32, None);
+        let _ = SetTimer(
+            hwnd,
+            super::super::TOOLTIP_TIMER_ID,
+            TOOLTIP_DELAY_MS as u32,
+            None,
+        );
         if was_visible {
             st.tooltip_state.visible_text = None;
             return true;

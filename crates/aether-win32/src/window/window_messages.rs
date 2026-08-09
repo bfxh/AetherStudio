@@ -635,8 +635,7 @@ pub(crate) unsafe fn on_wm_app_9(
         } else {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().status_message =
-                        "已取消打开不受信任的工作区".to_string();
+                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
                 }
             });
         }
@@ -672,7 +671,8 @@ pub(crate) unsafe fn on_wm_app_11(
     _wparam: WPARAM,
     _lparam: LPARAM,
 ) -> LRESULT {
-    if let Some(path) = crate::dialogs::Dialogs::save_file_dialog(hwnd, "另存为", "untitled.txt") {
+    if let Some(path) = crate::dialogs::Dialogs::save_file_dialog(hwnd, "另存为", "untitled.txt")
+    {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 state.borrow_mut().save_as(path);

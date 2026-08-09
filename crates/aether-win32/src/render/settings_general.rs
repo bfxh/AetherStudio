@@ -622,7 +622,7 @@ impl EditorState {
                     }
                 }
                 crate::settings::SettingsTab::Ai => ("AI", "AI 接口配置"),
-                                crate::settings::SettingsTab::Playbook => ("策略", "管理 AI 沉淀策略库"),
+                crate::settings::SettingsTab::Playbook => ("策略", "管理 AI 沉淀策略库"),
                 crate::settings::SettingsTab::Appearance => ("外观", "主题与界面自定义"),
                 crate::settings::SettingsTab::Remote => ("远程", "SSH 与容器远程连接"),
                 crate::settings::SettingsTab::Update => ("更新", "版本与更新策略"),
@@ -753,9 +753,9 @@ impl EditorState {
                     self.render_update_settings(target, page_x, page_w, page_y);
                 }
                 crate::settings::SettingsTab::Ai => {}
-                                crate::settings::SettingsTab::Playbook => {
-                                    self.render_playbook_settings(target, page_x, page_w, page_y);
-                                }
+                crate::settings::SettingsTab::Playbook => {
+                    self.render_playbook_settings(target, page_x, page_w, page_y);
+                }
             }
         }
     }
@@ -797,13 +797,11 @@ impl EditorState {
                 .unwrap();
 
             // 标题
-            let header: Vec<u16> = format!(
-                "已沉淀策略（共 {} 条）",
-                self.ai_panel.playbook_items.len()
-            )
-            .encode_utf16()
-            .chain(Some(0))
-            .collect();
+            let header: Vec<u16> =
+                format!("已沉淀策略（共 {} 条）", self.ai_panel.playbook_items.len())
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
             let header_rect = D2D_RECT_F {
                 left: x,
                 top: cy,

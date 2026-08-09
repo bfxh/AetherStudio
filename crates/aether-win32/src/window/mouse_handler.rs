@@ -283,10 +283,7 @@ pub(crate) unsafe fn on_mouse_wheel(
             // 历史浮窗：光标在浮窗内 → 滚动浮窗列表（全局最顶层，优先于其他滚动）
             if state.ai_panel.history_open {
                 if let Some((px, py, pw, ph)) = state.ai_panel.history_win_region {
-                    if cursor_x >= px
-                        && cursor_x < px + pw
-                        && cursor_y >= py
-                        && cursor_y < py + ph
+                    if cursor_x >= px && cursor_x < px + pw && cursor_y >= py && cursor_y < py + ph
                     {
                         let scroll_amount = delta * 2.0;
                         state.ai_panel.history_scroll = (state.ai_panel.history_scroll

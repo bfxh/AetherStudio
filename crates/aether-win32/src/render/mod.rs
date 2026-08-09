@@ -93,7 +93,8 @@ impl EditorState {
 
         // LSP: 轮询诊断事件，更新 diagnostics 字段
         // 诊断变化时标记编辑区脏矩形，确保波浪线及时出现/消失（否则残留为重影）
-        if self.lsp
+        if self
+            .lsp
             .poll_events(&mut self.diagnostics, &mut self.status_message)
         {
             let er = self.layout.editor_content_region(self.show_tab_bar());
@@ -265,7 +266,10 @@ impl EditorState {
             let show_tab_bar = self.show_tab_bar();
             let tr = self.layout.tab_bar_region(show_tab_bar);
             self.dirty_tracker.mark_region(
-                tr.x, tr.y, tr.width, tr.height,
+                tr.x,
+                tr.y,
+                tr.width,
+                tr.height,
                 crate::dirty_rect::DirtyRegionType::TabBar,
             );
             crate::window::invalidate_window(self.hwnd);

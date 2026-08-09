@@ -1968,7 +1968,10 @@ pub(super) unsafe fn lbd_history_window(
             st.ai_panel.history.get(i).map(|m| m.id.clone())
         };
         if let Some(conv_id) = conv_id {
-            let is_double = state.borrow_mut().ai_panel.history_click_or_double(&conv_id);
+            let is_double = state
+                .borrow_mut()
+                .ai_panel
+                .history_click_or_double(&conv_id);
             if is_double {
                 // 双击：进入标题编辑态
                 state.borrow_mut().ai_panel.begin_history_edit(i);
@@ -2014,10 +2017,7 @@ pub(super) unsafe fn lbd_history_window(
     if in_region(state.borrow().ai_panel.history_clear_all_region) {
         let mut st = state.borrow_mut();
         let count = st.ai_panel.history.len();
-        let msg = format!(
-            "确定清空全部 {} 条历史对话吗？\n\n此操作不可恢复。",
-            count
-        );
+        let msg = format!("确定清空全部 {} 条历史对话吗？\n\n此操作不可恢复。", count);
         if Dialogs::confirm_yes_no(hwnd, "清空历史记录", &msg) {
             match st.ai_panel.clear_all_history() {
                 Ok(n) => st.status_message = format!("已清空 {} 条历史记录", n),

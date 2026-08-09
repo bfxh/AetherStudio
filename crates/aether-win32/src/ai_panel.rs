@@ -2338,7 +2338,8 @@ impl AiPanel {
         if self.history_editing_caret > self.history_editing_text.len() {
             self.history_editing_caret = self.history_editing_text.len();
         }
-        self.history_editing_text.insert(self.history_editing_caret, ch);
+        self.history_editing_text
+            .insert(self.history_editing_caret, ch);
         self.history_editing_caret += ch.len_utf8();
     }
 
@@ -2895,7 +2896,8 @@ mod tests {
         let mut p = test_panel();
         p.history = vec![meta("a", now, "Ask")];
         // 活动标签中有一个同 id 会话
-        p.conversations.push(AiConversation::new("a".into(), "旧标题".into()));
+        p.conversations
+            .push(AiConversation::new("a".into(), "旧标题".into()));
         p.begin_history_edit(0);
         assert_eq!(p.history_editing_id.as_deref(), Some("a"));
         assert_eq!(p.history_editing_text, "会话a");
