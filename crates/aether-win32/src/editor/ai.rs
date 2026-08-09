@@ -639,6 +639,14 @@ impl EditorState {
 
         for edit in edits {
             let full_path = self.resolve_edit_path(&edit.path);
+            // 空路径 = 越界/绝对路径被拒绝（resolve_edit_path 的逃逸防护），
+            // 必须显式报错，不能静默跳过（否则 create_new_file_tab 会产生空路径 tab）。
+            if full_path.as_os_str().is_empty() {
+                return Err(format!(
+                    "AI 编辑路径越界被拒绝: {}（仅允许工作区内相对路径）",
+                    edit.path.display()
+                ));
+            }
 
             // 删除文件操作
             if edit.is_delete() {
