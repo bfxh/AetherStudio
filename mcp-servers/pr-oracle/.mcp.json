@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pr-oracle": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\lbx13\\AppData\\Roaming\\reasonix\\global-workspace\\mcp-servers\\pr-oracle\\server.py"
+      ]
+    }
+  }
+}

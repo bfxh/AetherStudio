@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ci-optimization": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\lbx13\\AppData\\Roaming\\reasonix\\global-workspace\\mcp-servers\\ci-optimization\\server.py"
+      ]
+    }
+  }
+}

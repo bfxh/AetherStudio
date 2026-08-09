@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "browser-use": {
+      "command": "python",
+      "args": ["-m", "browser_use.mcp"]
+    }
+  }
+}

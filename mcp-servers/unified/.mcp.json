@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "unified-dev-tools": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\lbx13\\AppData\\Roaming\\reasonix\\global-workspace\\mcp-servers\\unified\\server.py"
+      ]
+    }
+  }
+}
