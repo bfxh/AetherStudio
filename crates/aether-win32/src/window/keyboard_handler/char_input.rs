@@ -460,7 +460,8 @@ unsafe fn oc_editor_default(hwnd: HWND, c: char) {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
             // Markdown 预览模式：只读，不响应字符输入
-            if st.content.language == aether_core::lexer::Language::Markdown && st.markdown_preview {
+            if st.content.language == aether_core::lexer::Language::Markdown && st.markdown_preview
+            {
                 return;
             }
             // P1-1: 多光标模式下广播到所有光标

@@ -20,7 +20,8 @@ impl EditorState {
         let btn_y = y + btn_margin;
 
         // 保存按钮区域供点击命中检测
-        self.markdown_toggle_btn = Some(crate::layout::Region::new(btn_x, btn_y, btn_size, btn_size));
+        self.markdown_toggle_btn =
+            Some(crate::layout::Region::new(btn_x, btn_y, btn_size, btn_size));
 
         let is_preview = self.markdown_preview;
         let icon = if is_preview {
@@ -105,7 +106,10 @@ impl EditorState {
             );
 
             // 读取当前 buffer 文本
-            let text = self.content.buffer.get_text(0, self.content.buffer.len_bytes());
+            let text = self
+                .content
+                .buffer
+                .get_text(0, self.content.buffer.len_bytes());
             if text.is_empty() {
                 self.render_markdown_empty(target, x, y, width, height);
                 return;
@@ -136,9 +140,7 @@ impl EditorState {
 
             for line in &lines {
                 let lh = match line {
-                    MdRenderLine::Heading { level, .. } => {
-                        line_height * heading_scale(*level)
-                    }
+                    MdRenderLine::Heading { level, .. } => line_height * heading_scale(*level),
                     MdRenderLine::CodeBlock { .. } => line_height * 1.1,
                     MdRenderLine::Divider => line_height * 0.8,
                     _ => line_height,
@@ -221,11 +223,31 @@ impl EditorState {
                 self.render_md_paragraph(target, segments, x, y, width, line_height);
             }
             MdRenderLine::UnorderedListItem { segments, indent } => {
-                self.render_md_list_item(target, segments, *indent, false, x, y, width, line_height);
+                self.render_md_list_item(
+                    target,
+                    segments,
+                    *indent,
+                    false,
+                    x,
+                    y,
+                    width,
+                    line_height,
+                );
             }
-            MdRenderLine::OrderedListItem { number, segments, indent } => {
+            MdRenderLine::OrderedListItem {
+                number,
+                segments,
+                indent,
+            } => {
                 self.render_md_ordered_list_item(
-                    target, *number, segments, *indent, x, y, width, line_height,
+                    target,
+                    *number,
+                    segments,
+                    *indent,
+                    x,
+                    y,
+                    width,
+                    line_height,
                 );
             }
             MdRenderLine::CodeBlock { text, .. } => {
@@ -347,7 +369,12 @@ impl EditorState {
 
         // 使用 TextLayout 支持富文本范围样式
         let dwrite = self.text_renderer.dwrite_factory();
-        let layout = match dwrite.CreateTextLayout(&wide[..wide.len() - 1], &format, width, line_height * 2.0) {
+        let layout = match dwrite.CreateTextLayout(
+            &wide[..wide.len() - 1],
+            &format,
+            width,
+            line_height * 2.0,
+        ) {
             Ok(l) => l,
             Err(_) => {
                 // fallback: 纯文本绘制
@@ -451,7 +478,14 @@ impl EditorState {
         );
 
         // 绘制内容
-        self.render_md_paragraph(target, segments, bullet_x + 20.0, y, width - indent_px - 20.0, line_height);
+        self.render_md_paragraph(
+            target,
+            segments,
+            bullet_x + 20.0,
+            y,
+            width - indent_px - 20.0,
+            line_height,
+        );
     }
 
     /// 渲染有序列表项
@@ -502,7 +536,14 @@ impl EditorState {
             DWRITE_MEASURING_MODE_NATURAL,
         );
 
-        self.render_md_paragraph(target, segments, num_x + 30.0, y, width - indent_px - 30.0, line_height);
+        self.render_md_paragraph(
+            target,
+            segments,
+            num_x + 30.0,
+            y,
+            width - indent_px - 30.0,
+            line_height,
+        );
     }
 
     /// 渲染代码块
@@ -699,12 +740,30 @@ struct MdSegment {
 /// Markdown 渲染行
 #[derive(Clone, Debug)]
 enum MdRenderLine {
-    Heading { level: u8, text: String },
-    Paragraph { segments: Vec<MdSegment> },
-    UnorderedListItem { segments: Vec<MdSegment>, indent: usize },
-    OrderedListItem { number: usize, segments: Vec<MdSegment>, indent: usize },
-    CodeBlock { text: String, #[allow(dead_code)] lang: String },
-    Quote { segments: Vec<MdSegment> },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    Paragraph {
+        segments: Vec<MdSegment>,
+    },
+    UnorderedListItem {
+        segments: Vec<MdSegment>,
+        indent: usize,
+    },
+    OrderedListItem {
+        number: usize,
+        segments: Vec<MdSegment>,
+        indent: usize,
+    },
+    CodeBlock {
+        text: String,
+        #[allow(dead_code)]
+        lang: String,
+    },
+    Quote {
+        segments: Vec<MdSegment>,
+    },
     Divider,
     Empty,
 }
@@ -765,9 +824,7 @@ fn parse_markdown_lines(text: &str) -> Vec<MdRenderLine> {
             continue;
         }
         if trimmed == ">" {
-            lines.push(MdRenderLine::Quote {
-                segments: vec![],
-            });
+            lines.push(MdRenderLine::Quote { segments: vec![] });
             continue;
         }
 
@@ -1000,7 +1057,9 @@ mod tests {
     #[test]
     fn test_parse_code_block() {
         let lines = parse_markdown_lines("```rust\nfn main() {}\n```");
-        assert!(matches!(&lines[0], MdRenderLine::CodeBlock { text, .. } if text == "fn main() {}"));
+        assert!(
+            matches!(&lines[0], MdRenderLine::CodeBlock { text, .. } if text == "fn main() {}")
+        );
     }
 
     #[test]
@@ -1013,8 +1072,14 @@ mod tests {
     #[test]
     fn test_parse_ordered_list() {
         let lines = parse_markdown_lines("1. first\n2. second");
-        assert!(matches!(&lines[0], MdRenderLine::OrderedListItem { number: 1, .. }));
-        assert!(matches!(&lines[1], MdRenderLine::OrderedListItem { number: 2, .. }));
+        assert!(matches!(
+            &lines[0],
+            MdRenderLine::OrderedListItem { number: 1, .. }
+        ));
+        assert!(matches!(
+            &lines[1],
+            MdRenderLine::OrderedListItem { number: 2, .. }
+        ));
     }
 
     #[test]

@@ -825,7 +825,10 @@ impl EditorState {
         }
 
         // 5.4 Markdown 预览切换按钮（编辑区右上角，仅 .md 文件显示）
-        if self.content.language == Language::Markdown && !showing_welcome && !showing_empty_placeholder {
+        if self.content.language == Language::Markdown
+            && !showing_welcome
+            && !showing_empty_placeholder
+        {
             self.render_markdown_toggle_btn(
                 &target,
                 editor_content_region.x,
