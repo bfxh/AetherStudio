@@ -806,6 +806,14 @@ impl EditorState {
                 editor_content_region.width,
                 editor_content_region.height,
             );
+        } else if self.markdown_preview && self.content.language == Language::Markdown {
+            self.render_markdown_preview(
+                &target,
+                editor_content_region.x,
+                editor_content_region.y,
+                editor_content_region.width,
+                editor_content_region.height,
+            );
         } else {
             self.render_editor(
                 &target,
@@ -814,6 +822,21 @@ impl EditorState {
                 editor_content_region.width,
                 editor_content_region.height,
             );
+        }
+
+        // 5.4 Markdown 预览切换按钮（编辑区右上角，仅 .md 文件显示）
+        if self.content.language == Language::Markdown
+            && !showing_welcome
+            && !showing_empty_placeholder
+        {
+            self.render_markdown_toggle_btn(
+                &target,
+                editor_content_region.x,
+                editor_content_region.y,
+                editor_content_region.width,
+            );
+        } else {
+            self.markdown_toggle_btn = None;
         }
 
         // 5.5 查找替换框
@@ -1069,6 +1092,7 @@ mod chrome;
 mod dialogs;
 mod editor_view;
 mod find;
+mod markdown_preview;
 mod menus;
 mod remote;
 mod remote_dialogs;

@@ -78,6 +78,8 @@ pub enum CommandId {
     // 帮助
     HelpCheckUpdate,
     HelpAbout,
+    // Markdown
+    MarkdownTogglePreview,
 }
 
 impl CommandId {
@@ -115,6 +117,7 @@ impl CommandId {
             CommandId::AiFixDiagnostics => "AI 修复当前诊断",
             CommandId::HelpCheckUpdate => "检查更新",
             CommandId::HelpAbout => "关于",
+            CommandId::MarkdownTogglePreview => "Markdown 预览",
         }
     }
 }
@@ -225,6 +228,9 @@ impl MenuBar {
                         MenuItem::separator(),
                         MenuItem::new("放大", CommandId::ViewZoomIn).with_shortcut("Ctrl+="),
                         MenuItem::new("缩小", CommandId::ViewZoomOut).with_shortcut("Ctrl+-"),
+                        MenuItem::separator(),
+                        MenuItem::new("Markdown 预览", CommandId::MarkdownTogglePreview)
+                            .with_shortcut("Ctrl+Shift+V"),
                     ],
                 ),
                 MenuBarItem::new(

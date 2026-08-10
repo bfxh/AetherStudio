@@ -63,6 +63,8 @@ pub struct TabContent {
     pub(crate) just_switched: bool,
     /// 图片预览：解码后的图像数据（仅 language == Image 时有值），随标签 swap 恢复
     pub image_data: Option<crate::bitmap_loader::DecodedImage>,
+    /// Markdown 预览模式：true 时渲染预览而非编辑器，随标签 swap 恢复
+    pub markdown_preview: bool,
 }
 
 impl TabContent {
@@ -97,6 +99,7 @@ impl TabContent {
             viewport_highlight_cache: None,
             just_switched: false,
             image_data: None,
+            markdown_preview: false,
         }
     }
 
@@ -136,6 +139,7 @@ impl TabContent {
             viewport_highlight_cache: None,
             just_switched: false,
             image_data: None,
+            markdown_preview: false,
         })
     }
 
@@ -183,6 +187,7 @@ impl TabContent {
             viewport_highlight_cache: None,
             just_switched: false,
             image_data: None,
+            markdown_preview: false,
         }
     }
 

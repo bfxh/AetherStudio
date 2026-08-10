@@ -454,12 +454,19 @@ unsafe fn oc_ai_panel(hwnd: HWND, c: char) -> Option<LRESULT> {
     }
 }
 
-/// 编辑器默认：广播字符到所有光标
+/// 编辑器默认：广播字符到所有光标（Markdown 预览模式下忽略）
 unsafe fn oc_editor_default(hwnd: HWND, c: char) {
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            // Markdown 预览模式：只读，不响应字符输入
+            if st.content.language == aether_core::lexer::Language::Markdown && st.markdown_preview
+            {
+                return;
+            }
             // P1-1: 多光标模式下广播到所有光标
-            state.borrow_mut().broadcast_insert_char(c);
+            st.broadcast_insert_char(c);
+            drop(st);
             invalidate_window(hwnd);
         }
     });
