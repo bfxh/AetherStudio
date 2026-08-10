@@ -612,6 +612,10 @@ pub struct EditorState {
     pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
     /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
     pub current_workspace_ai_session: Option<String>,
+    /// Markdown 预览模式：true 时当前标签页渲染 Markdown 预览而非编辑器
+    pub markdown_preview: bool,
+    /// Markdown 预览切换按钮区域（渲染时计算，点击时命中检测）
+    pub markdown_toggle_btn: Option<crate::layout::Region>,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -887,6 +891,8 @@ impl EditorState {
             image_offset_y: 0.0,
             workspace_ai_sessions: std::collections::HashMap::new(),
             current_workspace_ai_session: None,
+            markdown_preview: false,
+            markdown_toggle_btn: None,
         };
         // 加载 logo 位图（aether-512.png）
         // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载

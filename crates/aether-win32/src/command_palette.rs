@@ -222,6 +222,13 @@ impl CommandPalette {
                 icon: Some(IconKind::Info),
             },
             CommandPaletteItem {
+                label: "Markdown: 切换预览".to_string(),
+                description: Some("在编辑和预览模式之间切换".to_string()),
+                shortcut: Some("Ctrl+Shift+V".to_string()),
+                command_id: CommandId::MarkdownTogglePreview,
+                icon: Some(IconKind::FileMarkdown),
+            },
+            CommandPaletteItem {
                 label: "文件: 退出".to_string(),
                 description: Some("退出编辑器".to_string()),
                 shortcut: Some("Alt+F4".to_string()),

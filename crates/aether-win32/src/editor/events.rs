@@ -368,6 +368,9 @@ impl EditorState {
             crate::menu_bar::CommandId::HelpAbout => {
                 self.status_message = format!("牧羊人编辑器 v{}", crate::updater::APP_VERSION);
             }
+            crate::menu_bar::CommandId::MarkdownTogglePreview => {
+                self.toggle_markdown_preview();
+            }
             crate::menu_bar::CommandId::None => {}
         }
     }

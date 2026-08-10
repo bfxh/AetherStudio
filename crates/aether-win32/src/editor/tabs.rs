@@ -9,6 +9,8 @@ impl EditorState {
         if let Some(crate::tabs::Tab::File(content)) = self.tab_bar.tabs.get_mut(index) {
             std::mem::swap(&mut self.content, content);
         }
+        // 同步 Markdown 预览模式到 EditorState 级别（渲染分支读取）
+        self.markdown_preview = self.content.markdown_preview;
     }
     /// 获取当前活动标签页（只读）
     pub fn current_tab(&self) -> &Tab {
@@ -66,6 +68,18 @@ impl EditorState {
             .tabs
             .get(self.tab_bar.active_tab)
             .and_then(|t| t.file_path())
+    }
+    /// 切换 Markdown 预览模式（仅当当前标签页是 Markdown 文件时有效）
+    pub fn toggle_markdown_preview(&mut self) {
+        if self.content.language == Language::Markdown {
+            self.content.markdown_preview = !self.content.markdown_preview;
+            self.markdown_preview = self.content.markdown_preview;
+            self.status_message = if self.markdown_preview {
+                "Markdown 预览模式".to_string()
+            } else {
+                "Markdown 编辑模式".to_string()
+            };
+        }
     }
     /// 查找设置 tab 的索引
     pub fn find_settings_tab(&self) -> Option<usize> {
