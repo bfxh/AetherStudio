@@ -1474,6 +1474,18 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             if st.content.language == aether_core::lexer::Language::Image {
                 return CursorType::Arrow;
             }
+            // Markdown 切换按钮 hover → Hand
+            if st.content.language == aether_core::lexer::Language::Markdown {
+                if let Some(btn) = &st.markdown_toggle_btn {
+                    if btn.contains(mouse_x, mouse_y) {
+                        return CursorType::Hand;
+                    }
+                }
+                // Markdown 预览模式：非编辑区 → Arrow
+                if st.markdown_preview {
+                    return CursorType::Arrow;
+                }
+            }
             return CursorType::IBeam;
         }
 

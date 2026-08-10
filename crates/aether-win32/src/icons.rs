@@ -128,11 +128,15 @@ pub enum IconKind {
     Clock,
     /// 垃圾桶（删除）
     Trash,
+    /// 眼睛（Markdown 预览）
+    Eye,
+    /// 铅笔（Markdown 编辑）
+    Pencil,
 }
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 84] = [
+    pub const ALL: [IconKind; 86] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
@@ -217,6 +221,8 @@ impl IconKind {
         IconKind::FileFSharp,
         IconKind::Clock,
         IconKind::Trash,
+        IconKind::Eye,
+        IconKind::Pencil,
     ];
 
     /// 索引到 SVG_DEFS 数组下标
@@ -360,7 +366,7 @@ mod tests {
     /// 验证 ALL 数组长度与 SVG_DEFS 一致
     #[test]
     fn all_icons_count_matches() {
-        assert_eq!(IconKind::ALL.len(), 84);
+        assert_eq!(IconKind::ALL.len(), 86);
     }
 
     /// 验证 ALL 数组中无重复项

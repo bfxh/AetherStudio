@@ -71,6 +71,8 @@ impl EditorState {
                     self.content.buffer = buffer;
                     self.content.file_path = Some(path.clone());
                     self.content.language = lang;
+                    self.content.markdown_preview = false;
+                    self.markdown_preview = false;
                     self.reset_editor_state();
                     // REQ-P1-09: self.content 即活动标签页状态，无需再手动同步到 Tab
                     self.status_message = format!("已打开: {}", path.display());

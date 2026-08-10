@@ -969,6 +969,23 @@ const UI_CLOCK: SvgDef = SvgDef {
     ],
 };
 
+/// Lucide "eye" - 眼睛（预览）
+const UI_EYE: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Path("M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z", None),
+        SvgShape::Circle(12.0, 12.0, 3.0, None),
+    ],
+};
+
+/// Lucide "pencil" - 铅笔（编辑）
+const UI_PENCIL: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Path("M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z", None),
+    ],
+};
+
 /// Lucide "trash-2" - 垃圾桶（删除）
 const UI_TRASH: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
@@ -1071,4 +1088,6 @@ pub(crate) const SVG_DEFS: &[SvgDef] = &[
     /* 81 FileFSharp    */ FILE_FSHARP,
     /* 82 Clock         */ UI_CLOCK,
     /* 83 Trash         */ UI_TRASH,
+    /* 84 Eye           */ UI_EYE,
+    /* 85 Pencil        */ UI_PENCIL,
 ];

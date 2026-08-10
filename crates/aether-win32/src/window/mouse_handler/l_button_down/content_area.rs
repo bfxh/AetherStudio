@@ -1602,6 +1602,23 @@ pub(super) unsafe fn lbd_welcome_or_editor(
             return Some(LRESULT(0));
         }
     } else {
+        // Markdown 预览切换按钮命中检测（优先于编辑器光标设置）
+        if st.content.language == aether_core::lexer::Language::Markdown {
+            if let Some(btn) = &st.markdown_toggle_btn {
+                if btn.contains(mouse_x, mouse_y) {
+                    st.toggle_markdown_preview();
+                    drop(st);
+                    invalidate_window(hwnd);
+                    return Some(LRESULT(0));
+                }
+            }
+        }
+        // Markdown 预览模式下点击编辑区不设置光标（预览不可编辑）
+        if st.content.language == aether_core::lexer::Language::Markdown && st.markdown_preview {
+            drop(st);
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
         let editor_content = layout.editor_content_region(st.show_tab_bar());
         st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
         // 单击只设置光标位置，不启动选区
