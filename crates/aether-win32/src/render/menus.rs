@@ -924,7 +924,13 @@ impl EditorState {
                 target.DrawRoundedRectangle(&bg_rounded, &border_brush, 1.0, None);
             }
 
+            // 裁剪菜单项绘制区域到面板背景内，防止悬停高亮在圆角处溢出
+            target.PushAxisAlignedClip(&bg_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+
             let mut item_y = y + 8.0;
+            // 预计算第一个和最后一个非分隔线项的索引，用于圆角匹配
+            let first_item_idx = menu_item.items.iter().position(|i| i.label != "-");
+            let last_item_idx = menu_item.items.iter().rposition(|i| i.label != "-");
             for (item_idx, item) in menu_item.items.iter().enumerate() {
                 if item.label == "-" {
                     let sep_rect = D2D_RECT_F {
@@ -939,6 +945,19 @@ impl EditorState {
                     // 悬停项：圆角高亮背景，提供明确的选中反馈
                     let is_hover = self.menu_bar.submenu_hover == Some(item_idx);
                     if is_hover && item.enabled {
+                        // 首项顶部圆角与面板一致(6.0)，末项底部圆角与面板一致，
+                        // 避免高亮矩形在面板圆角处产生切割感
+                        let is_first = Some(item_idx) == first_item_idx;
+                        let is_last = Some(item_idx) == last_item_idx;
+                        let (top_radius, bottom_radius): (f32, f32) = match (is_first, is_last) {
+                            (true, true) => (6.0, 6.0),
+                            (true, false) => (6.0, 4.0),
+                            (false, true) => (4.0, 6.0),
+                            (false, false) => (4.0, 4.0),
+                        };
+                        // D2D1_ROUNDED_RECT 只支持统一圆角，
+                        // 对首/末项使用较大圆角近似匹配面板圆角
+                        let radius = top_radius.max(bottom_radius);
                         let item_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                             rect: D2D_RECT_F {
                                 left: x + 3.0,
@@ -946,8 +965,8 @@ impl EditorState {
                                 right: x + menu_width - 3.0,
                                 bottom: item_y + 26.0,
                             },
-                            radiusX: 4.0,
-                            radiusY: 4.0,
+                            radiusX: radius,
+                            radiusY: radius,
                         };
                         target.FillRoundedRectangle(&item_rounded, &hover_bg_brush);
                     }
@@ -1002,6 +1021,9 @@ impl EditorState {
                     item_y += 26.0;
                 }
             }
+
+            // 弹出裁剪区域
+            target.PopAxisAlignedClip();
         }
     }
 

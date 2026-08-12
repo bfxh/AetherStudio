@@ -1268,32 +1268,127 @@ impl EditorState {
                 .composition
                 .as_ref()
                 .is_some_and(|c| !c.is_empty());
-            let show_placeholder = self.ai_panel.input.is_empty() && !composing;
-            let input_text = if show_placeholder {
-                "输入问题..."
+
+            // ===== 扩写动画渲染 =====
+            let is_expand_anim = self.ai_panel.is_expanding
+                && self.ai_panel.expand_anim_phase != crate::ai_panel::ExpandAnimPhase::None;
+
+            if is_expand_anim {
+                match self.ai_panel.expand_anim_phase {
+                    crate::ai_panel::ExpandAnimPhase::FadeOut => {
+                        // 渐隐阶段：显示原文，透明度从 1.0 渐变为 0.0
+                        let alpha = 1.0 - self.ai_panel.expand_anim_progress;
+                        let fade_color = color_f(0.9, 0.9, 0.9, alpha);
+                        if let Ok(fade_brush) =
+                            self.render_ctx.brush_cache.get_brush(target, &fade_color)
+                        {
+                            let orig_text = &self.ai_panel.expand_original_text;
+                            let orig_wide: Vec<u16> =
+                                orig_text.encode_utf16().chain(Some(0)).collect();
+                            let fade_rect = D2D_RECT_F {
+                                left: text_input_rect.left + 4.0,
+                                top: text_input_y + 8.0,
+                                right: text_input_rect.right - 4.0,
+                                bottom: text_input_y + text_input_h - 4.0,
+                            };
+                            target.DrawText(
+                                &orig_wide,
+                                &msg_format,
+                                &fade_rect,
+                                &fade_brush,
+                                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                        }
+                    }
+                    crate::ai_panel::ExpandAnimPhase::Streaming => {
+                        // 流式写入阶段：显示已接收的新文本，带轻微渐显效果
+                        let new_text = &self.ai_panel.input;
+                        if !new_text.is_empty() {
+                            // 新文本使用带轻微透明度的白色，营造"写入中"感
+                            let stream_color = color_f(0.9, 0.9, 0.9, 0.92);
+                            if let Ok(stream_brush) =
+                                self.render_ctx.brush_cache.get_brush(target, &stream_color)
+                            {
+                                let new_wide: Vec<u16> =
+                                    new_text.encode_utf16().chain(Some(0)).collect();
+                                let stream_rect = D2D_RECT_F {
+                                    left: text_input_rect.left + 4.0,
+                                    top: text_input_y + 8.0,
+                                    right: text_input_rect.right - 4.0,
+                                    bottom: text_input_y + text_input_h - 4.0,
+                                };
+                                target.DrawText(
+                                    &new_wide,
+                                    &msg_format,
+                                    &stream_rect,
+                                    &stream_brush,
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                    DWRITE_MEASURING_MODE_NATURAL,
+                                );
+                            }
+                            // 流式写入中显示一个闪烁的写入指示器（竖线光标）
+                            let tw = self
+                                .render_ctx
+                                .text_format_cache
+                                .measure_text_width(
+                                    new_text,
+                                    11.0,
+                                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                                )
+                                .unwrap_or(0.0);
+                            let indicator_x = text_input_rect.left + 4.0 + tw;
+                            // 闪烁效果：基于时间戳
+                            let blink = (crate::ai_panel::now_millis() / 400) % 2 == 0;
+                            if blink {
+                                let indicator_color = color_f(0.0, 0.47, 0.83, 0.8);
+                                if let Ok(ind_brush) = self
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &indicator_color)
+                                {
+                                    let ind_rect = D2D_RECT_F {
+                                        left: indicator_x,
+                                        top: text_input_y + 10.0,
+                                        right: indicator_x + 2.0,
+                                        bottom: text_input_y + text_input_h - 10.0,
+                                    };
+                                    target.FillRectangle(&ind_rect, &ind_brush);
+                                }
+                            }
+                        }
+                    }
+                    crate::ai_panel::ExpandAnimPhase::None => {}
+                }
             } else {
-                &self.ai_panel.input
-            };
-            let input_color: &ID2D1SolidColorBrush = if show_placeholder {
-                &dim_brush
-            } else {
-                text_brush
-            };
-            let input_wide: Vec<u16> = input_text.encode_utf16().chain(Some(0)).collect();
-            let input_text_rect = D2D_RECT_F {
-                left: text_input_rect.left + 4.0,
-                top: text_input_y + 8.0,
-                right: text_input_rect.right - 4.0,
-                bottom: text_input_y + text_input_h - 4.0,
-            };
-            target.DrawText(
-                &input_wide,
-                &msg_format,
-                &input_text_rect,
-                input_color,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
+                // ===== 正常输入框渲染 =====
+                let show_placeholder = self.ai_panel.input.is_empty() && !composing;
+                let input_text = if show_placeholder {
+                    "输入问题..."
+                } else {
+                    &self.ai_panel.input
+                };
+                let input_color: &ID2D1SolidColorBrush = if show_placeholder {
+                    &dim_brush
+                } else {
+                    text_brush
+                };
+                let input_wide: Vec<u16> = input_text.encode_utf16().chain(Some(0)).collect();
+                let input_text_rect = D2D_RECT_F {
+                    left: text_input_rect.left + 4.0,
+                    top: text_input_y + 8.0,
+                    right: text_input_rect.right - 4.0,
+                    bottom: text_input_y + text_input_h - 4.0,
+                };
+                target.DrawText(
+                    &input_wide,
+                    &msg_format,
+                    &input_text_rect,
+                    input_color,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
 
             // IME 合成串（pre-edit text）显示在光标位置之后
             if let Some(comp) = &self.ai_panel.composition {
@@ -1607,30 +1702,9 @@ impl EditorState {
                 &white_brush,
             );
 
-            // 麦克风按钮
-            let mic_btn_size = 24.0f32;
-            let mic_btn_x = send_btn_x - mic_btn_size - 4.0;
-            let mic_btn_rect = D2D_RECT_F {
-                left: mic_btn_x,
-                top: send_btn_y,
-                right: mic_btn_x + mic_btn_size,
-                bottom: send_btn_y + send_btn_size,
-            };
-            fill_round_rect(target, &mic_btn_rect, 4.0, &btn_bg_brush);
-            // 使用 SVG 图标绘制麦克风
-            self.icons.draw(
-                target,
-                crate::icons::IconKind::Mic,
-                mic_btn_x + 2.0,
-                send_btn_y + 2.0,
-                mic_btn_size - 4.0,
-                send_btn_size - 4.0,
-                &dim_brush,
-            );
-
-            // 快捷按钮（星星）
+            // 快捷按钮（星星）——问题扩写
             let star_btn_size = 24.0f32;
-            let star_btn_x = mic_btn_x - star_btn_size - 4.0;
+            let star_btn_x = send_btn_x - star_btn_size - 4.0;
             let star_btn_rect = D2D_RECT_F {
                 left: star_btn_x,
                 top: send_btn_y,
@@ -1646,27 +1720,6 @@ impl EditorState {
                 send_btn_y + 2.0,
                 star_btn_size - 4.0,
                 send_btn_size - 4.0,
-                &dim_brush,
-            );
-
-            // 菜单按钮（列表图标）
-            let menu_btn_size = 24.0f32;
-            let menu_btn_x = star_btn_x - menu_btn_size - 4.0;
-            let menu_btn_rect = D2D_RECT_F {
-                left: menu_btn_x,
-                top: send_btn_y,
-                right: menu_btn_x + menu_btn_size,
-                bottom: send_btn_y + send_btn_size,
-            };
-            fill_round_rect(target, &menu_btn_rect, 4.0, &btn_bg_brush);
-            // 使用 SVG 图标绘制列表/菜单
-            self.icons.draw(
-                target,
-                crate::icons::IconKind::List,
-                menu_btn_x + 2.0,
-                send_btn_y + 2.0,
-                menu_btn_size - 4.0,
-                menu_btn_size - 4.0,
                 &dim_brush,
             );
         }

@@ -779,6 +779,11 @@ unsafe fn lbd_right_panel_apply_input(
         && rp_rel_x < right_panel_region.width - margin - input_margin
     {
         let mut st = state.borrow_mut();
+        // 扩写期间锁定输入框，不允许聚焦编辑
+        if st.ai_panel.is_expanding {
+            drop(st);
+            return Some(LRESULT(0));
+        }
         st.ai_panel.input_focused = true;
         st.ai_panel.caret_visible = true;
         // 点击输入框时将光标移到末尾
@@ -826,6 +831,30 @@ unsafe fn lbd_right_panel_apply_input(
             let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
         }
         st.ai_panel.input_focused = false;
+        drop(st);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 星星按钮（问题扩写）——发送按钮左侧
+    let star_btn_size = 24.0f32;
+    let star_btn_x = send_btn_x - star_btn_size - 4.0;
+    if rp_rel_x >= star_btn_x
+        && rp_rel_x < star_btn_x + star_btn_size
+        && rp_rel_y >= send_btn_y
+        && rp_rel_y < send_btn_y + star_btn_size
+    {
+        let mut st = state.borrow_mut();
+        let settings = st.app_settings.active_ai_settings();
+        match st.ai_panel.expand_input(&settings) {
+            Ok(msg) => {
+                st.status_message = msg;
+                let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
+            }
+            Err(e) => {
+                st.status_message = e;
+            }
+        }
         drop(st);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
