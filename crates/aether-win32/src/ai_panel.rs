@@ -174,6 +174,17 @@ pub struct AiStreamState {
     pub truncated: Option<String>,
 }
 
+/// 扩写动画阶段
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExpandAnimPhase {
+    /// 无动画
+    None,
+    /// 原文渐隐中
+    FadeOut,
+    /// 流式写入新文本中（新文本渐显）
+    Streaming,
+}
+
 /// 后台流式轮询的边沿结果
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DrainEdge {
@@ -665,6 +676,16 @@ pub struct AiPanel {
     pub file_card_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
     /// "浏览并选择文件夹"按钮命中区 (x, y, w, h)
     pub browse_folder_region: Option<(f32, f32, f32, f32)>,
+    /// 是否正在进行问题扩写（扩写结果写回输入框而非聊天区）
+    pub is_expanding: bool,
+    /// 扩写动画阶段
+    pub expand_anim_phase: ExpandAnimPhase,
+    /// 扩写动画进度（0.0 ~ 1.0），用于渐隐/渐显透明度计算
+    pub expand_anim_progress: f32,
+    /// 扩写前的原始文本（渐隐阶段显示用）
+    pub expand_original_text: String,
+    /// 扩写动画起始时间戳（毫秒），用于计算进度
+    pub expand_anim_start_ms: u64,
 }
 
 /// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
@@ -816,6 +837,11 @@ impl AiPanel {
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
             browse_folder_region: None,
+            is_expanding: false,
+            expand_anim_phase: ExpandAnimPhase::None,
+            expand_anim_progress: 0.0,
+            expand_original_text: String::new(),
+            expand_anim_start_ms: 0,
         };
         panel.restore_latest_conversation();
         panel
@@ -1483,6 +1509,62 @@ impl AiPanel {
         );
     }
 
+    /// 问题扩写：将当前输入框文本发送给 AI 进行扩写，
+    /// 扩写结果流式写回输入框（不作为聊天消息）。
+    /// 动画流程：原文渐隐 → 流式写入新文本（渐显）。
+    pub fn expand_input(&mut self, settings: &AiSettings) -> Result<String, String> {
+        let user_input = self.input.trim().to_string();
+        if user_input.is_empty() {
+            return Err("请先输入问题，再使用扩写功能".to_string());
+        }
+        if self.is_generating {
+            return Err("正在等待上一次回复，请稍后再试".to_string());
+        }
+
+        self.is_generating = true;
+        self.is_expanding = true;
+        self.should_stop.store(false, Ordering::SeqCst);
+        if let Ok(mut s) = self.stream_state.lock() {
+            *s = AiStreamState::default();
+        }
+
+        // 保存原文用于渐隐动画，然后清空输入框
+        self.expand_original_text = user_input.clone();
+        self.expand_anim_phase = ExpandAnimPhase::FadeOut;
+        self.expand_anim_progress = 0.0;
+        self.expand_anim_start_ms = now_millis();
+        self.input.clear();
+        self.caret_pos = 0;
+        // 锁定输入框焦点，防止扩写期间用户编辑
+        self.input_focused = false;
+
+        let system = "你是一个问题扩写助手。用户会给你一个问题或请求，你需要将其扩写为更详细、更完整、更清晰的版本。\
+            扩写后的文本应该：\n\
+            1. 保持原始意图不变\n\
+            2. 补充必要的上下文和细节\n\
+            3. 使问题更加具体和明确\n\
+            4. 直接输出扩写后的文本，不要添加任何解释、标记或前缀"
+            .to_string();
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: user_input,
+            },
+        ];
+        spawn_ai_stream(
+            settings.clone(),
+            messages,
+            Arc::clone(&self.stream_state),
+            Arc::clone(&self.should_stop),
+        );
+
+        Ok("正在扩写问题...".to_string())
+    }
+
     /// 用给定内容替换最后一条助手消息（无则追加）；用于把规划器原始清单块替换为可读的执行计划。
     pub fn rewrite_last_assistant(&mut self, content: String) {
         if let Some(last) = self.messages.last_mut() {
@@ -1829,6 +1911,66 @@ impl AiPanel {
         };
         let mut edge = DrainEdge::Pending;
         if let Some((partial, reasoning, done, error, truncated)) = delta {
+            // ===== 扩写模式：流式结果写回输入框 =====
+            if self.is_expanding {
+                // 更新动画进度
+                let elapsed = now_millis().saturating_sub(self.expand_anim_start_ms);
+                match self.expand_anim_phase {
+                    ExpandAnimPhase::FadeOut => {
+                        // 渐隐阶段：300ms 内完成
+                        const FADE_OUT_MS: u64 = 300;
+                        self.expand_anim_progress = (elapsed as f32 / FADE_OUT_MS as f32).min(1.0);
+                        if self.expand_anim_progress >= 1.0 {
+                            // 渐隐完成，进入流式写入阶段
+                            self.expand_anim_phase = ExpandAnimPhase::Streaming;
+                            self.expand_anim_progress = 0.0;
+                            self.expand_anim_start_ms = now_millis();
+                        }
+                    }
+                    ExpandAnimPhase::Streaming => {
+                        // 流式写入阶段：新文本随 token 到达逐渐显示
+                        // 进度基于已接收文本长度（简单线性增长）
+                        self.expand_anim_progress = 1.0; // 流式阶段直接显示
+                    }
+                    ExpandAnimPhase::None => {}
+                }
+
+                if !partial.is_empty() {
+                    // 首个 token 到达时，确保已进入流式阶段
+                    if self.expand_anim_phase == ExpandAnimPhase::FadeOut {
+                        self.expand_anim_phase = ExpandAnimPhase::Streaming;
+                        self.expand_anim_progress = 1.0;
+                    }
+                    self.input.push_str(&partial);
+                    self.caret_pos = self.input.len();
+                }
+                if let Some(err) = error {
+                    self.is_generating = false;
+                    self.is_expanding = false;
+                    self.expand_anim_phase = ExpandAnimPhase::None;
+                    self.expand_anim_progress = 0.0;
+                    self.expand_original_text.clear();
+                    if self.input.is_empty() {
+                        self.input = err;
+                        self.caret_pos = self.input.len();
+                    }
+                    return DrainEdge::Interrupted;
+                }
+                if done {
+                    self.is_generating = false;
+                    self.is_expanding = false;
+                    self.expand_anim_phase = ExpandAnimPhase::None;
+                    self.expand_anim_progress = 0.0;
+                    self.expand_original_text.clear();
+                    let trimmed = self.input.trim().to_string();
+                    self.input = trimmed;
+                    self.caret_pos = self.input.len();
+                    edge = DrainEdge::Completed;
+                }
+                return edge;
+            }
+
+            // ===== 正常对话模式 =====
             // 深度思考（DeepSeek reasoning_content）先于回答到达：单独承载于助手消息的 reasoning
             if !reasoning.is_empty() {
                 if !matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
