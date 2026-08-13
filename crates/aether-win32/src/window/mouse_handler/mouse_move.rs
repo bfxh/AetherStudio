@@ -250,8 +250,19 @@ pub(crate) unsafe fn on_mouse_move(
     if any_hover_changed || tooltip_changed {
         // 标记 hover 相关脏区域，避免全窗口重绘
         let mut st = state.borrow_mut();
-        if titlebar_changed || tab_changed {
-            // 标题栏 + 活动栏区域
+        if titlebar_changed {
+            // 标题栏 hover 变化：标记标题栏区域脏，确保窗控按钮 hover 高亮即时刷新
+            let tb = layout.title_bar_region();
+            st.dirty_tracker.mark_region(
+                tb.x,
+                tb.y,
+                tb.width,
+                tb.height,
+                crate::dirty_rect::DirtyRegionType::TitleBar,
+            );
+        }
+        if tab_changed {
+            // 活动栏 + 标签栏区域
             let ar = layout.activity_bar_region();
             st.dirty_tracker.mark_region(
                 ar.x,

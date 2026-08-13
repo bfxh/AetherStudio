@@ -747,23 +747,26 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
         // 按 hwnd 取状态（而非线程局部活跃状态），
         // 避免多窗口/启动最大化时把尺寸更新到错误的窗口状态上
         if let Some(state) = get_and_set_state(hwnd) {
-            let mut st = state.borrow_mut();
-            st.is_maximized = is_max;
-            if is_min {
-                // 最小化：立即进入冰冻态释放内存（AI/Agent 经无头泵保活）
-                st.power.minimized = true;
-                st.enter_frozen();
-            } else {
-                st.power.minimized = false;
-                st.resize(width, height);
-                // 从最小化恢复：解冻（全量重绘 + 懒重建 D2D 资源）
-                if st.power.frozen {
-                    st.exit_frozen();
+            let was_frozen;
+            {
+                let mut st = state.borrow_mut();
+                st.is_maximized = is_max;
+                was_frozen = st.power.frozen && !is_min;
+                if is_min {
+                    // 最小化：立即进入冰冻态释放内存（AI/Agent 经无头泵保活）
+                    st.power.minimized = true;
+                    st.enter_frozen();
+                } else {
+                    st.power.minimized = false;
+                    st.resize(width, height);
+                    // 从最小化恢复：解冻（全量重绘 + 懒重建 D2D 资源）
+                    if st.power.frozen {
+                        st.exit_frozen();
+                    }
                 }
             }
             // 若最大化且用户设置了显示任务栏，调整窗口为工作区大小
-            let need_adjust = is_max && st.app_settings.ui.show_taskbar_when_maximized;
-            drop(st);
+            let need_adjust = is_max && state.borrow().app_settings.ui.show_taskbar_when_maximized;
             if need_adjust {
                 use windows::Win32::Graphics::Gdi::{
                     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -790,6 +793,11 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             }
             if !is_min {
                 invalidate_window(hwnd);
+                // 从最小化恢复时：同步触发 WM_PAINT 完成首帧渲染，
+                // 避免 D2D 渲染目标重建期间标题栏按钮等区域短暂空白
+                if was_frozen {
+                    let _ = windows::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+                }
             }
         }
     }
