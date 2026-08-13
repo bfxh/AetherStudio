@@ -372,6 +372,9 @@ impl EditorState {
         let width = region.width;
         let height = region.height;
 
+        // 冰冻恢复后图标缓存为空，需先重建几何再绘制
+        self.icons.ensure_created_from_target(target);
+
         unsafe {
             // 标题栏背景 — 玻璃模式下使用半透明暗色
             let bg_color = if self.theme.glass_enabled {
@@ -1135,6 +1138,9 @@ impl EditorState {
         let y = region.y;
         let width = region.width;
         let height = region.height;
+
+        // 冰冻恢复后图标缓存为空，需先重建几何再绘制
+        self.icons.ensure_created_from_target(target);
 
         unsafe {
             let bg_color = if self.theme.glass_enabled {
