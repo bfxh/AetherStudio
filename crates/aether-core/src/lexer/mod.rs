@@ -322,15 +322,13 @@ impl Language {
             Language::Rust => Box::new(rust_lexer::RustLexer::new()),
             Language::Python => Box::new(python_lexer::PythonLexer::new()),
             Language::JavaScript | Language::TypeScript => Box::new(js_lexer::JsLexer::new()),
-            // Go/Java 无独立 lexer，复用 C 家族 lexer 作为 fallback（仅在 tree-sitter
-            // 不可用时使用，如大文件），可高亮注释、字符串、数字、大括号等公共结构
-            Language::Go | Language::Java => Box::new(c_lexer::CLexer::new()),
+            Language::Go => Box::new(go_lexer::GoLexer::new()),
+            Language::Java => Box::new(java_lexer::JavaLexer::new()),
             Language::Json => Box::new(json_lexer::JsonLexer::new()),
             Language::Markdown => Box::new(markdown_lexer::MarkdownLexer::new()),
             Language::Toml => Box::new(toml_lexer::TomlLexer::new()),
             Language::Html => Box::new(html_lexer::HtmlLexer::new()),
-            // CSS 暂时没有独立 lexer，复用 HTML lexer 至少能高亮注释、字符串、标签等公共结构
-            Language::Css => Box::new(html_lexer::HtmlLexer::new()),
+            Language::Css => Box::new(css_lexer::CssLexer::new()),
             Language::PlainText => Box::new(PlainTextLexer::new()),
             Language::Image => Box::new(PlainTextLexer::new()),
         }
@@ -344,12 +342,13 @@ impl Language {
             Language::Rust => rust_lexer::RustLexer::new().lex_full(text),
             Language::Python => python_lexer::PythonLexer::new().lex_full(text),
             Language::JavaScript | Language::TypeScript => js_lexer::JsLexer::new().lex_full(text),
-            Language::Go | Language::Java => c_lexer::CLexer::new().lex_full(text),
+            Language::Go => go_lexer::GoLexer::new().lex_full(text),
+            Language::Java => java_lexer::JavaLexer::new().lex_full(text),
             Language::Json => json_lexer::JsonLexer::new().lex_full(text),
             Language::Markdown => markdown_lexer::MarkdownLexer::new().lex_full(text),
             Language::Toml => toml_lexer::TomlLexer::new().lex_full(text),
             Language::Html => html_lexer::HtmlLexer::new().lex_full(text),
-            Language::Css => html_lexer::HtmlLexer::new().lex_full(text),
+            Language::Css => css_lexer::CssLexer::new().lex_full(text),
             Language::PlainText => PlainTextLexer::new().lex_full(text),
             Language::Image => PlainTextLexer::new().lex_full(text),
         }
@@ -358,7 +357,10 @@ impl Language {
 
 pub mod c_lexer;
 pub mod common;
+pub mod css_lexer;
+pub mod go_lexer;
 pub mod html_lexer;
+pub mod java_lexer;
 pub mod js_lexer;
 pub mod json_lexer;
 pub mod markdown_lexer;
