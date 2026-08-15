@@ -177,6 +177,23 @@ The repository is organized as a Cargo Workspace with multiple crates:
 | `aether-plugin` | Plugin registration, permissions, and runtime |
 | `aether-cli` | Command-line launcher, parsing arguments and launching the GUI |
 
+### Repository Layout
+
+The repository has a clear separation between the IDE itself and its bundled tooling:
+
+| Path | Purpose |
+|---|---|
+| `crates/` | IDE core: Cargo workspace with the 11 crates listed above |
+| `mcp-servers/` | Bundled MCP tool servers (Python, stdio): unified / code-analysis-enhance / pr-oracle / ci-optimization / tautest / browser-use. See [mcp-servers/README.md](mcp-servers/README.md) |
+| `tests/` | Unit-test entry (`run_tests.ps1`) and GUI test cases |
+| `installer/` | NSIS installer script (`aether-setup.nsi`) |
+| `release/` | Release resources (app icons) |
+| `scripts/` | Build helper scripts (`build-release.ps1`) |
+| `assets/` | Donation QR codes |
+| `deliverables/` | Design documents (UX architecture, PRD, diagrams) |
+
+> **Note on the two tool sets**: `mcp-servers/` (this repo, bundled with the IDE) and the standalone `unified-rx-mcp` repository are **separate, independent tool sets**. `mcp-servers/` focuses on editor-adjacent capabilities (code analysis, PR→test mapping, mutation testing, math utils); `unified-rx-mcp` is the general-purpose RX MCP (61 tools: bug hunting, repo cognition, UI check, design systems). They do not overlap and are maintained independently.
+
 ### Documentation
 
 The project includes a comprehensive internal documentation system under `.qoder/repowiki/zh/content/` covering:
@@ -349,6 +366,23 @@ powershell -File tests/tools/coverage.ps1
 | `aether-tree-sitter` | 语法解析、语言检测、主题映射 |
 | `aether-plugin` | 插件注册、权限与运行时 |
 | `aether-cli` | 命令行启动器 |
+
+### 仓库结构
+
+IDE 本体与附带工具集在仓库内有清晰分层：
+
+| 路径 | 用途 |
+|---|---|
+| `crates/` | IDE 本体：上述 11 个 crate 的 Cargo workspace |
+| `mcp-servers/` | 附带的 MCP 工具服务（Python/stdio）：unified / code-analysis-enhance / pr-oracle / ci-optimization / tautest / browser-use，详见 [mcp-servers/README.md](mcp-servers/README.md) |
+| `tests/` | 单元测试入口（`run_tests.ps1`）与 GUI 测试用例 |
+| `installer/` | NSIS 安装脚本（`aether-setup.nsi`） |
+| `release/` | 发布资源（应用图标） |
+| `scripts/` | 构建辅助脚本（`build-release.ps1`） |
+| `assets/` | 赞助收款码 |
+| `deliverables/` | 设计文档（UX 架构、PRD、图表） |
+
+> **关于两套工具集的说明**：本仓库的 `mcp-servers/` 与独立的 `unified-rx-mcp` 仓库是**两套相互独立、互不重叠**的工具集——`mcp-servers/` 聚焦编辑器周边能力（代码分析、PR→测试映射、变异测试、数学工具）；`unified-rx-mcp` 是通用 RX MCP（61 工具：挖漏洞、仓库认知、UI 检查、设计系统），各自独立维护。
 
 ### 文档
 
