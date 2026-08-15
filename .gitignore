@@ -63,3 +63,8 @@ crates/*/tests/coverage/
 
 # AI assistant workspace memory
 .workbuddy/
+
+# Python (mcp-servers)
+__pycache__/
+*.pyc
+.pytest_cache/
