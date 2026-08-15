@@ -1,3 +1,5 @@
+use aether_shared::i18n::tr;
+
 /// 状态栏区域索引枚举
 /// REQ-P0-04: 替代魔法数字，确保 hit_test 返回的索引与 sections 一致
 #[repr(usize)]
@@ -39,7 +41,7 @@ impl StatusBar {
                     icon: None,
                 },
                 StatusBarSection {
-                    label: "0 错误 0 警告".to_string(),
+                    label: tr("0 错误 0 警告").to_string(),
                     width: 100.0,
                     clickable: true,
                     icon: None,

@@ -1,5 +1,6 @@
 #![allow(clippy::items_after_test_module, clippy::useless_vec)]
 
+use aether_shared::i18n::tr;
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows::Win32::Graphics::Direct2D::{D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ROUNDED_RECT};
 use windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT_CENTER;
@@ -38,7 +39,7 @@ pub struct WelcomeLayout {
     pub project_item_h: f32,
     pub more_y: Option<f32>,
     pub more_height: f32,
-    /// 空状态"打开文件夹"按钮 rect (left, top, right, bottom)，仅在最近项目为空时为 Some
+    /// 空状态tr("打开文件夹")按钮 rect (left, top, right, bottom)，仅在最近项目为空时为 Some
     pub empty_state_button_rect: Option<(f32, f32, f32, f32)>,
 }
 
@@ -131,30 +132,30 @@ impl EditorState {
         let dwrite = self.text_renderer.dwrite_factory();
 
         unsafe {
-            // 背景统一为编辑区层级色：避免比周围面板更深的"黑洞"观感
+            // 背景统一为编辑区层级色：避免比周围面板更深的tr("黑洞")观感
             let bg_brush = target
                 .CreateSolidColorBrush(&self.theme.editor_bg, None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let title_brush = target
                 .CreateSolidColorBrush(&color_f(0.9, 0.9, 0.9, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let _subtitle_brush = target
                 .CreateSolidColorBrush(&color_f(0.6, 0.6, 0.6, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             // 快捷键引导：淡灰色，填充负空间且不与主体信息争夺注意力
             let hint_brush = target
                 .CreateSolidColorBrush(&color_f(0.48, 0.48, 0.48, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -217,7 +218,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             // 设置文字居中对齐
@@ -227,7 +228,7 @@ impl EditorState {
             let _ = title_format.SetParagraphAlignment(
                 windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
             );
-            let title: Vec<u16> = "你好，世界".encode_utf16().chain(Some(0)).collect();
+            let title: Vec<u16> = tr("你好，世界").encode_utf16().chain(Some(0)).collect();
             let title_rect = D2D_RECT_F {
                 left: x,
                 top: logo_y + logo_size + 16.0,
@@ -255,7 +256,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let _ = hint_format.SetTextAlignment(
@@ -265,9 +266,9 @@ impl EditorState {
                 windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
             );
             let hints = [
-                "打开文件夹  Ctrl + K",
-                "新建项目  Ctrl + N",
-                "在资源管理器中双击文件开始编辑",
+                tr("打开文件夹  Ctrl + K"),
+                tr("新建项目  Ctrl + N"),
+                tr("在资源管理器中双击文件开始编辑"),
             ];
             let hints_top = title_rect.bottom + 16.0;
             for (i, hint) in hints.iter().enumerate() {
@@ -294,25 +295,25 @@ impl EditorState {
         [
             WelcomeActionItem {
                 icon_kind: crate::icons::IconKind::OpenFolder,
-                label: "打开文件夹",
+                label: tr("打开文件夹"),
                 shortcut: "Ctrl+K",
                 action: WelcomeAction::OpenFolder,
             },
             WelcomeActionItem {
                 icon_kind: crate::icons::IconKind::NewFile,
-                label: "新建项目",
+                label: tr("新建项目"),
                 shortcut: "Ctrl+N",
                 action: WelcomeAction::NewProject,
             },
             WelcomeActionItem {
                 icon_kind: crate::icons::IconKind::Clone,
-                label: "克隆仓库",
+                label: tr("克隆仓库"),
                 shortcut: "",
                 action: WelcomeAction::CloneRepo,
             },
             WelcomeActionItem {
                 icon_kind: crate::icons::IconKind::Ssh,
-                label: "通过 SSH 连接",
+                label: tr("通过 SSH 连接"),
                 shortcut: "",
                 action: WelcomeAction::OpenRemote,
             },
@@ -364,7 +365,7 @@ impl EditorState {
             }
         }
 
-        // 空状态"打开文件夹"按钮
+        // 空状态tr("打开文件夹")按钮
         if let Some((bl, bt, br, bb)) = layout.empty_state_button_rect {
             if mouse_x >= bl && mouse_x <= br && mouse_y >= bt && mouse_y <= bb {
                 return Some(WelcomeAction::OpenFolder);
@@ -398,67 +399,67 @@ impl EditorState {
             let bg_brush = target
                 .CreateSolidColorBrush(&color_f(0.08, 0.08, 0.10, 0.55), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let title_brush = target
                 .CreateSolidColorBrush(&color_f(0.9, 0.9, 0.9, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let subtitle_brush = target
                 .CreateSolidColorBrush(&color_f(0.6, 0.6, 0.6, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let heading_brush = target
                 .CreateSolidColorBrush(&color_f(0.85, 0.85, 0.85, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let text_brush = target
                 .CreateSolidColorBrush(&color_f(0.7, 0.7, 0.7, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let text_light_brush = target
                 .CreateSolidColorBrush(&color_f(0.5, 0.5, 0.5, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let link_brush = target
                 .CreateSolidColorBrush(&color_f(0.25, 0.65, 0.95, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let normal_bg_brush = target
                 .CreateSolidColorBrush(&color_f(0.15, 0.15, 0.15, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let hover_bg_brush = target
                 .CreateSolidColorBrush(&color_f(0.22, 0.22, 0.22, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let hover_text_brush = target
                 .CreateSolidColorBrush(&color_f(0.9, 0.9, 0.9, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let separator_brush = target
                 .CreateSolidColorBrush(&color_f(0.25, 0.25, 0.25, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -511,10 +512,10 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
-            let brand_title: Vec<u16> = "牧羊人编辑器".encode_utf16().chain(Some(0)).collect();
+            let brand_title: Vec<u16> = tr("牧羊人编辑器").encode_utf16().chain(Some(0)).collect();
             let brand_title_rect = D2D_RECT_F {
                 left: layout.left_col_x + 70.0,
                 top: y + layout.top_margin + 5.0,
@@ -541,10 +542,10 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
-            let brand_sub: Vec<u16> = "Aether Studio — 纯 Rust 原生编辑器"
+            let brand_sub: Vec<u16> = tr("Aether Studio — 纯 Rust 原生编辑器")
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
@@ -575,7 +576,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let _ = action_icon_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -591,7 +592,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -606,7 +607,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let _ = action_shortcut_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -615,7 +616,7 @@ impl EditorState {
             let focus_border_brush = target
                 .CreateSolidColorBrush(&color_f(0.25, 0.65, 0.95, 1.0), None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -654,7 +655,7 @@ impl EditorState {
                 let icon_brush = target
                     .CreateSolidColorBrush(&icon_color, None)
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 self.icons.draw(
@@ -721,10 +722,10 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
-            let tip_text: Vec<u16> = "💡 提示：按 Ctrl+K 快速打开文件夹，Ctrl+N 新建项目"
+            let tip_text: Vec<u16> = tr("💡 提示：按 Ctrl+K 快速打开文件夹，Ctrl+N 新建项目")
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
@@ -764,10 +765,10 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
-            let recent_heading: Vec<u16> = "最近项目".encode_utf16().chain(Some(0)).collect();
+            let recent_heading: Vec<u16> = tr("最近项目").encode_utf16().chain(Some(0)).collect();
             let recent_heading_rect = D2D_RECT_F {
                 left: layout.right_col_x,
                 top: y + layout.top_margin,
@@ -794,7 +795,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
             let _ = project_icon_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -810,7 +811,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -825,7 +826,7 @@ impl EditorState {
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                    eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                     panic!("D2D device lost")
                 });
 
@@ -926,7 +927,7 @@ impl EditorState {
                         None,
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 self.icons.draw(
@@ -939,7 +940,7 @@ impl EditorState {
                     &empty_icon_brush,
                 );
 
-                // 2. 主文案 "暂无最近项目" 14pt 居中
+                // 2. 主文案 tr("暂无最近项目") 14pt 居中
                 let empty_main_format = dwrite
                     .CreateTextFormat(
                         windows::core::w!("Segoe UI"),
@@ -951,12 +952,13 @@ impl EditorState {
                         windows::core::w!("zh-CN"),
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 let _ = empty_main_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 let main_y = icon_y + icon_size + 12.0;
-                let main_text: Vec<u16> = "暂无最近项目".encode_utf16().chain(Some(0)).collect();
+                let main_text: Vec<u16> =
+                    tr("暂无最近项目").encode_utf16().chain(Some(0)).collect();
                 let main_rect = D2D_RECT_F {
                     left: layout.right_col_x,
                     top: main_y,
@@ -969,7 +971,7 @@ impl EditorState {
                         None,
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 target.DrawText(
@@ -981,7 +983,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
                 );
 
-                // 3. 副文案 "打开文件夹开始编辑" 12pt 居中
+                // 3. 副文案 tr("打开文件夹开始编辑") 12pt 居中
                 let empty_sub_format = dwrite
                     .CreateTextFormat(
                         windows::core::w!("Segoe UI"),
@@ -993,13 +995,15 @@ impl EditorState {
                         windows::core::w!("zh-CN"),
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 let _ = empty_sub_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 let sub_y = main_y + 20.0 + 6.0;
-                let sub_text: Vec<u16> =
-                    "打开文件夹开始编辑".encode_utf16().chain(Some(0)).collect();
+                let sub_text: Vec<u16> = tr("打开文件夹开始编辑")
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
                 let sub_rect = D2D_RECT_F {
                     left: layout.right_col_x,
                     top: sub_y,
@@ -1012,7 +1016,7 @@ impl EditorState {
                         None,
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
                 target.DrawText(
@@ -1024,7 +1028,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
                 );
 
-                // 4. "打开文件夹" 按钮：圆角矩形，hover 变亮
+                // 4. tr("打开文件夹") 按钮：圆角矩形，hover 变亮
                 if let Some((bl, bt, br, bb)) = layout.empty_state_button_rect {
                     let is_btn_hovered =
                         self.welcome_hover_action.as_ref() == Some(&WelcomeAction::OpenFolder);
@@ -1036,7 +1040,7 @@ impl EditorState {
                     let btn_brush = target
                         .CreateSolidColorBrush(&btn_color, None)
                         .unwrap_or_else(|e| {
-                            eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                            eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                             panic!("D2D device lost")
                         });
                     let btn_rect = D2D_RECT_F {
@@ -1052,8 +1056,9 @@ impl EditorState {
                     };
                     target.FillRoundedRectangle(&rounded, &btn_brush);
 
-                    // 按钮文本 "打开文件夹" 白色居中
-                    let btn_text: Vec<u16> = "打开文件夹".encode_utf16().chain(Some(0)).collect();
+                    // 按钮文本 tr("打开文件夹") 白色居中
+                    let btn_text: Vec<u16> =
+                        tr("打开文件夹").encode_utf16().chain(Some(0)).collect();
                     let btn_text_rect = D2D_RECT_F {
                         left: bl,
                         top: bt + 6.0,
@@ -1063,7 +1068,7 @@ impl EditorState {
                     let white_brush = target
                         .CreateSolidColorBrush(&color_f(1.0, 1.0, 1.0, 1.0), None)
                         .unwrap_or_else(|e| {
-                            eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                            eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                             panic!("D2D device lost")
                         });
                     target.DrawText(
@@ -1091,10 +1096,10 @@ impl EditorState {
                         windows::core::w!("zh-CN"),
                     )
                     .unwrap_or_else(|e| {
-                        eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
+                        eprintln!(tr("[H-14] D2D 操作失败 (设备丢失?): {:?}"), e);
                         panic!("D2D device lost")
                     });
-                let more_text: Vec<u16> = "更多...".encode_utf16().chain(Some(0)).collect();
+                let more_text: Vec<u16> = tr("更多...").encode_utf16().chain(Some(0)).collect();
                 let more_rect = D2D_RECT_F {
                     left: layout.right_col_x,
                     top: more_y,
@@ -1145,7 +1150,7 @@ impl EditorState {
         for p in self.recent_projects.list() {
             items.push(WelcomeAction::OpenRecentProject(p.path.clone()));
         }
-        // 若有"更多..."链接也加入
+        // 若有tr("更多...")链接也加入
         if !self.recent_projects.list().is_empty() {
             items.push(WelcomeAction::MoreRecentProjects);
         }
