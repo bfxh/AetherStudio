@@ -38,6 +38,7 @@ pub(crate) use crate::ssh::{
     CloneRepoDialog, RemoteFileTree, RemoteSession, SshConnectionDialog, SshManagerPanel,
 };
 pub(crate) use crate::status_bar::StatusBar;
+pub(crate) use crate::status_bar_language_menu::LanguageMenuState;
 pub(crate) use crate::tabs::{Tab, TabContent, TabLayout};
 pub(crate) use crate::terminal::TerminalPanel;
 pub(crate) use aether_shared::settings::AppSettings;
@@ -465,6 +466,8 @@ pub struct EditorState {
     pub menu_bar: MenuBar,
     pub activity_bar: ActivityBar,
     pub status_bar: StatusBar,
+    /// 状态栏 Language 分区点击弹出的语言模式选择菜单
+    pub language_menu: LanguageMenuState,
     pub activity_view: ActivityBarView,
     pub sidebar_content: SidebarContent,
     /// 最近项目管理器
@@ -787,6 +790,7 @@ impl EditorState {
             menu_bar: MenuBar::new(),
             activity_bar: ActivityBar::new(),
             status_bar: StatusBar::new(),
+            language_menu: LanguageMenuState::default(),
             activity_view: ActivityBarView::Explorer,
             sidebar_content: SidebarContent::FileTree,
             recent_projects: crate::recent_projects::RecentProjectsManager::new(),

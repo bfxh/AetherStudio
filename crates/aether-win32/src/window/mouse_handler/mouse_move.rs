@@ -944,6 +944,15 @@ unsafe fn omm_status_bar_hover(
     layout: &crate::layout::LayoutManager,
 ) -> bool {
     let mut st = state.borrow_mut();
+    // 语言菜单可见时：优先更新菜单 hover（点击/绘制高亮），状态栏 hover 置空
+    if st.language_menu.visible {
+        let changed = st.language_menu.update_hover(mouse_x, mouse_y);
+        if st.status_bar.hover_index.is_some() {
+            st.status_bar.hover_index = None;
+            return true;
+        }
+        return changed;
+    }
     let status_region = layout.status_bar_region();
     let old_hover = st.status_bar.hover_index;
     let new_hover = if layout.status_bar_visible && status_region.contains(mouse_x, mouse_y) {

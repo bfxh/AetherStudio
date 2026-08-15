@@ -957,6 +957,11 @@ impl EditorState {
             self.render_activity_bar_context_menu(&target);
         }
 
+        // 15b. 状态栏语言模式选择菜单（最顶层渲染）
+        if self.language_menu.visible {
+            self.render_status_bar_language_menu(&target);
+        }
+
         // 15c. AI 历史对话浮动窗口（可拖动，覆盖于所有面板/编辑器之上）
         if self.ai_panel.history_open {
             self.render_history_float_window(&target);

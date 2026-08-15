@@ -2093,3 +2093,56 @@ pub(super) unsafe fn lbd_history_window(
         return None;
     }
 }
+
+/// 状态栏分区点击 + 语言模式选择菜单交互。
+///
+/// 优先级：语言菜单可见时优先处理（菜单内点击选择语言；菜单外点击关闭菜单，
+/// 返回 None 让点击继续传递到下层）。状态栏 Language 分区点击弹出语言菜单。
+pub(super) unsafe fn lbd_status_bar(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    layout: &crate::layout::LayoutManager,
+) -> Option<LRESULT> {
+    {
+        let mut st = state.borrow_mut();
+        // 语言菜单可见：菜单内点击 → 选择语言；菜单外点击 → 关闭菜单（点击继续传递）
+        if st.language_menu.visible {
+            if let Some(idx) = st.language_menu.hit_test(mouse_x, mouse_y) {
+                let lang = crate::status_bar_language_menu::language_options()[idx].lang;
+                st.language_menu.hide();
+                st.set_language_mode(lang);
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+            st.language_menu.hide();
+            invalidate_window(hwnd);
+            return None;
+        }
+        // 状态栏分区点击（仅 Language 分区有动作）
+        let status_region = layout.status_bar_region();
+        if !status_region.contains(mouse_x, mouse_y) {
+            return None;
+        }
+        let rel_x = mouse_x - status_region.x;
+        let rel_y = mouse_y - status_region.y;
+        let hit = st.status_bar.hit_test(rel_x, rel_y, status_region.width);
+        if let Some(idx) = hit {
+            if idx == crate::status_bar::StatusBarIndex::Language as usize {
+                let regions = st.status_bar.section_regions(status_region.width);
+                if let Some(&(_, sx, sy, sw, _)) = regions.iter().find(|r| r.0 == idx) {
+                    let menu_w = crate::status_bar_language_menu::LanguageMenuState::MENU_WIDTH;
+                    let menu_h = st.language_menu.menu_height();
+                    // 锚点：分区左下角，菜单向上向左弹出（防止超出窗口边缘）
+                    let anchor_x = (status_region.x + sx + sw - menu_w).max(8.0);
+                    let anchor_y = (status_region.y + sy - menu_h).max(8.0);
+                    st.language_menu.open_at(anchor_x, anchor_y);
+                    invalidate_window(hwnd);
+                    return Some(LRESULT(0));
+                }
+            }
+        }
+    }
+    None
+}

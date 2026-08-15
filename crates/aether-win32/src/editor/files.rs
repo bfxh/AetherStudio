@@ -17,6 +17,32 @@ impl EditorState {
         self.content.buffer_version += 1;
         self.clear_selection();
     }
+    /// 手动切换当前文档语言模式（状态栏 Language 分区菜单）。
+    ///
+    /// 与打开文件时的语言设置路径一致：重新词法高亮 + 通知 LSP 文档语言变更
+    /// （旧服务器按需关闭，新语言按需启动）。
+    pub fn set_language_mode(&mut self, lang: aether_core::lexer::Language) {
+        if self.content.language == lang {
+            return;
+        }
+        self.content.language = lang;
+        self.content.markdown_preview = false;
+        self.markdown_preview = false;
+        self.reset_editor_state();
+        self.emit_event(crate::events::EditorEvent::TextChanged {
+            start_line: 0,
+            end_line: self.content.buffer.len_lines(),
+        });
+        self.emit_event(crate::events::EditorEvent::StatusBarChanged);
+        // 接线 LSP：语言已变，按需重启语言服务器
+        if self.lsp.frozen {
+            self.thaw_lsp_on_demand();
+        } else {
+            self.lsp.notify_open(&self.content);
+        }
+        self.status_message = format!("语言模式: {}", lang.display_id());
+    }
+
     /// 在新标签页中打开内容
     pub(super) fn open_in_new_tab(&mut self, tab: Tab) {
         // REQ-P1-09: save current state to old tab, push new tab, swap it in

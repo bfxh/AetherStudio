@@ -1271,3 +1271,124 @@ impl EditorState {
         }
     }
 }
+
+/// 状态栏语言模式选择菜单（简化版：背景 + hover 高亮 + 当前语言勾选色）
+pub(super) fn render_status_bar_language_menu(
+    &mut self,
+    target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+) {
+    unsafe {
+        let menu = &self.language_menu;
+        if !menu.visible {
+            return;
+        }
+        let menu_width = crate::status_bar_language_menu::LanguageMenuState::MENU_WIDTH;
+        let menu_height = menu.menu_height();
+        let menu_x = menu.x;
+        let menu_y = menu.y;
+
+        let bg_color = color_f(40.0 / 255.0, 44.0 / 255.0, 52.0 / 255.0, 240.0 / 255.0);
+        let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let menu_rect = D2D_RECT_F {
+            left: menu_x,
+            top: menu_y,
+            right: menu_x + menu_width,
+            bottom: menu_y + menu_height,
+        };
+        let rounded_rect = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+            rect: menu_rect,
+            radiusX: 4.0,
+            radiusY: 4.0,
+        };
+        target.FillRoundedRectangle(&rounded_rect, &bg_brush);
+        let border_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 1.0);
+        if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            target.DrawRoundedRectangle(&rounded_rect, &border_brush, 1.0, None);
+        }
+
+        let normal_text_color = color_f(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0);
+        let normal_text_brush = match self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &normal_text_color)
+        {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let hover_bg_color = color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0);
+        let hover_bg_brush = match self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &hover_bg_color)
+        {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        // 当前语言使用高亮色（区别于普通项）
+        let active_text_color = color_f(180.0 / 255.0, 220.0 / 255.0, 1.0, 1.0);
+        let active_text_brush = match self
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &active_text_color)
+        {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+        let text_format = self
+            .render_ctx
+            .text_format_cache
+            .get_format(
+                13.0,
+                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+            )
+            .unwrap();
+
+        let current_lang = self.content.language;
+        let item_h = crate::status_bar_language_menu::LanguageMenuState::ITEM_HEIGHT;
+        for (i, item) in crate::status_bar_language_menu::language_options()
+            .iter()
+            .enumerate()
+        {
+            let item_top = menu_y
+                + crate::status_bar_language_menu::LanguageMenuState::TOP_PADDING
+                + i as f32 * item_h;
+            // hover 高亮背景
+            if menu.hover_index == Some(i) {
+                let hover_rect = D2D_RECT_F {
+                    left: menu_x + 2.0,
+                    top: item_top,
+                    right: menu_x + menu_width - 2.0,
+                    bottom: item_top + item_h,
+                };
+                target.FillRectangle(&hover_rect, &hover_bg_brush);
+            }
+            // 文本：当前语言高亮色，其余普通色
+            let brush = if item.lang == current_lang {
+                &active_text_brush
+            } else {
+                &normal_text_brush
+            };
+            let text_rect = D2D_RECT_F {
+                left: menu_x + 12.0,
+                top: item_top,
+                right: menu_x + menu_width - 8.0,
+                bottom: item_top + item_h,
+            };
+            let wide = windows::core::HSTRING::from(item.label);
+            target.DrawText(
+                &wide,
+                &text_format,
+                &text_rect,
+                brush,
+                windows::Win32::Graphics::DirectWrite::D2D1_DRAW_TEXT_OPTIONS_NONE,
+                windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+}

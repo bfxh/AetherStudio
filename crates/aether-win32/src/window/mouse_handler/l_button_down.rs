@@ -98,6 +98,9 @@ pub(crate) unsafe fn on_l_button_down(
     if let Some(r) = lbd_bottom_panel(hwnd, &state, mouse_x, mouse_y, &layout) {
         return r;
     }
+    if let Some(r) = lbd_status_bar(hwnd, &state, mouse_x, mouse_y, &layout) {
+        return r;
+    }
     if let Some(r) = lbd_settings_page(hwnd, &state, mouse_x, mouse_y, &layout) {
         return r;
     }
