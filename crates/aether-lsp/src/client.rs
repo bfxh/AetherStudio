@@ -648,6 +648,20 @@ pub fn default_server_config(language_id: &str) -> Option<ServerConfig> {
             root_uri: None,
             initialization_options: None,
         }),
+        "go" => Some(ServerConfig {
+            command: Some(PathBuf::from("gopls")),
+            args: vec![],
+            env: HashMap::new(),
+            root_uri: None,
+            initialization_options: None,
+        }),
+        "java" => Some(ServerConfig {
+            command: Some(PathBuf::from("jdtls")),
+            args: vec![],
+            env: HashMap::new(),
+            root_uri: None,
+            initialization_options: None,
+        }),
         _ => None,
     }
 }
@@ -906,6 +920,13 @@ mod tests {
         let cpp = default_server_config("cpp").unwrap();
         assert_eq!(cpp.command, Some(PathBuf::from("clangd")));
 
-        assert!(default_server_config("go").is_none());
+        let go = default_server_config("go").unwrap();
+        assert_eq!(go.command, Some(PathBuf::from("gopls")));
+        let java = default_server_config("java").unwrap();
+        assert_eq!(java.command, Some(PathBuf::from("jdtls")));
+
+        // 无默认服务器的语言不启动 LSP
+        assert!(default_server_config("json").is_none());
+        assert!(default_server_config("toml").is_none());
     }
 }

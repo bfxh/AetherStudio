@@ -95,6 +95,7 @@ impl LexemeSpan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Language {
     C,
+    Cpp,
     Rust,
     Python,
     JavaScript,
@@ -110,42 +111,197 @@ pub enum Language {
     Image,
 }
 
+/// 语言注册表条目（单一来源，见 [`Language::ALL`]）
+pub struct LanguageSpec {
+    pub lang: Language,
+    /// 文件扩展名（小写，不含点）
+    pub extensions: &'static [&'static str],
+    /// tree-sitter grammar id
+    pub ts_id: Option<&'static str>,
+    /// LSP language_id
+    pub lsp_id: Option<&'static str>,
+    /// 状态栏显示 id
+    pub display_id: &'static str,
+}
+
 impl Language {
+    /// 语言注册表（单一来源）：扩展名、tree-sitter grammar id、LSP language_id、
+    /// 状态栏显示 id 全部集中在此，禁止在其它模块再写散落的 match 映射。
+    ///
+    /// 约定：
+    /// - `ts_id`：有 tree-sitter grammar 的语言返回 id，否则 None（fallback 手写 lexer）
+    /// - `lsp_id`：有默认 LSP 服务器配置的语言返回 id，否则 None（不自动启动 LSP）
+    /// - `extensions` 为空表示无扩展名映射（PlainText 兜底）
+    pub const ALL: &'static [LanguageSpec] = &[
+        LanguageSpec {
+            lang: Language::C,
+            extensions: &["c", "h", "m", "mm"],
+            ts_id: Some("c"),
+            lsp_id: Some("c"),
+            display_id: "c",
+        },
+        LanguageSpec {
+            lang: Language::Cpp,
+            extensions: &["cpp", "hpp", "cc", "cxx"],
+            ts_id: Some("cpp"),
+            lsp_id: Some("cpp"),
+            display_id: "cpp",
+        },
+        LanguageSpec {
+            lang: Language::Rust,
+            extensions: &["rs"],
+            ts_id: Some("rust"),
+            lsp_id: Some("rust"),
+            display_id: "rust",
+        },
+        LanguageSpec {
+            lang: Language::Python,
+            extensions: &["py", "pyw", "pyi", "pyx", "pxd"],
+            ts_id: Some("python"),
+            lsp_id: Some("python"),
+            display_id: "python",
+        },
+        LanguageSpec {
+            lang: Language::JavaScript,
+            extensions: &["js", "jsx", "mjs", "cjs", "es", "es6"],
+            ts_id: Some("javascript"),
+            lsp_id: Some("javascript"),
+            display_id: "javascript",
+        },
+        LanguageSpec {
+            lang: Language::TypeScript,
+            extensions: &["ts", "tsx", "mts", "cts"],
+            ts_id: Some("typescript"),
+            lsp_id: Some("typescript"),
+            display_id: "typescript",
+        },
+        LanguageSpec {
+            lang: Language::Go,
+            extensions: &["go"],
+            ts_id: Some("go"),
+            lsp_id: Some("go"),
+            display_id: "go",
+        },
+        LanguageSpec {
+            lang: Language::Java,
+            extensions: &["java"],
+            ts_id: Some("java"),
+            lsp_id: Some("java"),
+            display_id: "java",
+        },
+        LanguageSpec {
+            lang: Language::Json,
+            extensions: &["json", "jsonc", "jsonl"],
+            ts_id: Some("json"),
+            lsp_id: None,
+            display_id: "json",
+        },
+        LanguageSpec {
+            lang: Language::Markdown,
+            extensions: &["md", "markdown", "mdx"],
+            ts_id: None,
+            lsp_id: None,
+            display_id: "markdown",
+        },
+        LanguageSpec {
+            lang: Language::Toml,
+            extensions: &["toml", "ini", "cfg", "conf", "config"],
+            ts_id: Some("toml"),
+            lsp_id: None,
+            display_id: "toml",
+        },
+        LanguageSpec {
+            lang: Language::Html,
+            extensions: &[
+                "html",
+                "htm",
+                "xhtml",
+                "vue",
+                "svelte",
+                "wxml",
+                "axml",
+                "ftl",
+                "jinja",
+                "j2",
+                "njk",
+                "mustache",
+                "handlebars",
+                "hbs",
+                "ejs",
+                "erb",
+                "haml",
+                "pug",
+                "jade",
+                "liquid",
+                "razor",
+                "cshtml",
+            ],
+            ts_id: None,
+            lsp_id: None,
+            display_id: "html",
+        },
+        LanguageSpec {
+            lang: Language::Css,
+            extensions: &[
+                "css", "scss", "sass", "less", "styl", "stylus", "wxss", "acss",
+            ],
+            ts_id: None,
+            lsp_id: None,
+            display_id: "css",
+        },
+        LanguageSpec {
+            lang: Language::PlainText,
+            extensions: &[],
+            ts_id: None,
+            lsp_id: None,
+            display_id: "text",
+        },
+        LanguageSpec {
+            lang: Language::Image,
+            extensions: &[
+                "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg", "tiff", "tif", "raw",
+                "psd",
+            ],
+            ts_id: None,
+            lsp_id: None,
+            display_id: "image",
+        },
+    ];
+
+    /// 查注册表（按枚举值）
+    pub fn spec(self) -> &'static LanguageSpec {
+        Self::ALL
+            .iter()
+            .find(|s| s.lang == self)
+            .expect("Language 枚举值必须存在于注册表")
+    }
+
+    /// tree-sitter grammar id（无 grammar 的语言返回 None，由调用方 fallback 手写 lexer）
+    pub fn ts_id(self) -> Option<&'static str> {
+        self.spec().ts_id
+    }
+
+    /// LSP language_id（无默认 LSP 服务器的语言返回 None）
+    pub fn lsp_id(self) -> Option<&'static str> {
+        self.spec().lsp_id
+    }
+
+    /// 状态栏等场景使用的显示 id
+    pub fn display_id(self) -> &'static str {
+        self.spec().display_id
+    }
+
     /// 根据文件扩展名检测语言
     /// 对于没有独立 lexer 的扩展名，尽量归入语义相近的语言（如 vue/wxml 用 HTML lexer），
     /// 完全未知的扩展名统一归为 PlainText，保证任何文本文件都能被查看。
     pub fn from_extension(ext: &str) -> Self {
-        match ext.to_lowercase().as_str() {
-            // C/C++ 家族
-            "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "m" | "mm" => Language::C,
-            // Rust
-            "rs" => Language::Rust,
-            // Python
-            "py" | "pyw" | "pyi" | "pyx" | "pxd" => Language::Python,
-            // JavaScript/TypeScript 及其衍生
-            "js" | "jsx" | "mjs" | "cjs" | "es" | "es6" => Language::JavaScript,
-            "ts" | "tsx" | "mts" | "cts" => Language::TypeScript,
-            // Go
-            "go" => Language::Go,
-            // Java
-            "java" => Language::Java,
-            // JSON / JSON-like
-            "json" | "jsonc" | "jsonl" => Language::Json,
-            // Markdown / 文档
-            "md" | "markdown" | "mdx" => Language::Markdown,
-            // TOML / INI / 配置
-            "toml" | "ini" | "cfg" | "conf" | "config" => Language::Toml,
-            // HTML / 模板 / 类 XML 标记
-            "html" | "htm" | "xhtml" | "vue" | "svelte" | "wxml" | "axml" | "ftl" | "jinja"
-            | "j2" | "njk" | "mustache" | "handlebars" | "hbs" | "ejs" | "erb" | "haml" | "pug"
-            | "jade" | "liquid" | "razor" | "cshtml" => Language::Html,
-            // CSS / 样式
-            "css" | "scss" | "sass" | "less" | "styl" | "stylus" | "wxss" | "acss" => Language::Css,
-            // 图片（仅用于文件树图标/路由，不用于lexer）
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tiff" | "tif"
-            | "raw" | "psd" => Language::Image,
-            _ => Language::PlainText,
+        let ext = ext.to_lowercase();
+        for spec in Self::ALL {
+            if spec.extensions.contains(&ext.as_str()) {
+                return spec.lang;
+            }
         }
+        Language::PlainText
     }
 
     /// 根据文件路径检测语言
@@ -160,6 +316,9 @@ impl Language {
     pub fn create_lexer(&self) -> Box<dyn Lexer> {
         match self {
             Language::C => Box::new(c_lexer::CLexer::new()),
+            // C++ 暂复用 C 家族 lexer（注释/字符串/数字/大括号等公共结构），
+            // 高亮优先走 tree-sitter（ts_id = "cpp"）
+            Language::Cpp => Box::new(c_lexer::CLexer::new()),
             Language::Rust => Box::new(rust_lexer::RustLexer::new()),
             Language::Python => Box::new(python_lexer::PythonLexer::new()),
             Language::JavaScript | Language::TypeScript => Box::new(js_lexer::JsLexer::new()),
@@ -181,6 +340,7 @@ impl Language {
     pub fn lex_full(&self, text: &str) -> Vec<LexemeSpan> {
         match self {
             Language::C => c_lexer::CLexer::new().lex_full(text),
+            Language::Cpp => c_lexer::CLexer::new().lex_full(text),
             Language::Rust => rust_lexer::RustLexer::new().lex_full(text),
             Language::Python => python_lexer::PythonLexer::new().lex_full(text),
             Language::JavaScript | Language::TypeScript => js_lexer::JsLexer::new().lex_full(text),
@@ -244,6 +404,72 @@ pub(crate) fn utf8_char_len(first_byte: u8) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// 注册表必须覆盖枚举全部变体（防新增枚举忘加表条目）
+    #[test]
+    fn test_registry_covers_all_language_variants() {
+        let variants = [
+            Language::C,
+            Language::Cpp,
+            Language::Rust,
+            Language::Python,
+            Language::JavaScript,
+            Language::TypeScript,
+            Language::Go,
+            Language::Java,
+            Language::Json,
+            Language::Markdown,
+            Language::Toml,
+            Language::Html,
+            Language::Css,
+            Language::PlainText,
+            Language::Image,
+        ];
+        assert_eq!(variants.len(), Language::ALL.len());
+        for v in variants {
+            assert!(Language::ALL.iter().any(|s| s.lang == v));
+            assert!(!v.display_id().is_empty());
+        }
+    }
+
+    /// 注册表扩展名无重叠（同一扩展名只属于一种语言）
+    #[test]
+    fn test_registry_extensions_no_overlap() {
+        let mut seen: Vec<&str> = Vec::new();
+        for spec in Language::ALL {
+            for e in spec.extensions {
+                assert!(!seen.contains(e), "扩展名 {} 重复注册", e);
+                seen.push(e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_from_extension_cpp_split() {
+        assert_eq!(Language::from_extension("cpp"), Language::Cpp);
+        assert_eq!(Language::from_extension("hpp"), Language::Cpp);
+        assert_eq!(Language::from_extension("cc"), Language::Cpp);
+        assert_eq!(Language::from_extension("CXX"), Language::Cpp);
+        // Objective-C 保持归 C（行为不变）
+        assert_eq!(Language::from_extension("m"), Language::C);
+        assert_eq!(Language::from_extension("mm"), Language::C);
+        assert_eq!(Language::from_extension("c"), Language::C);
+    }
+
+    #[test]
+    fn test_ts_and_lsp_ids() {
+        assert_eq!(Language::Cpp.ts_id(), Some("cpp"));
+        assert_eq!(Language::Cpp.lsp_id(), Some("cpp"));
+        assert_eq!(Language::Rust.ts_id(), Some("rust"));
+        assert_eq!(Language::Go.lsp_id(), Some("go"));
+        assert_eq!(Language::Java.lsp_id(), Some("java"));
+        // 无 grammar/LSP 的语言
+        assert_eq!(Language::Markdown.ts_id(), None);
+        assert_eq!(Language::Html.ts_id(), None);
+        assert_eq!(Language::Css.lsp_id(), None);
+        assert_eq!(Language::Json.lsp_id(), None);
+        assert_eq!(Language::PlainText.display_id(), "text");
+    }
+
     use super::*;
 
     #[test]

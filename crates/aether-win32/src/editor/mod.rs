@@ -1150,35 +1150,15 @@ impl EditorState {
     }
 }
 
+/// 状态栏等场景使用的语言显示 id（单一来源：aether-core 语言注册表）
 fn language_str(lang: Language) -> &'static str {
-    match lang {
-        Language::C => "c",
-        Language::Rust => "rust",
-        Language::Python => "python",
-        Language::JavaScript => "javascript",
-        Language::TypeScript => "typescript",
-        Language::Json => "json",
-        Language::Markdown => "markdown",
-        Language::Toml => "toml",
-        Language::Html => "html",
-        Language::Css => "css",
-        Language::Go => "go",
-        Language::Java => "java",
-        Language::PlainText => "text",
-        Language::Image => "image",
-    }
+    lang.display_id()
 }
 
 /// 将内部 Language 枚举映射为 LSP language_id 字符串
+/// （单一来源：aether-core 语言注册表；无默认 LSP 服务器的语言回退 plaintext）
 fn language_to_lsp_id(lang: Language) -> &'static str {
-    match lang {
-        Language::Rust => "rust",
-        Language::Python => "python",
-        Language::JavaScript => "javascript",
-        Language::TypeScript => "typescript",
-        Language::C => "c",
-        _ => "plaintext",
-    }
+    lang.lsp_id().unwrap_or("plaintext")
 }
 
 impl EditorState {
@@ -1220,21 +1200,9 @@ const BINARY_EXTENSIONS: &[&str] = &[
 
 /// 将 aether-core 的 Language 枚举映射到 tree-sitter highlighter 接受的语言字符串。
 /// 返回 None 的语言（Markdown/Html/Css/PlainText/Image）由调用方 fallback 到手写 lexer。
-/// 注意：aether-core::Language 没有 Cpp 变体，因此 cpp 暂不在此映射中。
+/// 单一来源：aether-core 语言注册表（含 cpp——C++ 现走 tree-sitter cpp grammar）。
 fn language_to_ts_str(lang: Language) -> Option<&'static str> {
-    match lang {
-        Language::Rust => Some("rust"),
-        Language::JavaScript => Some("javascript"),
-        Language::TypeScript => Some("typescript"),
-        Language::Python => Some("python"),
-        Language::C => Some("c"),
-        Language::Json => Some("json"),
-        Language::Toml => Some("toml"),
-        Language::Go => Some("go"),
-        Language::Java => Some("java"),
-        // Markdown/Html/Css/PlainText/Image → None，fallback 到手写 lexer
-        _ => None,
-    }
+    lang.ts_id()
 }
 
 impl EditorState {
@@ -1246,17 +1214,10 @@ impl EditorState {
 }
 
 /// 将 Language 枚举映射到 LSP language_id 字符串（Option 版本，供新 LSP 集成使用）。
-/// 仅返回有默认 server 配置的语言（rust/python/typescript/javascript/c）。
-/// 其他语言（Json/Toml/Markdown/Html/Css/PlainText/Image）返回 None，不启动 LSP。
+/// 单一来源：aether-core 语言注册表（rust/python/typescript/javascript/c/cpp/go/java）。
+/// 其他语言返回 None，不启动 LSP。
 fn language_to_lsp_id_opt(lang: Language) -> Option<&'static str> {
-    match lang {
-        Language::Rust => Some("rust"),
-        Language::Python => Some("python"),
-        Language::JavaScript => Some("javascript"),
-        Language::TypeScript => Some("typescript"),
-        Language::C => Some("c"),
-        _ => None,
-    }
+    lang.lsp_id()
 }
 
 /// 从 LSP Hover 响应中提取纯文本内容。
@@ -1412,6 +1373,12 @@ pub(crate) fn is_text_file(path: &std::path::Path) -> bool {
         let mut buffer = [0u8; 8192];
         if let Ok(n) = file.take(8192).read(&mut buffer) {
             let sample = &buffer[..n];
+            // 非 UTF-8 但可识别编码（GBK/GB2312、UTF-16 BOM）→ 文本文件
+            if let Some(enc) = aether_core::encoding::detect_encoding(sample) {
+                if enc != aether_core::encoding::TextEncoding::Utf8 {
+                    return true;
+                }
+            }
             // 如果包含空字节，则认为是二进制文件
             if sample.contains(&0) {
                 return false;
