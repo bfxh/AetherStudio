@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod char_width;
+pub mod encoding;
 pub mod incremental_lexer;
 pub mod lexer;
 pub mod persistent_history;

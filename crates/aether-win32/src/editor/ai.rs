@@ -817,7 +817,8 @@ impl EditorState {
             ));
         }
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-        let content = String::from_utf8_lossy(&bytes);
+        // 按检测编码解码（GBK/UTF-16 BOM 文件不再乱码）
+        let content = aether_core::encoding::decode_text(&bytes);
         // 限制回喂给模型的长度，避免占满上下文预算
         Ok(truncate_chars(&content, 8000))
     }

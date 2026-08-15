@@ -384,7 +384,7 @@ impl EditorState {
                 let remote_path = path.clone();
                 match session.read_remote_file(&remote_path) {
                     Ok(content) => {
-                        let text = String::from_utf8_lossy(&content).to_string();
+                        let text = aether_core::encoding::decode_text(&content).into_owned();
                         let tab =
                             crate::tabs::Tab::File(crate::tabs::TabContent::with_loaded_buffer(
                                 Some(PathBuf::from(format!("remote:{}", remote_path))),

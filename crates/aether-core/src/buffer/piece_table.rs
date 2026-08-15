@@ -410,6 +410,14 @@ impl PieceTable {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let len = mmap.len();
+        // 编码检测：非 UTF-8（GBK/UTF-16 BOM）文件预解码为 UTF-8，
+        // 避免逐行 lossy 解码产生乱码；UTF-8/ASCII 文件保持 mmap 零拷贝路径
+        if let Some(enc) = crate::encoding::detect_encoding(&mmap[..len.min(8192)]) {
+            if enc != crate::encoding::TextEncoding::Utf8 {
+                let text = crate::encoding::decode_text(&mmap).into_owned();
+                return Ok(Self::from_string(text));
+            }
+        }
         // 单次扫描构建行起始偏移表（替代 count_line_breaks + rebuild_line_index
         // 的双重全文件扫描，打开大文件时省一半时间；SIMD 查找每次从上次位置继续，
         // 总体仍是一次遍历）
