@@ -102,6 +102,7 @@ impl EditorState {
             let _ = KillTimer(hwnd, crate::window::HIGHLIGHT_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::CARET_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::HOVER_TIMER_ID);
+            let _ = KillTimer(hwnd, crate::window::TOOLTIP_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::LP_TIMER_ID);
             // 冰冻态终端刷新交由无头泵驱动，独立定时器停止
             let _ = KillTimer(hwnd, crate::window::TERM_TIMER_ID);

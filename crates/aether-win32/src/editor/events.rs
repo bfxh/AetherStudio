@@ -65,8 +65,11 @@ impl EditorState {
         }
     }
     /// P3.1: 清除当前内联补全建议
+    /// 清除后标记编辑区脏矩形，确保幽灵文本从屏幕上擦除（否则残留为重影）
     pub fn clear_inline_completion(&mut self) {
-        self.content.inline_completion = None;
+        if self.content.inline_completion.take().is_some() {
+            self.emit_event(crate::events::EditorEvent::CursorMoved);
+        }
     }
     /// P3.3: 接受当前内联补全建议，将建议文本插入到光标处
     pub fn accept_inline_completion(&mut self) -> bool {
@@ -76,6 +79,8 @@ impl EditorState {
         if comp.trigger_line != self.content.cursor_line
             || comp.trigger_col != self.content.cursor_col
         {
+            // 补全已被 take() 清除但位置不匹配：标记脏区域擦除幽灵文本残留
+            self.emit_event(crate::events::EditorEvent::CursorMoved);
             return false;
         }
         let pos = self.cursor_byte_pos();
@@ -222,18 +227,26 @@ impl EditorState {
                 }
             }
             crate::menu_bar::CommandId::FileOpen => {
-                if let Some(path) = Dialogs::open_file_dialog(hwnd, "打开文件", &[]) {
-                    self.load_file(path);
+                // 异步处理：通过 PostMessage 避免在 RefCell 借用期间弹模态对话框
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_APP + 10,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
                 }
             }
             crate::menu_bar::CommandId::FileOpenFolder => {
-                if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
-                    if crate::editor::files::check_workspace_trust(self.hwnd, &path) {
-                        self.open_folder(path);
-                    } else {
-                        self.status_message = "已取消打开不受信任的工作区".to_string();
-                    }
+                // 异步处理：通过 PostMessage 避免在 RefCell 借用期间弹模态对话框
+                // 否则泵消息触发 WM_PAINT 会导致重入 panic（被 catch_unwind 吞掉，表现为无反应）
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_APP + 9,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
                 }
             }
             crate::menu_bar::CommandId::FileCloseWorkspace => {
@@ -243,8 +256,14 @@ impl EditorState {
                 self.save_file();
             }
             crate::menu_bar::CommandId::FileSaveAs => {
-                if let Some(path) = Dialogs::save_file_dialog(hwnd, "另存为", "untitled.txt") {
-                    self.save_as(path);
+                // 异步处理：通过 PostMessage 避免在 RefCell 借用期间弹模态对话框
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        hwnd,
+                        windows::Win32::UI::WindowsAndMessaging::WM_APP + 11,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
                 }
             }
             crate::menu_bar::CommandId::FileExit => unsafe {
@@ -348,6 +367,9 @@ impl EditorState {
             }
             crate::menu_bar::CommandId::HelpAbout => {
                 self.status_message = format!("牧羊人编辑器 v{}", crate::updater::APP_VERSION);
+            }
+            crate::menu_bar::CommandId::MarkdownTogglePreview => {
+                self.toggle_markdown_preview();
             }
             crate::menu_bar::CommandId::None => {}
         }

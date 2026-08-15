@@ -77,8 +77,11 @@ pub(crate) unsafe fn on_l_button_up(
             st.settings_panel.top_p_slider_dragging = false;
             st.settings_panel.freq_slider_dragging = false;
             st.settings_panel.pres_slider_dragging = false;
+            // 历史浮窗拖动结束
+            st.ai_panel.history_win_drag = None;
             // 长按检测状态清理
             st.mouse_press.lbutton_down = false;
+            st.mouse_press.lbutton_down_pos = None;
             st.mouse_press.lpress_target = None;
             st.mouse_press.lpress_start = None;
             // 文件树拖拽：拖拽中则以释放位置执行移动，否则仅清理按下候选
@@ -228,11 +231,19 @@ pub(crate) unsafe fn on_mouse_wheel(
                 }
             }
 
-            // SubTask 7.5: 光标在标签栏区域时 → 横向滚动标签栏
+            // SubTask 7.5: 光标在标签栏区域时 → 横向滚动标签栏（平滑滚动）
             let show_tab_bar = state.show_tab_bar();
             let tab_region = state.layout.tab_bar_region(show_tab_bar);
             if show_tab_bar && tab_region.contains(cursor_x, cursor_y) {
                 if state.scroll_tab_bar(delta, tab_region.width) {
+                    // 只标记标签栏区域为脏，避免全窗口重绘
+                    state.dirty_tracker.mark_region(
+                        tab_region.x,
+                        tab_region.y,
+                        tab_region.width,
+                        tab_region.height,
+                        crate::dirty_rect::DirtyRegionType::TabBar,
+                    );
                     invalidate_window(hwnd);
                 }
                 return;
@@ -269,27 +280,24 @@ pub(crate) unsafe fn on_mouse_wheel(
                     return;
                 }
             }
+            // 历史浮窗：光标在浮窗内 → 滚动浮窗列表（全局最顶层，优先于其他滚动）
+            if state.ai_panel.history_open {
+                if let Some((px, py, pw, ph)) = state.ai_panel.history_win_region {
+                    if cursor_x >= px && cursor_x < px + pw && cursor_y >= py && cursor_y < py + ph
+                    {
+                        let scroll_amount = delta * 2.0;
+                        state.ai_panel.history_scroll = (state.ai_panel.history_scroll
+                            - scroll_amount)
+                            .clamp(0.0, state.ai_panel.history_max_scroll.max(0.0));
+                        invalidate_window(hwnd);
+                        return;
+                    }
+                }
+            }
             // 检查光标是否在右侧 AI 面板区域内
             if state.layout.right_panel_visible {
                 let right_panel = state.layout.right_panel_region();
                 if right_panel.contains(cursor_x, cursor_y) {
-                    // 历史记录下拉面板展开时：光标在面板内 → 滚动下拉面板而非聊天区
-                    if state.ai_panel.history_open {
-                        if let Some((px, py, pw, ph)) = state.ai_panel.history_panel_region {
-                            if cursor_x >= px
-                                && cursor_x < px + pw
-                                && cursor_y >= py
-                                && cursor_y < py + ph
-                            {
-                                let scroll_amount = delta * 2.0;
-                                state.ai_panel.history_scroll = (state.ai_panel.history_scroll
-                                    - scroll_amount)
-                                    .clamp(0.0, state.ai_panel.history_max_scroll.max(0.0));
-                                invalidate_window(hwnd);
-                                return;
-                            }
-                        }
-                    }
                     let chat_top = 52.0f32;
                     let chat_bottom = right_panel.height - 80.0f32;
                     // 只有当光标在聊天消息区域（非输入框）时才滚动

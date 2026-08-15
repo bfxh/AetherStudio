@@ -24,7 +24,7 @@ impl EditorState {
             self.icons.ensure_created_from_target(target);
 
             // 安全获取文本格式，失败时跳过渲染
-            let bold_format = match self.render_ctx.text_format_cache.get_format(
+            let _bold_format = match self.render_ctx.text_format_cache.get_format(
                 13.0,
                 DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                 DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -53,7 +53,7 @@ impl EditorState {
             };
 
             // 安全获取画刷，失败时返回
-            let title_brush = match self
+            let _title_brush = match self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
@@ -109,7 +109,7 @@ impl EditorState {
                 Ok(b) => b,
                 Err(_) => return,
             };
-            let accent_brush = match self
+            let _accent_brush = match self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
@@ -117,7 +117,7 @@ impl EditorState {
                 Ok(b) => b,
                 Err(_) => return,
             };
-            let green_brush = match self
+            let _green_brush = match self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.30, 0.78, 0.42, 1.0))
@@ -159,112 +159,12 @@ impl EditorState {
             };
 
             let margin = 10.0f32;
-            let mut cy = y + margin;
+            // 顶部间距 6px + 标签条 24px = 30px，与资源管理器标题栏(FILE_TREE_HEADER_HEIGHT)、
+            // 编辑器标签栏(TAB_BAR_HEIGHT)高度对齐（逻辑像素，Direct2D 自动处理 DPI 缩放）
+            let mut cy = y + 6.0;
 
             // 清空命中区域（每帧重建；必须在注册任何命中区之前调用）
             self.ai_panel.clear_hit_regions();
-
-            // ===== 标题区域 =====
-            let title: Vec<u16> = "AI 助手".encode_utf16().chain(Some(0)).collect();
-            let title_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 22.0,
-            };
-            target.DrawText(
-                &title,
-                &bold_format,
-                &title_rect,
-                &title_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            // 标题栏右侧：历史记录按钮
-            {
-                let hb_w = 44.0f32;
-                let hb_h = 20.0f32;
-                let hb_x = x + width - margin - hb_w;
-                let hb_y = cy + 1.0;
-                let hb_rect = D2D_RECT_F {
-                    left: hb_x,
-                    top: hb_y,
-                    right: hb_x + hb_w,
-                    bottom: hb_y + hb_h,
-                };
-                let hb_bg = if self.ai_panel.history_open {
-                    color_f(0.0, 0.47, 0.83, 1.0)
-                } else {
-                    color_f(0.20, 0.21, 0.24, 1.0)
-                };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &hb_bg) {
-                    fill_round_rect(target, &hb_rect, 4.0, &b);
-                }
-                let hb_text: Vec<u16> = "历史".encode_utf16().chain(Some(0)).collect();
-                let hb_text_rect = D2D_RECT_F {
-                    left: hb_x,
-                    top: hb_y + 2.0,
-                    right: hb_x + hb_w,
-                    bottom: hb_y + hb_h - 1.0,
-                };
-                target.DrawText(
-                    &hb_text,
-                    &small_format,
-                    &hb_text_rect,
-                    &white_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-                self.ai_panel.history_button_region = Some((hb_x, hb_y, hb_w, hb_h));
-                crate::hit_test::register_hit_region("ai:history_button", hb_x, hb_y, hb_w, hb_h);
-            }
-            // 标题栏右侧：Playbook 策略库按钮（历史按钮左侧）
-            {
-                let pb_w = 44.0f32;
-                let pb_h = 20.0f32;
-                let pb_x = x + width - margin - 44.0 - 6.0 - pb_w;
-                let pb_y = cy + 1.0;
-                let pb_rect = D2D_RECT_F {
-                    left: pb_x,
-                    top: pb_y,
-                    right: pb_x + pb_w,
-                    bottom: pb_y + pb_h,
-                };
-                let pb_bg = if self.ai_panel.playbook_open {
-                    color_f(0.0, 0.47, 0.83, 1.0)
-                } else {
-                    color_f(0.20, 0.21, 0.24, 1.0)
-                };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &pb_bg) {
-                    fill_round_rect(target, &pb_rect, 4.0, &b);
-                }
-                let pb_text: Vec<u16> = "策略".encode_utf16().chain(Some(0)).collect();
-                target.DrawText(
-                    &pb_text,
-                    &small_format,
-                    &D2D_RECT_F {
-                        left: pb_x,
-                        top: pb_y + 2.0,
-                        right: pb_x + pb_w,
-                        bottom: pb_y + pb_h - 1.0,
-                    },
-                    &white_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-                self.ai_panel.playbook_button_region = Some((pb_x, pb_y, pb_w, pb_h));
-            }
-            cy += 26.0;
-
-            // 分隔线
-            let sep_rect = D2D_RECT_F {
-                left: x + margin,
-                top: cy,
-                right: x + width - margin,
-                bottom: cy + 1.0,
-            };
-            target.FillRectangle(&sep_rect, &sep_brush);
-            cy += 10.0;
 
             // ===== 对话标签条（多会话）=====
             {
@@ -273,8 +173,9 @@ impl EditorState {
                 let gap = 4.0f32;
                 let tab_w = 92.0f32;
                 let close_w = 16.0f32;
-                let plus_w = 24.0f32;
-                let strip_right = x + width - margin - plus_w - gap;
+                // 右侧预留：加号图标 + 历史图标（各 22px + 2px 间距）
+                let right_reserve = 22.0f32 * 2.0 + 2.0;
+                let strip_right = x + width - margin - right_reserve;
                 let mut tx = x + margin;
                 let n = self.ai_panel.conversations.len();
                 for i in 0..n {
@@ -376,37 +277,57 @@ impl EditorState {
                         .push((i, close_x, tab_y, close_w, tab_h));
                     tx += tab_w + gap;
                 }
-                // ＋ 新建对话
-                let plus_x = tx.min(x + width - margin - plus_w);
-                let plus_rect = D2D_RECT_F {
-                    left: plus_x,
-                    top: tab_y,
-                    right: plus_x + plus_w,
-                    bottom: tab_y + tab_h,
+                // 右侧图标区域：竖线分隔 + Plus 图标 + Clock 图标（靠右对齐）
+                let icon_btn = 22.0f32;
+                let icon_gap = 4.0f32;
+                let icon_size = 14.0f32;
+                let icon_pad = (icon_btn - icon_size) / 2.0;
+                let icons_right = x + width - margin;
+                let icons_w = icon_btn * 2.0 + icon_gap;
+                let icons_left = icons_right - icons_w;
+
+                // 竖线分隔（图标区与标签区之间）
+                let sep_x = icons_left - 6.0;
+                let sep_line = D2D_RECT_F {
+                    left: sep_x,
+                    top: tab_y + 4.0,
+                    right: sep_x + 1.0,
+                    bottom: tab_y + tab_h - 4.0,
                 };
-                if let Ok(b) = self
-                    .render_ctx
-                    .brush_cache
-                    .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
-                {
-                    fill_round_rect(target, &plus_rect, 5.0, &b);
-                }
-                let pw: Vec<u16> = "＋".encode_utf16().chain(Some(0)).collect();
-                let plus_text_rect = D2D_RECT_F {
-                    left: plus_x,
-                    top: tab_y + 2.0,
-                    right: plus_x + plus_w,
-                    bottom: tab_y + tab_h - 1.0,
-                };
-                target.DrawText(
-                    &pw,
-                    &small_format,
-                    &plus_text_rect,
-                    &white_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
+                target.FillRectangle(&sep_line, &sep_brush);
+
+                // Plus 图标（新建对话）
+                let plus_x = icons_left;
+                self.icons.draw(
+                    target,
+                    crate::icons::IconKind::Plus,
+                    plus_x + icon_pad,
+                    tab_y + (tab_h - icon_size) / 2.0,
+                    icon_size,
+                    icon_size,
+                    &dim_brush,
                 );
-                self.ai_panel.new_tab_region = Some((plus_x, tab_y, plus_w, tab_h));
+                self.ai_panel.new_tab_region = Some((plus_x, tab_y, icon_btn, tab_h));
+
+                // Clock 图标（历史记录）
+                let hb_x = icons_left + icon_btn + icon_gap;
+                self.icons.draw(
+                    target,
+                    crate::icons::IconKind::Clock,
+                    hb_x + icon_pad,
+                    tab_y + (tab_h - icon_size) / 2.0,
+                    icon_size,
+                    icon_size,
+                    &dim_brush,
+                );
+                self.ai_panel.history_button_region = Some((hb_x, tab_y, icon_btn, tab_h));
+                crate::hit_test::register_hit_region(
+                    "ai:history_button",
+                    hb_x,
+                    tab_y,
+                    icon_btn,
+                    tab_h,
+                );
 
                 cy += tab_h + 8.0;
                 let sep2 = D2D_RECT_F {
@@ -419,132 +340,7 @@ impl EditorState {
                 cy += 8.0;
             }
 
-            // 历史记录下拉面板锚点：面板改为浮层，在本函数末尾渲染，
-            // 展开时悬浮于对话内容之上，不再挤压/重叠对话消息区域与输入框
-            let history_dropdown_y = cy + 4.0; // 与上方分隔线保持 4px 间距
-
-            // ===== Playbook 策略库管理面板 =====
-            if self.ai_panel.playbook_open {
-                let pb_y = cy;
-                let item_h = 30.0f32;
-                let header_h = 24.0f32;
-                let max_items = 8usize;
-                let n = self.ai_panel.playbook_items.len().min(max_items);
-                let list_h = header_h + n as f32 * item_h + 8.0;
-                // 面板背景与边框
-                let pb_bg = color_f(0.12, 0.12, 0.14, 1.0);
-                let panel_rect = D2D_RECT_F {
-                    left: x + margin,
-                    top: pb_y,
-                    right: x + width - margin,
-                    bottom: pb_y + list_h,
-                };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &pb_bg) {
-                    target.FillRectangle(&panel_rect, &b);
-                }
-                let pb_border = color_f(0.28, 0.28, 0.32, 1.0);
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &pb_border) {
-                    target.DrawRectangle(&panel_rect, &b, 1.0, None);
-                }
-                // 标题行
-                let header: Vec<u16> =
-                    format!("已沉淀策略（共 {} 条）", self.ai_panel.playbook_items.len())
-                        .encode_utf16()
-                        .chain(Some(0))
-                        .collect();
-                target.DrawText(
-                    &header,
-                    &small_format,
-                    &D2D_RECT_F {
-                        left: x + margin + 6.0,
-                        top: pb_y + 5.0,
-                        right: x + width - margin - 6.0,
-                        bottom: pb_y + header_h,
-                    },
-                    &white_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-                // 条目列表
-                let mut iy = pb_y + header_h;
-                for (bi, bullet) in self.ai_panel.playbook_items.iter().enumerate().take(n) {
-                    let del_w = 30.0f32;
-                    let line: Vec<u16> = format!(
-                        "[{}] {}  (+{}/-{})",
-                        bullet.section, bullet.content, bullet.helpful_count, bullet.harmful_count
-                    )
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect();
-                    target.DrawText(
-                        &line,
-                        &small_format,
-                        &D2D_RECT_F {
-                            left: x + margin + 6.0,
-                            top: iy + 3.0,
-                            right: x + width - margin - del_w - 10.0,
-                            bottom: iy + item_h - 3.0,
-                        },
-                        &dim_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
-                    // 删除按钮（点击后需二次确认）
-                    let del_x = x + width - margin - del_w - 4.0;
-                    let del_rect = D2D_RECT_F {
-                        left: del_x,
-                        top: iy + 3.0,
-                        right: del_x + del_w,
-                        bottom: iy + item_h - 5.0,
-                    };
-                    let del_bg = color_f(0.45, 0.16, 0.16, 1.0);
-                    if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &del_bg) {
-                        target.FillRectangle(&del_rect, &b);
-                    }
-                    let del_text: Vec<u16> = "删".encode_utf16().chain(Some(0)).collect();
-                    target.DrawText(
-                        &del_text,
-                        &small_format,
-                        &D2D_RECT_F {
-                            left: del_x,
-                            top: iy + 4.0,
-                            right: del_x + del_w,
-                            bottom: iy + item_h - 4.0,
-                        },
-                        &white_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
-                    self.ai_panel.playbook_delete_regions.push((
-                        bi,
-                        del_x,
-                        iy + 3.0,
-                        del_w,
-                        item_h - 8.0,
-                    ));
-                    iy += item_h;
-                }
-                if self.ai_panel.playbook_items.is_empty() {
-                    let empty: Vec<u16> = "暂无沉淀策略，对话归档后会自动提炼"
-                        .encode_utf16()
-                        .chain(Some(0))
-                        .collect();
-                    target.DrawText(
-                        &empty,
-                        &small_format,
-                        &D2D_RECT_F {
-                            left: x + margin + 6.0,
-                            top: iy + 3.0,
-                            right: x + width - margin - 6.0,
-                            bottom: iy + item_h,
-                        },
-                        &dim_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
-                }
-                cy += list_h + 4.0;
-            }
+            // ===== 策略库已迁移到设置面板，此处不再渲染 =====
 
             // ===== 欢迎页/空工作区提示 =====
             let has_workspace = self.current_folder.is_some() || self.content.file_path.is_some();
@@ -648,7 +444,7 @@ impl EditorState {
             let content_left = x + margin;
             let content_right = x + width - margin;
             let seg_pad = 6.0f32;
-            let label_h = 14.0f32;
+            let _label_h = 14.0f32;
             let msg_gap = 12.0f32;
             let seg_gap = 4.0f32;
             // 自动滚到底：吸附底部时对齐到最新消息（用上一帧的最大滚动量）
@@ -676,29 +472,9 @@ impl EditorState {
                 let is_user = msg.role == crate::ai_panel::AiRole::User;
                 let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
 
-                // 角色标签（Tool 消息不显示角色标签，渲染为简洁的工具结果行）
+                // 角色标签已移除：AI 消息直接显示文本，用户消息用气泡框区分
                 if !is_tool {
-                    let label = if is_user { "你" } else { "AI" };
-                    let label_color: &ID2D1SolidColorBrush =
-                        if is_user { &accent_brush } else { &green_brush };
-                    if msg_y + label_h >= chat_top && msg_y <= chat_bottom {
-                        let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                        let label_rect = D2D_RECT_F {
-                            left: content_left + 4.0,
-                            top: msg_y,
-                            right: content_right,
-                            bottom: msg_y + label_h,
-                        };
-                        target.DrawText(
-                            &label_wide,
-                            &small_format,
-                            &label_rect,
-                            label_color,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                    }
-                    msg_y += label_h;
+                    // 不再渲染"你"/"AI"文字标签，通过气泡样式区分
                 }
 
                 // 思考过程（DeepSeek 深度思考 reasoning_content）：独立分类、可折叠展示。
@@ -1181,22 +957,27 @@ impl EditorState {
                     } else {
                         content_left
                     };
-                    let seg_bg: &ID2D1SolidColorBrush = if *is_code {
-                        &code_bg_brush
-                    } else if is_user {
-                        &user_bg_brush
-                    } else if is_tool {
-                        &tool_bg_brush
-                    } else {
-                        &assistant_bg_brush
-                    };
-                    let seg_rect = D2D_RECT_F {
-                        left: seg_left,
-                        top: msg_y,
-                        right: content_right,
-                        bottom: msg_y + seg_h,
-                    };
-                    fill_round_rect(target, &seg_rect, 6.0, seg_bg);
+                    // AI 普通文本段不画气泡背景（直接显示文字），
+                    // 用户/代码/工具消息保留气泡背景
+                    let is_ai_plain_text = !is_user && !is_tool && !*is_code;
+                    if !is_ai_plain_text {
+                        let seg_bg: &ID2D1SolidColorBrush = if *is_code {
+                            &code_bg_brush
+                        } else if is_user {
+                            &user_bg_brush
+                        } else if is_tool {
+                            &tool_bg_brush
+                        } else {
+                            &assistant_bg_brush
+                        };
+                        let seg_rect = D2D_RECT_F {
+                            left: seg_left,
+                            top: msg_y,
+                            right: content_right,
+                            bottom: msg_y + seg_h,
+                        };
+                        fill_round_rect(target, &seg_rect, 6.0, seg_bg);
+                    }
 
                     let seg_fg: &ID2D1SolidColorBrush = if *is_code {
                         &code_text_brush
@@ -1888,787 +1669,6 @@ impl EditorState {
                 menu_btn_size - 4.0,
                 &dim_brush,
             );
-
-            // ===== 历史记录下拉面板（浮层：最后渲染，覆盖于对话内容之上，不挤压布局）=====
-            if self.ai_panel.history_open || self.ai_panel.history_anim > 0.0 {
-                let hist_y = history_dropdown_y;
-                let item_h = 30.0f32;
-                let header_h = 20.0f32;
-                let filter_h = 22.0f32;
-                let footer_h = 22.0f32;
-                let panel_left = x + margin;
-                let panel_right = x + width - margin;
-                let now = crate::ai_panel::now_secs();
-                let detail_mode = self.ai_panel.history_detail_id.is_some();
-                let page_indices = if detail_mode {
-                    Vec::new()
-                } else {
-                    self.ai_panel.history_page_indices()
-                };
-                let empty_hint_h = if !detail_mode && page_indices.is_empty() {
-                    20.0
-                } else {
-                    0.0
-                };
-                // 内容完整高度（自适应：随条目/消息数量增长）
-                let content_h = if detail_mode {
-                    let msg_n = self
-                        .ai_panel
-                        .history_detail_conv
-                        .as_ref()
-                        .map(|c| c.messages.len().min(8))
-                        .unwrap_or(1);
-                    header_h + 18.0 + msg_n as f32 * 24.0 + 12.0
-                } else {
-                    header_h
-                        + filter_h
-                        + page_indices.len() as f32 * item_h
-                        + empty_hint_h
-                        + footer_h
-                        + 8.0
-                };
-                // 可用高度：底部为输入框预留空间，并与输入框保持 6px 间距
-                // （响应式：窗口/面板越矮，下拉框越矮并转为内部滚动）
-                let max_bottom = y + height - input_area_h - 8.0 - 6.0;
-                let full_h = content_h.min((max_bottom - hist_y).max(0.0));
-                // 展开/收起动画（ease-out cubic，约 100ms）
-                let anim_t = self.ai_panel.history_anim.clamp(0.0, 1.0);
-                let ease = 1.0 - (1.0 - anim_t) * (1.0 - anim_t) * (1.0 - anim_t);
-                let shown_h = full_h * ease;
-                if shown_h >= 2.0 {
-                    // 内容超高时内部滚动，而非无限制扩展
-                    let max_scroll = (content_h - full_h).max(0.0);
-                    self.ai_panel.history_max_scroll = max_scroll;
-                    self.ai_panel.history_scroll =
-                        self.ai_panel.history_scroll.clamp(0.0, max_scroll);
-                    let scroll = self.ai_panel.history_scroll;
-                    // 面板整体命中区（供滚轮路由与外部点击判定）
-                    self.ai_panel.history_panel_region =
-                        Some((panel_left, hist_y, panel_right - panel_left, shown_h));
-                    crate::hit_test::register_hit_region(
-                        "ai:history_panel",
-                        panel_left,
-                        hist_y,
-                        panel_right - panel_left,
-                        shown_h,
-                    );
-                    // 面板背景与边框（高度随动画）
-                    let hist_rect = D2D_RECT_F {
-                        left: panel_left,
-                        top: hist_y,
-                        right: panel_right,
-                        bottom: hist_y + shown_h,
-                    };
-                    if let Ok(hb) = self
-                        .render_ctx
-                        .brush_cache
-                        .get_brush(target, &color_f(0.12, 0.12, 0.14, 1.0))
-                    {
-                        target.FillRectangle(&hist_rect, &hb);
-                    }
-                    if let Ok(br) = self
-                        .render_ctx
-                        .brush_cache
-                        .get_brush(target, &color_f(0.28, 0.28, 0.32, 1.0))
-                    {
-                        target.DrawRectangle(&hist_rect, &br, 1.0, None);
-                    }
-                    // 命中区裁剪助手：被动画/滚动隐藏的部分不响应点击
-                    let clamp_region = |rx: f32, ry: f32, rw: f32, rh: f32| {
-                        let top = ry.max(hist_y);
-                        let bottom = (ry + rh).min(hist_y + shown_h);
-                        if bottom > top {
-                            Some((rx, top, rw, bottom - top))
-                        } else {
-                            None
-                        }
-                    };
-                    // 内容裁剪到面板可见区域，内容随滚动偏移
-                    target.PushAxisAlignedClip(&hist_rect, D2D1_ANTIALIAS_MODE_ALIASED);
-                    let mut iy = hist_y + 4.0 - scroll;
-
-                    if detail_mode {
-                        // —— 详情视图：返回 / 恢复按钮 + 元信息 + 消息预览 ——
-                        let btn_h = 16.0f32;
-                        // ‹ 返回
-                        {
-                            let bw = 46.0f32;
-                            let bx = panel_left + 4.0;
-                            if let Ok(b) = self
-                                .render_ctx
-                                .brush_cache
-                                .get_brush(target, &color_f(0.20, 0.21, 0.24, 1.0))
-                            {
-                                target.FillRectangle(
-                                    &D2D_RECT_F {
-                                        left: bx,
-                                        top: iy,
-                                        right: bx + bw,
-                                        bottom: iy + btn_h,
-                                    },
-                                    &b,
-                                );
-                            }
-                            let t: Vec<u16> = "‹ 返回".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: bx + 5.0,
-                                    top: iy + 1.0,
-                                    right: bx + bw,
-                                    bottom: iy + btn_h,
-                                },
-                                &white_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            self.ai_panel.history_detail_back_region =
-                                clamp_region(bx, iy, bw, btn_h);
-                            if let Some((rx, ry, rw, rh)) = self.ai_panel.history_detail_back_region
-                            {
-                                crate::hit_test::register_hit_region(
-                                    "ai:history_detail_back",
-                                    rx,
-                                    ry,
-                                    rw,
-                                    rh,
-                                );
-                            }
-                        }
-                        // 恢复此对话
-                        {
-                            let bw = 66.0f32;
-                            let bx = panel_right - 4.0 - bw;
-                            target.FillRectangle(
-                                &D2D_RECT_F {
-                                    left: bx,
-                                    top: iy,
-                                    right: bx + bw,
-                                    bottom: iy + btn_h,
-                                },
-                                &accent_brush,
-                            );
-                            let t: Vec<u16> = "恢复此对话".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: bx + 6.0,
-                                    top: iy + 1.0,
-                                    right: bx + bw,
-                                    bottom: iy + btn_h,
-                                },
-                                &white_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            self.ai_panel.history_detail_restore_region =
-                                clamp_region(bx, iy, bw, btn_h);
-                            if let Some((rx, ry, rw, rh)) =
-                                self.ai_panel.history_detail_restore_region
-                            {
-                                crate::hit_test::register_hit_region(
-                                    "ai:history_detail_restore",
-                                    rx,
-                                    ry,
-                                    rw,
-                                    rh,
-                                );
-                            }
-                        }
-                        iy += header_h;
-                        // 元信息行：标题 (N 条) · 模式 · 相对时间
-                        let meta_line = self
-                            .ai_panel
-                            .history_detail_id
-                            .as_ref()
-                            .and_then(|id| self.ai_panel.history.iter().find(|m| &m.id == id))
-                            .map(|m| {
-                                let mode = if m.mode.is_empty() {
-                                    "-"
-                                } else {
-                                    m.mode.as_str()
-                                };
-                                format!(
-                                    "{}  ({} 条)  {}  {}",
-                                    m.title,
-                                    m.message_count,
-                                    mode,
-                                    crate::ai_panel::relative_time(m.updated_at, now)
-                                )
-                            })
-                            .unwrap_or_default();
-                        let ml: Vec<u16> = meta_line.encode_utf16().chain(Some(0)).collect();
-                        target.DrawText(
-                            &ml,
-                            &small_format,
-                            &D2D_RECT_F {
-                                left: panel_left + 6.0,
-                                top: iy,
-                                right: panel_right - 6.0,
-                                bottom: iy + 14.0,
-                            },
-                            &white_brush,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                        iy += 18.0;
-                        // 消息预览（最多 8 条，单条截断）
-                        if let Some(conv) = self.ai_panel.history_detail_conv.as_ref() {
-                            for msg in conv.messages.iter().take(8) {
-                                let role = match msg.role {
-                                    crate::ai_panel::AiRole::User => "我",
-                                    crate::ai_panel::AiRole::Assistant => "AI",
-                                    crate::ai_panel::AiRole::System => "系统",
-                                    crate::ai_panel::AiRole::Tool => "工具",
-                                };
-                                let content: String = msg.content.trim().chars().take(40).collect();
-                                let line: Vec<u16> = format!("{}: {}", role, content)
-                                    .encode_utf16()
-                                    .chain(Some(0))
-                                    .collect();
-                                target.DrawText(
-                                    &line,
-                                    &small_format,
-                                    &D2D_RECT_F {
-                                        left: panel_left + 6.0,
-                                        top: iy + 4.0,
-                                        right: panel_right - 6.0,
-                                        bottom: iy + 22.0,
-                                    },
-                                    &dim_brush,
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                    DWRITE_MEASURING_MODE_NATURAL,
-                                );
-                                iy += 24.0;
-                            }
-                        } else {
-                            let t: Vec<u16> = "（无法加载会话内容）"
-                                .encode_utf16()
-                                .chain(Some(0))
-                                .collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: panel_left + 6.0,
-                                    top: iy + 4.0,
-                                    right: panel_right - 6.0,
-                                    bottom: iy + 22.0,
-                                },
-                                &dim_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                        }
-                    } else {
-                        // —— 列表视图 ——
-                        // 头部：「仅当前工作区」开关 + 「清空」按钮
-                        {
-                            let tgl_text: Vec<u16> = if self.ai_panel.history_workspace_only {
-                                "[√] 仅当前工作区"
-                            } else {
-                                "[  ] 仅当前工作区"
-                            }
-                            .encode_utf16()
-                            .chain(Some(0))
-                            .collect();
-                            target.DrawText(
-                                &tgl_text,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: panel_left + 6.0,
-                                    top: iy + 2.0,
-                                    right: panel_right - 50.0,
-                                    bottom: iy + header_h,
-                                },
-                                &dim_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            self.ai_panel.history_ws_toggle_region = clamp_region(
-                                panel_left + 2.0,
-                                iy,
-                                panel_right - panel_left - 50.0,
-                                header_h,
-                            );
-                            if let Some((rx, ry, rw, rh)) = self.ai_panel.history_ws_toggle_region {
-                                crate::hit_test::register_hit_region(
-                                    "ai:history_ws_toggle",
-                                    rx,
-                                    ry,
-                                    rw,
-                                    rh,
-                                );
-                            }
-                            // 清空按钮
-                            let cw = 40.0f32;
-                            let cx = panel_right - 4.0 - cw;
-                            if let Ok(b) = self
-                                .render_ctx
-                                .brush_cache
-                                .get_brush(target, &color_f(0.45, 0.16, 0.16, 1.0))
-                            {
-                                target.FillRectangle(
-                                    &D2D_RECT_F {
-                                        left: cx,
-                                        top: iy + 1.0,
-                                        right: cx + cw,
-                                        bottom: iy + header_h - 2.0,
-                                    },
-                                    &b,
-                                );
-                            }
-                            let ct: Vec<u16> = "清空".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &ct,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: cx,
-                                    top: iy + 3.0,
-                                    right: cx + cw,
-                                    bottom: iy + header_h - 2.0,
-                                },
-                                &white_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            self.ai_panel.history_clear_all_region =
-                                clamp_region(cx, iy + 1.0, cw, header_h - 3.0);
-                            if let Some((rx, ry, rw, rh)) = self.ai_panel.history_clear_all_region {
-                                crate::hit_test::register_hit_region(
-                                    "ai:history_clear_all",
-                                    rx,
-                                    ry,
-                                    rw,
-                                    rh,
-                                );
-                            }
-                            iy += header_h;
-                        }
-                        // 筛选行：时间筛选 + 类型筛选
-                        {
-                            let btn_h = 17.0f32;
-                            let mut fx = panel_left + 4.0;
-                            for (fi, f) in
-                                crate::ai_panel::HistoryTimeFilter::ALL.iter().enumerate()
-                            {
-                                let bw = 34.0f32;
-                                let active = self.ai_panel.history_time_filter == *f;
-                                let bg = if active {
-                                    color_f(0.0, 0.47, 0.83, 1.0)
-                                } else {
-                                    color_f(0.20, 0.21, 0.24, 1.0)
-                                };
-                                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
-                                    target.FillRectangle(
-                                        &D2D_RECT_F {
-                                            left: fx,
-                                            top: iy,
-                                            right: fx + bw,
-                                            bottom: iy + btn_h,
-                                        },
-                                        &b,
-                                    );
-                                }
-                                let t: Vec<u16> = f.label().encode_utf16().chain(Some(0)).collect();
-                                target.DrawText(
-                                    &t,
-                                    &small_format,
-                                    &D2D_RECT_F {
-                                        left: fx,
-                                        top: iy + 2.0,
-                                        right: fx + bw,
-                                        bottom: iy + btn_h,
-                                    },
-                                    &white_brush,
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                    DWRITE_MEASURING_MODE_NATURAL,
-                                );
-                                if let Some(r) = clamp_region(fx, iy, bw, btn_h) {
-                                    self.ai_panel
-                                        .history_time_filter_regions
-                                        .push((fi, r.0, r.1, r.2, r.3));
-                                    crate::hit_test::register_hit_region(
-                                        format!("ai:history_time_filter:{}", f.label()),
-                                        r.0,
-                                        r.1,
-                                        r.2,
-                                        r.3,
-                                    );
-                                }
-                                fx += bw + 3.0;
-                            }
-                            fx += 5.0;
-                            for (fi, tf) in crate::ai_panel::HISTORY_TYPE_FILTERS.iter().enumerate()
-                            {
-                                let label = tf.unwrap_or("全部");
-                                let bw = 38.0f32;
-                                let active = self.ai_panel.history_type_filter.as_deref() == *tf;
-                                let bg = if active {
-                                    color_f(0.0, 0.47, 0.83, 1.0)
-                                } else {
-                                    color_f(0.20, 0.21, 0.24, 1.0)
-                                };
-                                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
-                                    target.FillRectangle(
-                                        &D2D_RECT_F {
-                                            left: fx,
-                                            top: iy,
-                                            right: fx + bw,
-                                            bottom: iy + btn_h,
-                                        },
-                                        &b,
-                                    );
-                                }
-                                let t: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                                target.DrawText(
-                                    &t,
-                                    &small_format,
-                                    &D2D_RECT_F {
-                                        left: fx,
-                                        top: iy + 2.0,
-                                        right: fx + bw,
-                                        bottom: iy + btn_h,
-                                    },
-                                    &white_brush,
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                    DWRITE_MEASURING_MODE_NATURAL,
-                                );
-                                if let Some(r) = clamp_region(fx, iy, bw, btn_h) {
-                                    self.ai_panel
-                                        .history_type_filter_regions
-                                        .push((fi, r.0, r.1, r.2, r.3));
-                                    crate::hit_test::register_hit_region(
-                                        format!("ai:history_type_filter:{}", label),
-                                        r.0,
-                                        r.1,
-                                        r.2,
-                                        r.3,
-                                    );
-                                }
-                                fx += bw + 3.0;
-                            }
-                            iy += filter_h;
-                        }
-                        // 当前页条目
-                        for (ii, hi) in page_indices.iter().copied().enumerate() {
-                            let hmeta = self.ai_panel.history[hi].clone();
-                            let del_w = 26.0f32;
-                            let item_rect = D2D_RECT_F {
-                                left: panel_left + 2.0,
-                                top: iy,
-                                right: panel_right - 2.0,
-                                bottom: iy + item_h - 2.0,
-                            };
-                            // 悬停高亮
-                            if self.ai_panel.hover_tab == Some(hi) {
-                                if let Ok(hl) = self
-                                    .render_ctx
-                                    .brush_cache
-                                    .get_brush(target, &color_f(0.18, 0.20, 0.26, 1.0))
-                                {
-                                    target.FillRectangle(&item_rect, &hl);
-                                }
-                            }
-                            // 标题：直接摘要用户问题（行业标准：不显示消息数）
-                            let title_text: Vec<u16> =
-                                hmeta.title.encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &title_text,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: item_rect.left + 6.0,
-                                    top: iy + 2.0,
-                                    right: item_rect.right - del_w - 8.0,
-                                    bottom: iy + 15.0,
-                                },
-                                &white_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            // 第二行：相对时间 + 模式（灰色小字）
-                            let mode = if hmeta.mode.is_empty() {
-                                "-".to_string()
-                            } else {
-                                hmeta.mode.clone()
-                            };
-                            let sub_text: Vec<u16> = format!(
-                                "{}  ·  {}",
-                                crate::ai_panel::relative_time(hmeta.updated_at, now),
-                                mode
-                            )
-                            .encode_utf16()
-                            .chain(Some(0))
-                            .collect();
-                            target.DrawText(
-                                &sub_text,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: item_rect.left + 6.0,
-                                    top: iy + 15.0,
-                                    right: item_rect.right - del_w - 8.0,
-                                    bottom: iy + 28.0,
-                                },
-                                &dim_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            // 删除按钮
-                            let dx = item_rect.right - 4.0 - del_w;
-                            if let Ok(b) = self
-                                .render_ctx
-                                .brush_cache
-                                .get_brush(target, &color_f(0.45, 0.16, 0.16, 1.0))
-                            {
-                                target.FillRectangle(
-                                    &D2D_RECT_F {
-                                        left: dx,
-                                        top: iy + 5.0,
-                                        right: dx + del_w,
-                                        bottom: iy + item_h - 7.0,
-                                    },
-                                    &b,
-                                );
-                            }
-                            let dt: Vec<u16> = "删".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &dt,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: dx,
-                                    top: iy + 7.0,
-                                    right: dx + del_w,
-                                    bottom: iy + item_h - 7.0,
-                                },
-                                &white_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            if let Some(r) = clamp_region(dx, iy + 5.0, del_w, item_h - 12.0) {
-                                self.ai_panel
-                                    .history_delete_regions
-                                    .push((hi, r.0, r.1, r.2, r.3));
-                                crate::hit_test::register_hit_region(
-                                    format!("ai:history_delete:{}", ii),
-                                    r.0,
-                                    r.1,
-                                    r.2,
-                                    r.3,
-                                );
-                            }
-                            if let Some(r) = clamp_region(
-                                item_rect.left,
-                                iy,
-                                item_rect.right - item_rect.left - del_w - 6.0,
-                                item_h - 2.0,
-                            ) {
-                                self.ai_panel
-                                    .history_item_regions
-                                    .push((hi, r.0, r.1, r.2, r.3));
-                                crate::hit_test::register_hit_region(
-                                    format!("ai:history_item:{}", ii),
-                                    r.0,
-                                    r.1,
-                                    r.2,
-                                    r.3,
-                                );
-                            }
-                            iy += item_h;
-                        }
-                        if page_indices.is_empty() {
-                            let t: Vec<u16> = "暂无符合条件的历史记录"
-                                .encode_utf16()
-                                .chain(Some(0))
-                                .collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: panel_left + 6.0,
-                                    top: iy + 3.0,
-                                    right: panel_right - 6.0,
-                                    bottom: iy + 18.0,
-                                },
-                                &dim_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            iy += empty_hint_h;
-                        }
-                        // 页脚：分页
-                        {
-                            let pc = self.ai_panel.history_page_count().max(1);
-                            let page = self.ai_panel.history_page + 1;
-                            let pw = 52.0f32;
-                            let ph = 17.0f32;
-                            // ‹ 上一页
-                            let prev_enabled = self.ai_panel.history_page > 0;
-                            let px = panel_left + 4.0;
-                            let prev_bg = if prev_enabled {
-                                color_f(0.20, 0.21, 0.24, 1.0)
-                            } else {
-                                color_f(0.14, 0.14, 0.16, 1.0)
-                            };
-                            if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &prev_bg) {
-                                target.FillRectangle(
-                                    &D2D_RECT_F {
-                                        left: px,
-                                        top: iy,
-                                        right: px + pw,
-                                        bottom: iy + ph,
-                                    },
-                                    &b,
-                                );
-                            }
-                            let t: Vec<u16> = "‹ 上一页".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: px + 6.0,
-                                    top: iy + 2.0,
-                                    right: px + pw,
-                                    bottom: iy + ph,
-                                },
-                                if prev_enabled {
-                                    &white_brush
-                                } else {
-                                    &dim_brush
-                                },
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            if prev_enabled {
-                                self.ai_panel.history_page_prev_region =
-                                    clamp_region(px, iy, pw, ph);
-                                if let Some((rx, ry, rw, rh)) =
-                                    self.ai_panel.history_page_prev_region
-                                {
-                                    crate::hit_test::register_hit_region(
-                                        "ai:history_page_prev",
-                                        rx,
-                                        ry,
-                                        rw,
-                                        rh,
-                                    );
-                                }
-                            }
-                            // 页码
-                            let pi: Vec<u16> = format!("{}/{}", page, pc)
-                                .encode_utf16()
-                                .chain(Some(0))
-                                .collect();
-                            target.DrawText(
-                                &pi,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: px + pw + 6.0,
-                                    top: iy + 2.0,
-                                    right: panel_right - pw - 10.0,
-                                    bottom: iy + ph,
-                                },
-                                &dim_brush,
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            // 下一页 ›
-                            let next_enabled = page < pc;
-                            let nx = panel_right - 4.0 - pw;
-                            let next_bg = if next_enabled {
-                                color_f(0.20, 0.21, 0.24, 1.0)
-                            } else {
-                                color_f(0.14, 0.14, 0.16, 1.0)
-                            };
-                            if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &next_bg) {
-                                target.FillRectangle(
-                                    &D2D_RECT_F {
-                                        left: nx,
-                                        top: iy,
-                                        right: nx + pw,
-                                        bottom: iy + ph,
-                                    },
-                                    &b,
-                                );
-                            }
-                            let t: Vec<u16> = "下一页 ›".encode_utf16().chain(Some(0)).collect();
-                            target.DrawText(
-                                &t,
-                                &small_format,
-                                &D2D_RECT_F {
-                                    left: nx + 6.0,
-                                    top: iy + 2.0,
-                                    right: nx + pw,
-                                    bottom: iy + ph,
-                                },
-                                if next_enabled {
-                                    &white_brush
-                                } else {
-                                    &dim_brush
-                                },
-                                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                DWRITE_MEASURING_MODE_NATURAL,
-                            );
-                            if next_enabled {
-                                self.ai_panel.history_page_next_region =
-                                    clamp_region(nx, iy, pw, ph);
-                                if let Some((rx, ry, rw, rh)) =
-                                    self.ai_panel.history_page_next_region
-                                {
-                                    crate::hit_test::register_hit_region(
-                                        "ai:history_page_next",
-                                        rx,
-                                        ry,
-                                        rw,
-                                        rh,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    target.PopAxisAlignedClip();
-                    // 滚动条：内容超出可视高度时显示轨道与滑块
-                    if max_scroll > 1.0 {
-                        let sb_w = 4.0f32;
-                        let sb_x = panel_right - sb_w - 2.0;
-                        let track_top = hist_y + 3.0;
-                        let track_h = (shown_h - 6.0).max(8.0);
-                        if let Ok(tb) = self
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &color_f(0.20, 0.20, 0.23, 1.0))
-                        {
-                            target.FillRectangle(
-                                &D2D_RECT_F {
-                                    left: sb_x,
-                                    top: track_top,
-                                    right: sb_x + sb_w,
-                                    bottom: track_top + track_h,
-                                },
-                                &tb,
-                            );
-                        }
-                        let thumb_h = (track_h * full_h / content_h).max(14.0).min(track_h);
-                        let thumb_y = track_top + (track_h - thumb_h) * (scroll / max_scroll);
-                        if let Ok(tb) = self
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &color_f(0.45, 0.46, 0.52, 1.0))
-                        {
-                            target.FillRectangle(
-                                &D2D_RECT_F {
-                                    left: sb_x,
-                                    top: thumb_y,
-                                    right: sb_x + sb_w,
-                                    bottom: thumb_y + thumb_h,
-                                },
-                                &tb,
-                            );
-                        }
-                    }
-                }
-            }
         }
     }
 }

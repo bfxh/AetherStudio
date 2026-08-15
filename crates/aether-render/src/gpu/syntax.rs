@@ -44,6 +44,8 @@ pub struct GpuSyntaxClassifier {
     context: GpuComputeContext,
 
     // 语言特定的语法模式
+    // 注意：此缓冲区必须保持存活，以确保 GPU 资源不被释放
+    #[allow(dead_code)]
     patterns_buffer: ID3D11Buffer,
     patterns_srv: ID3D11ShaderResourceView,
 

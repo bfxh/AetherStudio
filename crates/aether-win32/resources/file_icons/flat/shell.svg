@@ -1,7 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="Shell file icon (flat)">
   <title>Shell File (Flat)</title>
-  <path d="M5 3 L14 3 L20 9 L20 20 L4 20 Z" fill="#4EAA25"/>
-  <path d="M14 3 L20 9 L14 9 Z" fill="#FFFFFF" fill-opacity="0.5"/>
-  <path d="M15 11 L15 12.5 L13 12.5 L13 14.5 L15 14.5 L15 18 L12 18 L12 16.5 L14 16.5 L14 15.5 L12 15.5 L12 11.5 Z" fill="#FFFFFF"/>
-  <rect x="13" y="10" width="1" height="10" fill="#FFFFFF"/>
+  <!-- File body: rounded rectangle with corner fold -->
+  <path d="M5.5 2.5 L14.5 2.5 L20.5 8.5 L20.5 20.5 Q20.5 21.5 19.5 21.5 L5.5 21.5 Q4.5 21.5 4.5 20.5 L4.5 3.5 Q4.5 2.5 5.5 2.5 Z"
+        fill="#4EAA25"/>
+  <!-- Corner fold -->
+  <path d="M14.5 2.5 L20.5 8.5 L15.5 8.5 Q14.5 8.5 14.5 7.5 Z"
+        fill="#FFFFFF" fill-opacity="0.35"/>
+  <!-- Shell $ symbol -->
+  <path d="M12 11 L12 12.5 L10 12.5 L10 14.5 L12 14.5 L12 18 L9 18 L9 16.5 L11 16.5 L11 15.5 L9 15.5 L9 11.5 Z"
+        fill="#FFFFFF"/>
+  <rect x="11" y="10" width="1" height="10" fill="#FFFFFF"/>
 </svg>

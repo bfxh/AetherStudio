@@ -9,6 +9,8 @@ impl EditorState {
         if let Some(crate::tabs::Tab::File(content)) = self.tab_bar.tabs.get_mut(index) {
             std::mem::swap(&mut self.content, content);
         }
+        // 同步 Markdown 预览模式到 EditorState 级别（渲染分支读取）
+        self.markdown_preview = self.content.markdown_preview;
     }
     /// 获取当前活动标签页（只读）
     pub fn current_tab(&self) -> &Tab {
@@ -66,6 +68,18 @@ impl EditorState {
             .tabs
             .get(self.tab_bar.active_tab)
             .and_then(|t| t.file_path())
+    }
+    /// 切换 Markdown 预览模式（仅当当前标签页是 Markdown 文件时有效）
+    pub fn toggle_markdown_preview(&mut self) {
+        if self.content.language == Language::Markdown {
+            self.content.markdown_preview = !self.content.markdown_preview;
+            self.markdown_preview = self.content.markdown_preview;
+            self.status_message = if self.markdown_preview {
+                "Markdown 预览模式".to_string()
+            } else {
+                "Markdown 编辑模式".to_string()
+            };
+        }
     }
     /// 查找设置 tab 的索引
     pub fn find_settings_tab(&self) -> Option<usize> {
@@ -592,17 +606,35 @@ impl EditorState {
         let visible_width = (tab_bar_width - left_padding - plus_area).max(0.0);
         (total_tabs_width - visible_width).max(0.0)
     }
-    /// SubTask 7.5: 滚动标签栏水平偏移，返回是否实际变化（用于决定是否重绘）。
+    /// 滚动标签栏水平偏移（平滑滚动版）。
     ///
-    /// `delta` 为原始滚轮 delta（通常 ±120），内部按 `delta * 8.0` 转换为像素增量，
-    /// 然后 clamp 到 `[0, max_scroll]`。
+    /// 滚轮事件只更新 `tab_scroll_target`，实际渲染值 `tab_scroll_x` 在动画帧中
+    /// 通过指数衰减（lerp）向 target 逼近，实现平滑滚动效果。
+    /// 返回是否 target 发生了变化（用于决定是否启动动画定时器）。
     pub(crate) fn scroll_tab_bar(&mut self, delta: f32, tab_bar_width: f32) -> bool {
-        let old = self.tab_bar.tab_scroll_x;
+        let old = self.tab_bar.tab_scroll_target;
         let max_scroll = self.tab_bar_max_scroll(tab_bar_width);
-        self.tab_bar.tab_scroll_x =
-            (self.tab_bar.tab_scroll_x + delta * 8.0).clamp(0.0, max_scroll);
-        (self.tab_bar.tab_scroll_x - old).abs() > 0.01
+        // 将滚轮 delta 转换为像素增量（每格 120 → 约 3 个标签宽度）
+        let pixel_delta = delta / 120.0 * 200.0;
+        self.tab_bar.tab_scroll_target =
+            (self.tab_bar.tab_scroll_target + pixel_delta).clamp(0.0, max_scroll);
+        (self.tab_bar.tab_scroll_target - old).abs() > 0.01
     }
+
+    /// 动画帧中调用：将 tab_scroll_x 向 tab_scroll_target 逼近。
+    /// 返回是否仍在动画中（需要继续请求下一帧）。
+    pub(crate) fn tick_tab_scroll(&mut self) -> bool {
+        let diff = self.tab_bar.tab_scroll_target - self.tab_bar.tab_scroll_x;
+        if diff.abs() < 0.5 {
+            // 到达目标，直接对齐
+            self.tab_bar.tab_scroll_x = self.tab_bar.tab_scroll_target;
+            return false;
+        }
+        // 指数衰减：每帧移动剩余距离的 25%（约 60fps 时 ~5 帧到达）
+        self.tab_bar.tab_scroll_x += diff * 0.25;
+        true
+    }
+
     /// 打开设置标签页（作为通用 tab 插入到标签栏）
     pub fn open_settings_tab(&mut self) {
         self.settings_panel.apply_settings(&self.app_settings);

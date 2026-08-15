@@ -39,6 +39,18 @@ impl EditorState {
         height: f32,
     ) {
         unsafe {
+            // 裁剪标签栏区域，防止标签渲染到右侧面板
+            let clip_rect = D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            };
+            target.PushAxisAlignedClip(
+                &clip_rect,
+                windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED,
+            );
+
             let bg_color = if self.theme.glass_enabled {
                 self.theme.tab_inactive_bg
             } else {
@@ -381,6 +393,9 @@ impl EditorState {
                 bottom: y + height,
             };
             target.FillRectangle(&bottom_line, &border_brush);
+
+            // 恢复裁剪区域
+            target.PopAxisAlignedClip();
         }
     }
 }

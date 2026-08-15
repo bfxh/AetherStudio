@@ -46,7 +46,7 @@ impl ActivityBarView {
             ActivityBarView::Explorer => "资源管理器",
             ActivityBarView::SourceControl => "源代码管理",
             ActivityBarView::Terminal => "终端",
-            ActivityBarView::RemoteManager => "SSH 远程管理",
+            ActivityBarView::RemoteManager => "远程资源管理器",
             ActivityBarView::AiAssistant => "AI 助手",
         }
     }
@@ -125,7 +125,7 @@ impl SidebarContent {
 /// 布局常量
 pub const TITLE_BAR_HEIGHT: f32 = 28.0;
 pub const MENU_BAR_HEIGHT: f32 = 0.0; // 菜单栏合并到标题栏，高度为0
-pub const ACTIVITY_BAR_WIDTH: f32 = 40.0;
+pub const ACTIVITY_BAR_WIDTH: f32 = 32.0;
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 pub const STATUS_BAR_HEIGHT: f32 = 16.0;
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
@@ -214,7 +214,8 @@ pub const FILE_TREE_ROW_HEIGHT: f32 = 15.0;
 pub const FILE_TREE_INDENT: f32 = 12.0;
 /// 文件树章节标题栏（"资源管理器"）高度（逻辑像素），
 /// 渲染、file_tree_list_start_y、输入框悬停、IME 定位共用。
-pub const FILE_TREE_HEADER_HEIGHT: f32 = 24.0;
+/// 与 TAB_BAR_HEIGHT 保持一致，确保资源管理器标题栏、编辑器标签栏、AI面板顶部三区域高度对齐。
+pub const FILE_TREE_HEADER_HEIGHT: f32 = 30.0;
 /// 文件树 chevron/文件图标列宽（逻辑像素），渲染与命中测试共用
 pub const FILE_TREE_ARROW_COL: f32 = 12.0;
 

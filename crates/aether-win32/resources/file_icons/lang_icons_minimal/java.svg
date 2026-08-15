@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="#007396" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 小巧咖啡杯 -->
+  <path d="M10.5 6h0.6a2 2 0 1 1 0 4h-0.6" />
+  <path d="M3.5 6h7v4.5a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V6z" />
+  <line x1="4.5" y1="3.5" x2="4.5" y2="4.8" />
+  <line x1="7" y1="3.5" x2="7" y2="4.8" />
+  <line x1="9.5" y1="3.5" x2="9.5" y2="4.8" />
+</svg>

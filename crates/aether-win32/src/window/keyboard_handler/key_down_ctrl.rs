@@ -269,6 +269,17 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 }
             });
         }
+        // Ctrl+Shift+V: 切换 Markdown 预览模式
+        VK_V if shift => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    st.toggle_markdown_preview();
+                    drop(st);
+                    invalidate_window(hwnd);
+                }
+            });
+        }
         _ => {}
     }
 }

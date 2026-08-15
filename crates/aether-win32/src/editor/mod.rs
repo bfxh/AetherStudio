@@ -130,8 +130,10 @@ pub struct TabBarState {
     pub(crate) tab_layouts: Vec<TabLayout>,
     /// 鼠标悬停的标签索引
     pub(crate) hover_tab: Option<usize>,
-    /// 标签栏滚动偏移
+    /// 标签栏滚动偏移（当前渲染值，平滑动画中逐帧逼近 target）
     pub(crate) tab_scroll_x: f32,
+    /// 标签栏滚动目标值（滚轮事件直接更新此值，动画帧中 tab_scroll_x 向其逼近）
+    pub(crate) tab_scroll_target: f32,
     /// 标签栏右侧 "+" 新建按钮的命中区域（逻辑像素，相对于窗口左上角）
     /// 由 `update_tab_layouts` 在每帧渲染前更新；点击检测在 `handle_tab_bar_click` 中使用。
     pub(crate) plus_button_rect: Option<(f32, f32, f32, f32)>,
@@ -605,6 +607,24 @@ pub struct EditorState {
     pub image_offset_x: f32,
     /// 图片预览缩放后的垂直偏移
     pub image_offset_y: f32,
+    /// 工作区 AI 会话映射：工作区路径哈希 -> 该工作区的完整 AI 面板快照
+    /// 用于切换工作区时隔离并恢复对应的 AI 对话标签页组
+    pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
+    /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
+    pub current_workspace_ai_session: Option<String>,
+    /// Markdown 预览模式：true 时当前标签页渲染 Markdown 预览而非编辑器
+    pub markdown_preview: bool,
+    /// Markdown 预览切换按钮区域（渲染时计算，点击时命中检测）
+    pub markdown_toggle_btn: Option<crate::layout::Region>,
+}
+
+/// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
+#[derive(Clone, Debug)]
+pub struct WorkspaceAiSessionSnapshot {
+    /// 所有打开的对话标签页
+    pub conversations: Vec<crate::ai_panel::AiConversation>,
+    /// 当前激活的标签页索引
+    pub active: usize,
 }
 
 /// Task 8.4: 标签重排核心逻辑（自由函数，可独立测试）。
@@ -869,6 +889,10 @@ impl EditorState {
             image_zoom: 1.0,
             image_offset_x: 0.0,
             image_offset_y: 0.0,
+            workspace_ai_sessions: std::collections::HashMap::new(),
+            current_workspace_ai_session: None,
+            markdown_preview: false,
+            markdown_toggle_btn: None,
         };
         // 加载 logo 位图（aether-512.png）
         // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载

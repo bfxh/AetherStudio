@@ -105,7 +105,13 @@ impl EditorState {
                 Language::JavaScript => "JavaScript",
                 Language::TypeScript => "TypeScript",
                 Language::Json => "JSON",
-                Language::Markdown => "Markdown",
+                Language::Markdown => {
+                    if self.markdown_preview {
+                        "Markdown 预览"
+                    } else {
+                        "Markdown"
+                    }
+                }
                 Language::Toml => "TOML",
                 Language::Html => "HTML",
                 Language::Css => "CSS",

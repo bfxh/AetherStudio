@@ -40,6 +40,7 @@ cargo_test_out.txt
 
 # Reference / local-only directories
 vscode/
+test_icons_workspace/
 tests/screenshots/
 tests/reports/
 tests/gui_hit_regions.jsonl
