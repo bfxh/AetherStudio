@@ -475,24 +475,18 @@ mod tests {
 
     #[test]
     fn test_command_id_label() {
-        // 断言用固定中文翻译（tr_in），不依赖系统 UI 语言
-        use aether_shared::i18n::{tr_in, UiLanguage};
-        assert_eq!(
-            CommandId::FileNew.label(),
-            tr_in(UiLanguage::Chinese, "新建项目")
-        );
-        assert_eq!(
-            CommandId::EditUndo.label(),
-            tr_in(UiLanguage::Chinese, "撤销")
-        );
+        // 期望值用当前系统语言计算（tr_in），不依赖系统 UI 语言
+        use aether_shared::i18n::{tr_in, ui_language};
+        assert_eq!(CommandId::FileNew.label(), tr_in(ui_language(), "新建项目"));
+        assert_eq!(CommandId::EditUndo.label(), tr_in(ui_language(), "撤销"));
         assert_eq!(CommandId::None.label(), "");
     }
 
     #[test]
     fn test_menu_item_builder() {
-        use aether_shared::i18n::{tr_in, UiLanguage};
+        use aether_shared::i18n::{tr_in, ui_language};
         let item = MenuItem::new(tr("保存"), CommandId::FileSave).with_shortcut("Ctrl+S");
-        assert_eq!(item.label, tr_in(UiLanguage::Chinese, "保存"));
+        assert_eq!(item.label, tr_in(ui_language(), "保存"));
         assert_eq!(item.shortcut, Some("Ctrl+S".to_string()));
         assert_eq!(item.command_id, CommandId::FileSave);
         assert!(item.enabled);
@@ -504,9 +498,9 @@ mod tests {
 
     #[test]
     fn test_menu_bar_item_key() {
-        use aether_shared::i18n::{tr_in, UiLanguage};
+        use aether_shared::i18n::{tr_in, ui_language};
         let item = MenuBarItem::new(tr("文件(F)"), vec![]);
-        assert_eq!(item.key(), tr_in(UiLanguage::Chinese, "文件"));
+        assert_eq!(item.key(), tr_in(ui_language(), "文件"));
     }
 
     #[test]
@@ -681,8 +675,8 @@ mod tests {
 
     #[test]
     fn test_menu_item_key_without_mnemonic() {
-        use aether_shared::i18n::{tr_in, UiLanguage};
+        use aether_shared::i18n::{tr_in, ui_language};
         let item = MenuBarItem::new(tr("帮助"), vec![]);
-        assert_eq!(item.key(), tr_in(UiLanguage::Chinese, "帮助"));
+        assert_eq!(item.key(), tr_in(ui_language(), "帮助"));
     }
 }

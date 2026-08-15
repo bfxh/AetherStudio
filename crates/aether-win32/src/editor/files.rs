@@ -29,6 +29,10 @@ impl EditorState {
         self.content.language = lang;
         self.content.markdown_preview = false;
         self.markdown_preview = false;
+        // buffer_version += 1：高亮三层缓存（GPU/后台 ts/同步行）按版本判失效，
+        // 版本不变会复用旧语言 token 导致高亮不刷新；此操作不触碰
+        // is_dirty / undo 历史 / 选区（语言切换不产生未保存修改）
+        self.content.buffer_version += 1;
         self.emit_event(crate::events::EditorEvent::TextChanged {
             start_line: 0,
             end_line: self.content.buffer.len_lines(),

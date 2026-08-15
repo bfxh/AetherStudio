@@ -76,7 +76,9 @@ impl CssLexer {
                 )
             }
             b'-' => {
-                if pos + 1 < bytes.len() && bytes[pos + 1].is_ascii_digit() {
+                if pos + 1 < bytes.len()
+                    && (bytes[pos + 1].is_ascii_digit() || bytes[pos + 1] == b'.')
+                {
                     let end = skip_number_with_unit(bytes, pos + 1);
                     (
                         LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
@@ -100,8 +102,8 @@ impl CssLexer {
                 // !important
                 (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1)
             }
-            b'{' | b'}' | b'(' | b')' | b'[' | b']' | b':' | b';' | b',' | b'.' | b'*' | b'>'
-            | b'+' | b'~' | b'=' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
+            b'{' | b'}' | b'(' | b')' | b'[' | b']' | b':' | b';' | b',' | b'*' | b'>' | b'+'
+            | b'~' | b'=' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
             _ => {
                 let len = crate::lexer::utf8_char_len(bytes[pos]);
                 (LexemeSpan::new(pos, len, TokenKind::Unknown), pos + len)
@@ -221,14 +223,18 @@ mod tests {
 
     #[test]
     fn test_css_leading_dot_decimal() {
-        let toks = CssLexer::new().lex_full("transition: all .5s ease;");
+        let toks = CssLexer::new().lex_full("transition: all .5s ease; margin: -.25em;");
         let dots: Vec<&LexemeSpan> = toks
             .iter()
             .filter(|t| t.kind == TokenKind::NumberLiteral)
             .collect();
         assert!(
-            dots.iter().any(|t| t.len >= 3),
-            "leading-dot decimal missing"
+            dots.iter().any(|t| t.len == 3),
+            "leading-dot decimal .5s missing"
+        );
+        assert!(
+            dots.iter().any(|t| t.len == 6),
+            "negative leading-dot -.25em missing"
         );
     }
 
