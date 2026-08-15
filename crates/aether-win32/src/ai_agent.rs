@@ -26,6 +26,8 @@ pub const RUN_FOOTER: &str = ">>>>>>> AETHER_END_RUN";
 pub const READ_PREFIX: &str = "<<<<<<< AETHER_READ";
 /// 只读工具·列出目录（单行指令，路径为参数，可为空/"." 表示工作区根）：`<<<<<<< AETHER_LIST <path>`
 pub const LIST_PREFIX: &str = "<<<<<<< AETHER_LIST";
+/// 只读工具·全文搜索（单行指令，pattern 为整行剩余部分，可含空格）：`<<<<<<< AETHER_GREP <pattern>`
+pub const GREP_PREFIX: &str = "<<<<<<< AETHER_GREP";
 /// 规划器任务清单块起始：`<<<<<<< AETHER_PLAN`
 pub const PLAN_HEADER: &str = "<<<<<<< AETHER_PLAN";
 /// 规划器任务清单块结束：`>>>>>>> AETHER_END_PLAN`
@@ -39,6 +41,7 @@ pub fn has_agent_markers(text: &str) -> bool {
             || t == RUN_HEADER
             || t.starts_with(READ_PREFIX)
             || t.starts_with(LIST_PREFIX)
+            || t.starts_with(GREP_PREFIX)
     })
 }
 
@@ -49,6 +52,8 @@ pub enum ToolRequest {
     Read(String),
     /// 列出目录条目（参数为工作区相对路径，空串表示根目录）
     List(String),
+    /// 全文搜索（pattern 为字面量，大小写不敏感；结果按 path:line:col:text 回喂）
+    Grep(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -279,6 +284,14 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
         // 列出目录：空路径表示工作区根
         if let Some(p) = parse_directive(t, LIST_PREFIX) {
             reqs.push(ToolRequest::List(p));
+            i += 1;
+            continue;
+        }
+        // 全文搜索：pattern 为整行剩余部分（可含空格），空 pattern 忽略
+        if let Some(p) = parse_directive(t, GREP_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Grep(p));
+            }
             i += 1;
             continue;
         }
@@ -806,6 +819,50 @@ cargo test\n\
                 ToolRequest::List("".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_grep() {
+        let text = "<<<<<<< AETHER_GREP fn main
+hello
+<<<<<<< AETHER_GREP fn main() {
+";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![
+                ToolRequest::Grep("fn main".to_string()),
+                ToolRequest::Grep("fn main() {".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_grep_empty_ignored() {
+        let reqs = parse_tool_requests(
+            "<<<<<<< AETHER_GREP
+",
+        );
+        assert!(reqs.is_empty());
+        // 前缀后紧跟非空白字符不算指令（避免误匹配）
+        let reqs = parse_tool_requests(
+            "<<<<<<< AETHER_GREPx foo
+",
+        );
+        assert!(reqs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_requests_grep_skips_file_block_body() {
+        let text = "<<<<<<< AETHER_FILE src/main.rs
+<<<<<<< AETHER_GREP fake
+======= AETHER_SEP
+new
+>>>>>>> AETHER_END_FILE
+<<<<<<< AETHER_GREP real
+";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(reqs, vec![ToolRequest::Grep("real".to_string())]);
     }
 
     #[test]

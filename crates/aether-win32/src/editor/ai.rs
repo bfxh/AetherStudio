@@ -890,6 +890,36 @@ impl EditorState {
                         }
                     }
                 }
+                ToolRequest::Grep(pattern) => {
+                    let Some(root) = self.current_folder.clone() else {
+                        display.push("✕ 搜索失败：未打开工作区文件夹".to_string());
+                        feedback.push("[搜索失败] 未打开工作区文件夹".to_string());
+                        continue;
+                    };
+                    let query = aether_core::search::SearchQuery {
+                        pattern: pattern.clone(),
+                        ..Default::default()
+                    };
+                    let results = aether_core::search::search_workspace(&root, &query);
+                    // 转为工作区相对路径，便于 Agent 用 READ 工具继续定位
+                    let relative: Vec<aether_core::search::SearchResult> = results
+                        .into_iter()
+                        .map(|mut r| {
+                            if let Ok(rel) = r.path.strip_prefix(&root) {
+                                r.path = rel.to_path_buf();
+                            }
+                            r
+                        })
+                        .collect();
+                    let total = relative.len();
+                    let text = aether_core::search::format_search_results(&relative, 50);
+                    display.push(format!("🔍 搜索 `{}`：{} 处匹配", pattern, total));
+                    feedback.push(format!(
+                        "[搜索结果] {}
+{}",
+                        pattern, text
+                    ));
+                }
             }
         }
         (display, feedback.join("\n\n"))

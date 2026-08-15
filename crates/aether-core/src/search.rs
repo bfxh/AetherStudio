@@ -181,6 +181,37 @@ fn build_regex(query: &SearchQuery) -> Result<regex::Regex, regex::Error> {
         .build()
 }
 
+/// 把搜索结果格式化为回喂文本：`path:line:col:text`。
+///
+/// 最多输出 `max_lines` 条；超出时末尾附省略提示。空结果返回"（无匹配）"。
+/// 调用方应先把 `path` 转为工作区相对路径（便于 Agent 后续用 READ 工具定位）。
+pub fn format_search_results(results: &[SearchResult], max_lines: usize) -> String {
+    if results.is_empty() {
+        return "（无匹配）".to_string();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for r in results.iter().take(max_lines) {
+        out.push(format!(
+            "{}:{}:{}:{}",
+            r.path.display(),
+            r.line,
+            r.col,
+            r.text
+        ));
+    }
+    if results.len() > max_lines {
+        out.push(format!(
+            "…（共 {} 处匹配，已显示前 {} 条）",
+            results.len(),
+            max_lines
+        ));
+    }
+    out.join(
+        "
+",
+    )
+}
+
 fn is_excluded(path: &Path, root: &Path, query: &SearchQuery) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
     for pat in &query.exclude {
@@ -271,6 +302,51 @@ mod tests {
             ..Default::default()
         };
         assert!(build_regex(&q).is_err());
+    }
+
+    #[test]
+    fn test_format_search_results_empty() {
+        assert_eq!(format_search_results(&[], 10), "（无匹配）");
+    }
+
+    #[test]
+    fn test_format_search_results_basic() {
+        let results = vec![
+            SearchResult {
+                path: PathBuf::from("src/main.rs"),
+                line: 10,
+                col: 5,
+                text: "fn main() {".to_string(),
+            },
+            SearchResult {
+                path: PathBuf::from("src/lib.rs"),
+                line: 20,
+                col: 1,
+                text: "pub fn add() {}".to_string(),
+            },
+        ];
+        let out = format_search_results(&results, 10);
+        assert_eq!(
+            out,
+            "src/main.rs:10:5:fn main() {
+src/lib.rs:20:1:pub fn add() {}"
+        );
+    }
+
+    #[test]
+    fn test_format_search_results_truncates() {
+        let results: Vec<SearchResult> = (0..5)
+            .map(|i| SearchResult {
+                path: PathBuf::from(format!("f{}.rs", i)),
+                line: 1,
+                col: 1,
+                text: "x".to_string(),
+            })
+            .collect();
+        let out = format_search_results(&results, 2);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].starts_with("…（共 5 处匹配"));
     }
 
     #[test]
