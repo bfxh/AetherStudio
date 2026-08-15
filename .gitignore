@@ -68,3 +68,6 @@ crates/*/tests/coverage/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# unified-rx MCP 本地索引缓存
+.unified-rx-index/

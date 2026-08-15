@@ -29,7 +29,7 @@ impl TextRenderer {
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_size,
-                windows::core::w!("zh-CN"),
+                windows::core::PCWSTR::null(),
             )?;
 
             text_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
@@ -82,7 +82,7 @@ impl TextRenderer {
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 scaled_font_size,
-                windows::core::w!("zh-CN"),
+                windows::core::PCWSTR::null(),
             );
             if let Ok(tf) = new_text_format {
                 let _ = tf.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -113,7 +113,7 @@ impl TextRenderer {
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 scaled_font_size,
-                windows::core::w!("zh-CN"),
+                windows::core::PCWSTR::null(),
             );
             if let Ok(tf) = new_text_format {
                 let _ = tf.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);

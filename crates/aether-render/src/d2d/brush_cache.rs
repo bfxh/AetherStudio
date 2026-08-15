@@ -208,7 +208,7 @@ impl TextFormatCache {
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_size,
-                windows::core::w!("zh-CN"),
+                windows::core::PCWSTR::null(),
             )?;
             let _ = format.SetTextAlignment(std::mem::transmute::<
                 u32,

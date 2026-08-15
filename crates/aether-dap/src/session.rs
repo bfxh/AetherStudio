@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
+use crate::system_locale;
 use crate::transport::{spawn_adapter, spawn_stderr_drain, DapTransport};
 use crate::types::*;
 
@@ -85,7 +86,7 @@ impl DebugSession {
             "supportsVariableType": true,
             "supportsVariablePaging": false,
             "supportsRunInTerminalRequest": false,
-            "locale": "zh-CN",
+            "locale": system_locale(),
         });
 
         let request = DapMessage::Request(DapRequest {
