@@ -56,6 +56,18 @@ impl CssLexer {
                     end,
                 )
             }
+            // 前导点小数：.5s / .25em
+            b'.' => {
+                if pos + 1 < bytes.len() && bytes[pos + 1].is_ascii_digit() {
+                    let end = skip_number_with_unit(bytes, pos + 1);
+                    (
+                        LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
+                        end,
+                    )
+                } else {
+                    (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1)
+                }
+            }
             b'0'..=b'9' => {
                 let end = skip_number_with_unit(bytes, pos);
                 (
@@ -131,11 +143,12 @@ fn skip_at_rule(bytes: &[u8], pos: usize) -> usize {
 fn skip_hex_color(bytes: &[u8], pos: usize) -> usize {
     let mut i = pos + 1;
     let mut n = 0;
-    while i < bytes.len() && n < 6 && bytes[i].is_ascii_hexdigit() {
+    while i < bytes.len() && n < 8 && bytes[i].is_ascii_hexdigit() {
         i += 1;
         n += 1;
     }
-    if n == 3 || n == 6 {
+    // 3/4/6/8 位：#RGB / #RGBA / #RRGGBB / #RRGGBBAA
+    if n == 3 || n == 4 || n == 6 || n == 8 {
         i
     } else {
         pos + 1
@@ -204,5 +217,30 @@ mod tests {
         // 颜色 #ff8800 应作为单个 7 字符 token（# + 6 hex）
         let color = nums.iter().find(|t| t.len == 7);
         assert!(color.is_some(), "hex color token missing");
+    }
+
+    #[test]
+    fn test_css_leading_dot_decimal() {
+        let toks = CssLexer::new().lex_full("transition: all .5s ease;");
+        let dots: Vec<&LexemeSpan> = toks
+            .iter()
+            .filter(|t| t.kind == TokenKind::NumberLiteral)
+            .collect();
+        assert!(
+            dots.iter().any(|t| t.len >= 3),
+            "leading-dot decimal missing"
+        );
+    }
+
+    #[test]
+    fn test_css_hex_4_and_8_digit() {
+        let toks = CssLexer::new().lex_full("color: #f80a; border: 1px solid #ff8800aa;");
+        let nums: Vec<&LexemeSpan> = toks
+            .iter()
+            .filter(|t| t.kind == TokenKind::NumberLiteral)
+            .collect();
+        // #f80a = 5 字符；#ff8800aa = 9 字符
+        assert!(nums.iter().any(|t| t.len == 5), "4-digit hex missing");
+        assert!(nums.iter().any(|t| t.len == 9), "8-digit hex missing");
     }
 }

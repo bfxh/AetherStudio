@@ -89,13 +89,14 @@ const EN_TABLE: &[(&str, &str)] = &[
     ("检查更新", "Check Updates"),
     ("关于", "About"),
     ("全局搜索", "Global Search"),
+    ("语言模式", "Language Mode"),
     ("AI 修复当前诊断", "AI Fix Diagnostics"),
     ("Markdown 预览", "Markdown Preview"),
 ];
 
-/// 翻译查询：中文直通；英文查表（未命中返回 key 本身）。
-pub fn tr(key: &'static str) -> &'static str {
-    if ui_language() == UiLanguage::Chinese {
+/// 按指定语言翻译（纯函数，可测）：中文直通；英文查表（未命中返回 key 本身）。
+pub fn tr_in(lang: UiLanguage, key: &'static str) -> &'static str {
+    if lang == UiLanguage::Chinese {
         return key;
     }
     for (k, v) in EN_TABLE {
@@ -104,6 +105,11 @@ pub fn tr(key: &'static str) -> &'static str {
         }
     }
     key
+}
+
+/// 翻译查询：按当前系统语言翻译（中文直通；英文查表；未命中回退 key）。
+pub fn tr(key: &'static str) -> &'static str {
+    tr_in(ui_language(), key)
 }
 
 #[cfg(test)]
@@ -129,8 +135,16 @@ mod tests {
 
     #[test]
     fn test_tr_unknown_key_falls_back() {
-        // 未命中 key 必须回退（不 panic、不返回空）
-        let missing = EN_TABLE.iter().all(|(k, _)| *k != "不存在的文案");
-        assert!(missing);
+        // 未命中 key 在任何语言下都回退返回 key 本身
+        assert_eq!(tr_in(UiLanguage::Chinese, "不存在的文案"), "不存在的文案");
+        assert_eq!(tr_in(UiLanguage::English, "不存在的文案"), "不存在的文案");
+    }
+
+    #[test]
+    fn test_tr_in_english_lookup() {
+        assert_eq!(tr_in(UiLanguage::English, "保存"), "Save");
+        assert_eq!(tr_in(UiLanguage::English, "语言模式"), "Language Mode");
+        // 中文直通
+        assert_eq!(tr_in(UiLanguage::Chinese, "保存"), "保存");
     }
 }

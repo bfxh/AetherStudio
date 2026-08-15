@@ -69,7 +69,8 @@ impl LanguageMenuState {
         if x < self.x || x >= self.x + Self::MENU_WIDTH {
             return None;
         }
-        let rel_y = y - self.y;
+        // 减去顶部 padding：与渲染起点对齐，padding 区域不算命中
+        let rel_y = y - self.y - Self::TOP_PADDING;
         if rel_y < 0.0 {
             return None;
         }
@@ -139,10 +140,12 @@ mod tests {
     fn test_hit_test_visible() {
         let mut m = LanguageMenuState::default();
         m.open_at(100.0, 200.0);
-        // 第一项
-        assert_eq!(m.hit_test(100.0, 200.0), Some(0));
+        // padding 区内不命中
+        assert_eq!(m.hit_test(100.0, 200.0), None);
+        // 第一项（y + TOP_PADDING 起）
+        assert_eq!(m.hit_test(100.0, 204.0), Some(0));
         // 第二项
-        assert_eq!(m.hit_test(100.0, 224.0), Some(1));
+        assert_eq!(m.hit_test(100.0, 228.0), Some(1));
         // 超出宽度
         assert_eq!(m.hit_test(100.0 + LanguageMenuState::MENU_WIDTH, 200.0), None);
         // 超出高度（菜单之外）
@@ -154,9 +157,9 @@ mod tests {
     fn test_update_hover() {
         let mut m = LanguageMenuState::default();
         m.open_at(0.0, 0.0);
-        assert!(m.update_hover(5.0, 5.0)); // None -> Some(0)
-        assert!(!m.update_hover(5.0, 5.0)); // 无变化
-        assert!(m.update_hover(5.0, 30.0)); // Some(0) -> Some(1)
+        assert!(m.update_hover(5.0, 10.0)); // None -> Some(0)
+        assert!(!m.update_hover(5.0, 10.0)); // 无变化
+        assert!(m.update_hover(5.0, 34.0)); // Some(0) -> Some(1)
         m.hide();
         assert!(m.hover_index.is_none());
     }
