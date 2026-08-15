@@ -449,6 +449,30 @@ impl EditorState {
                 }
             }
 
+            // 括号匹配高亮：光标处括号与匹配对（开/闭各画一格背景）
+            if let Some((ol, oc, cl, cc)) = self.bracket_match_at_cursor() {
+                for (l, bc) in [(ol, oc), (cl, cc)] {
+                    if l < start_line || l > end_line {
+                        continue;
+                    }
+                    if let Some(text) = self.content.cached_line(l) {
+                        let safe = text.floor_char_boundary(bc.min(text.len()));
+                        let char_col = text[..safe].chars().map(unicode_char_width).sum::<usize>();
+                        let bx = x + line_number_width + 5.0 - self.content.scroll_x
+                            + char_col as f32 * char_width;
+                        let by = y + (l - start_line) as f32 * line_height
+                            - (self.content.scroll_y % line_height);
+                        let rect = D2D_RECT_F {
+                            left: bx,
+                            top: by,
+                            right: bx + char_width,
+                            bottom: by + line_height,
+                        };
+                        target.FillRectangle(&rect, &sel_brush);
+                    }
+                }
+            }
+
             // P3.2: 在光标之前渲染内联补全幽灵文本
             self.render_inline_completion(
                 target,

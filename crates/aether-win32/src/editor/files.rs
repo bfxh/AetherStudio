@@ -52,6 +52,42 @@ impl EditorState {
         );
     }
 
+    /// 计算光标处括号的匹配对，返回 `(开行, 开列, 闭行, 闭列)`（列均为字节列）。
+    ///
+    /// 光标不在括号上、无匹配或文件过大（>2MB，避免全量读取）时返回 None。
+    pub fn bracket_match_at_cursor(&self) -> Option<(usize, usize, usize, usize)> {
+        use aether_core::bracket_match::{
+            find_matching_bracket, is_close_bracket, is_open_bracket,
+        };
+        let buffer = &self.content.buffer;
+        let total = buffer.len_bytes();
+        if total > 2 * 1024 * 1024 {
+            return None;
+        }
+        let line = self.content.cursor_line;
+        let col = self.content.cursor_col;
+        let line_text = buffer.line_text(line)?;
+        let byte_col = line_text.floor_char_boundary(col.min(line_text.len()));
+        let pos = buffer.line_col_to_byte(line, byte_col);
+        if pos >= total {
+            return None;
+        }
+        let text = buffer.get_text(0, total);
+        let bytes = text.as_bytes();
+        if !is_open_bracket(bytes[pos]) && !is_close_bracket(bytes[pos]) {
+            return None;
+        }
+        let matched = find_matching_bracket(&text, pos)?;
+        let (open_byte, close_byte) = if pos < matched {
+            (pos, matched)
+        } else {
+            (matched, pos)
+        };
+        let (ol, oc) = buffer.byte_to_line_col(open_byte);
+        let (cl, cc) = buffer.byte_to_line_col(close_byte);
+        Some((ol, oc, cl, cc))
+    }
+
     /// 在新标签页中打开内容
     pub(super) fn open_in_new_tab(&mut self, tab: Tab) {
         // REQ-P1-09: save current state to old tab, push new tab, swap it in
